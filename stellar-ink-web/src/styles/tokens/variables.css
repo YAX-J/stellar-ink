@@ -1,0 +1,32 @@
+/* ================= 设计 Token ================= */
+:root{
+  --bg:#0A0A12; --bg-2:#10101C; --bg-3:#161628;
+  --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
+  --ink:#EDEDF7; --ink-dim:#9B9BB4; --ink-faint:#5D5D76;
+  --primary:#8B7CFF; --primary-soft:rgba(139,124,255,.16);
+  --amber:#FFB454; --teal:#4DC9D9; --rose:#FF6B9D;
+  --line:rgba(255,255,255,.09);
+  --font-display:'Space Grotesk','Noto Serif SC',serif;
+  --font-serif:'Noto Serif SC',serif;
+  --font-body:'Noto Sans SC',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --r-lg:24px; --r-md:16px; --r-sm:10px;
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --ease-standard:cubic-bezier(.2,0,0,1);
+}
+body[data-theme="dusk"]{
+  --bg:#181022; --bg-2:#211531; --bg-3:#2B1B40;
+  --surface:rgba(255,255,255,.05); --surface-2:rgba(255,255,255,.08);
+  --ink:#F4EAF6; --ink-dim:#B9A6C4; --ink-faint:#7A6488;
+  --primary:#C99CFF; --primary-soft:rgba(201,156,255,.16);
+  --amber:#FF9E6B; --teal:#7AD9C4; --rose:#FF7A9E;
+  --line:rgba(255,255,255,.1);
+}
+body[data-theme="dawn"]{
+  --bg:#F5F1E8; --bg-2:#FBF8F1; --bg-3:#FFFFFF;
+  --surface:rgba(30,25,15,.045); --surface-2:rgba(30,25,15,.07);
+  --ink:#23201A; --ink-dim:#6E675A; --ink-faint:#A39B8C;
+  --primary:#5A4BD1; --primary-soft:rgba(90,75,209,.12);
+  --amber:#D9822B; --teal:#0E8C8C; --rose:#D94F7A;
+  --line:rgba(30,25,15,.12);
+}
