@@ -13,6 +13,7 @@ spring:
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:}  # 命名空间（默认 public）
         group: DEFAULT_GROUP
         refresh-enabled: true
       # 服务发现
@@ -21,6 +22,7 @@ spring:
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         group: DEFAULT_GROUP
+        namespace: ${NACOS_NAMESPACE:}
 
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
