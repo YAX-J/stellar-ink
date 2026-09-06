@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: stellar-ink
+  profiles:
+    active: dev
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+stellar:
+  jwt:
+    # 生产环境务必通过环境变量覆盖：STELLAR_JWT_SECRET
+    secret: stellar-ink-dev-secret-please-change-me-32bytes
+    expire-hours: 168
