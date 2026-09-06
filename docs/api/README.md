@@ -10,8 +10,11 @@
 mvn -DskipTests package
 java -jar stellar-ink-api/target/stellar-ink-api.jar
 
-# 生产（MySQL 8，先手动执行 stellar-ink-api/src/main/resources/schema.sql 建表）
+# 生产（MySQL 8，先初始化数据库）
+mysql -uroot -p < deploy/sql/01_schema.sql      # 建库建表（DDL）
+mysql -uroot -p < deploy/sql/02_init-data.sql   # 可选：种子数据（幂等，可重复执行）
 java -jar stellar-ink-api/target/stellar-ink-api.jar --spring.profiles.active=mysql
+# 数据库口令用环境变量覆盖：MYSQL_USER / MYSQL_PASSWORD
 ```
 
 种子账号：`stellar / stellar123`（种子数据与前端 prototype 的 mock 内容对齐）。
@@ -89,7 +92,9 @@ java -jar stellar-ink-api/target/stellar-ink-api.jar --spring.profiles.active=my
 ## 数据库
 
 5 张表：`post`、`meteor`、`echo`、`link`、`user`（身份舱/星籍资料并入 user 表）。
-DDL 见 `stellar-ink-api/src/main/resources/schema.sql`（H2 MySQL 模式与 MySQL 8 均可执行）；种子数据 `data.sql` 仅 dev 环境自动执行。
+- dev：`stellar-ink-api/src/main/resources/schema.sql`（H2 MySQL 模式与 MySQL 8 均可执行）+ `data.sql` 仅 dev 自动执行
+- 生产：`deploy/sql/01_schema.sql`（MySQL 8 正式 DDL，含引擎/字符集/注释/索引）+ `deploy/sql/02_init-data.sql`（幂等种子数据）
+- 两处结构必须保持一致；已在本地 MySQL 8.0.45 实测通过
 
 ## 模块结构
 

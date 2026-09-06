@@ -104,8 +104,9 @@ api → service → dao → domain → common
 
 ### 数据库
 - 表名小写单数（post/meteor/echo/link/user），列 snake_case，主键 `BIGINT AUTO_INCREMENT`。
-- DDL 写 `schema.sql`（必须同时兼容 H2 MySQL 模式与 MySQL 8：不用反引号、不写 ENGINE）；
-  种子数据 `data.sql` 只在 dev 自动执行，**内容必须与前端 prototype 的 mock 对齐**。
+- DDL：dev 用 `stellar-ink-api/src/main/resources/schema.sql`（必须同时兼容 H2 MySQL 模式与 MySQL 8：
+  不用反引号、不写 ENGINE）；生产用 `deploy/sql/01_schema.sql`（MySQL 8 正式 DDL）+ `02_init-data.sql`（幂等种子）。
+  **两处表结构改动必须同步**。种子数据内容必须与前端 prototype 的 mock 对齐。
 - 已知坑：`user` 是 H2 保留字，dev 数据源 URL 带 `NON_KEYWORDS=USER`，别删。
 - 文章标签逗号分隔存储（`splitTags/joinTags` 统一在 PostServiceImpl），字数 = 正文去空白字符数。
 
