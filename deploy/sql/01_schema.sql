@@ -1,15 +1,15 @@
 -- =============================================================
 -- 星笺 STELLAR INK 数据库初始化脚本（DDL）
 -- 适用：MySQL 8.0+
--- 用法：mysql -uroot -p < 01_schema.sql
+--
+-- ⚠️ 本文件不建库、不 USE——执行前请先在客户端选中目标数据库：
+--   · Navicat / DBeaver：先双击左侧目标库（或右键库 → 运行 SQL 文件）
+--   · 命令行：mysql -uroot -p 数据库名 < 01_schema.sql
+--   · 数据库还没建？本地 root 先执行 00_create-database.sql；
+--     云数据库请在控制台/面板创建或使用分配的库名
+--
 -- 说明：H2 dev 环境使用 stellar-ink-api/src/main/resources/schema.sql，二者表结构保持一致
 -- =============================================================
-
-CREATE DATABASE IF NOT EXISTS stellar_ink
-    DEFAULT CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
-USE stellar_ink;
 
 -- -------------------------------------------------------------
 -- 文章（星）

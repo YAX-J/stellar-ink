@@ -10,11 +10,13 @@
 mvn -DskipTests package
 java -jar stellar-ink-api/target/stellar-ink-api.jar
 
-# 生产（MySQL 8，先初始化数据库）
-mysql -uroot -p < deploy/sql/01_schema.sql      # 建库建表（DDL）
-mysql -uroot -p < deploy/sql/02_init-data.sql   # 可选：种子数据（幂等，可重复执行）
-java -jar stellar-ink-api/target/stellar-ink-api.jar --spring.profiles.active=mysql
-# 数据库口令用环境变量覆盖：MYSQL_USER / MYSQL_PASSWORD
+# 生产（MySQL 8）。脚本不建库：先在客户端选中目标数据库（云库用控制台分配的库名）
+mysql -uroot -p 数据库名 < deploy/sql/01_schema.sql      # 建表（DDL）
+mysql -uroot -p 数据库名 < deploy/sql/02_init-data.sql   # 可选：种子数据（幂等，可重复执行）
+# 本地 root 且有建库权限时，可先执行 deploy/sql/00_create-database.sql 建 stellar_ink 库
+java -jar stellar-ink-api/target/stellar-ink-api.jar --spring.profiles.active=mysql \
+  # 远程库示例：MYSQL_HOST=主机 MYSQL_DB=库名 MYSQL_USER=.. MYSQL_PASSWORD=..
+# 数据库连接与口令全部支持环境变量覆盖：MYSQL_HOST/MYSQL_PORT/MYSQL_DB/MYSQL_USER/MYSQL_PASSWORD
 ```
 
 种子账号：`stellar / stellar123`（种子数据与前端 prototype 的 mock 内容对齐）。
