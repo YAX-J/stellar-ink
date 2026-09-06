@@ -47,6 +47,7 @@ npm run build                                          # 构建验证
 cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos
 cd stellar-ink-server && mvn -DskipTests package       # 2. 构建
 deploy\scripts\start-all.bat                           # 3. 一键起全部（或按模块手动 java -jar）
+                                                       #    注：该脚本为本地私有文件（含服务器连接信息），已 gitignore 不入库
 
 # 生产部署（Linux 服务器 Docker Compose；MySQL/Redis/Qdrant 复用服务器已有容器）
 cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET
@@ -138,7 +139,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 | `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放敏感/可调项 |
 | `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天+200MB 滚动，30 天） |
 
-- Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）；
+- Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
+  （默认 public，config 与 discovery 必须同空间，7 个服务要一起设）；
   MySQL 用 `MYSQL_HOST/PORT/DB/USER/PASSWORD`；JWT 密钥用 `SA_TOKEN_JWT_SECRET`。
 
 ### 数据库

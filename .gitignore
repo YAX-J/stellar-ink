@@ -17,3 +17,6 @@ logs/
 
 # Docker 部署敏感配置
 deploy/docker/.env
+
+# 本地启动脚本（含服务器 IP/密码等连接信息，不入库）
+deploy/scripts/start-all.bat
