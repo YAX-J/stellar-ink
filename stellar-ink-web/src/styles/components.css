@@ -1,0 +1,76 @@
+/* ================= 跨页面通用元件 ================= */
+.kicker{
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.35em;
+  color:var(--primary); text-transform:uppercase; margin-bottom:14px;
+  display:flex; align-items:center; gap:12px;
+}
+.kicker::before{content:''; width:34px; height:1px; background:var(--primary)}
+
+.btn{
+  height:46px; padding:0 26px; border-radius:12px; border:none; cursor:pointer;
+  font-family:var(--font-body); font-size:14px; font-weight:500; letter-spacing:.04em;
+  transition:all .2s var(--ease-standard); display:inline-flex; align-items:center; gap:8px;
+  text-decoration:none;
+}
+.btn-primary{background:var(--primary); color:#fff; box-shadow:0 6px 24px var(--primary-soft)}
+.btn-primary:hover{filter:brightness(1.12); transform:translateY(-2px)}
+.btn-primary:active{transform:translateY(0) scale(.97)}
+.btn-ghost{background:var(--surface); color:var(--ink-dim); border:1px solid var(--line)}
+.btn-ghost:hover{color:var(--ink); background:var(--surface-2)}
+
+.section-head{display:flex; align-items:baseline; justify-content:space-between;
+  margin:72px 0 26px; gap:16px; flex-wrap:wrap}
+.section-head h2{font-family:var(--font-serif); font-weight:900; font-size:clamp(26px,3vw,36px)}
+.section-head .more{font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
+  letter-spacing:.15em; cursor:pointer; transition:color .2s}
+.section-head .more:hover{color:var(--primary)}
+
+.chips{display:flex; gap:8px; margin-top:16px; flex-wrap:wrap}
+.chip{font-size:11px; padding:4px 10px; border-radius:99px; background:var(--primary-soft);
+  color:var(--primary); letter-spacing:.05em}
+.chip.warm{background:rgba(255,180,84,.14); color:var(--amber)}
+.chip.cool{background:rgba(77,201,217,.13); color:var(--teal)}
+
+.field{margin-bottom:14px}
+.field label{display:block; font-size:11px; letter-spacing:.15em; color:var(--ink-faint); margin-bottom:7px}
+.field input, .field textarea{
+  width:100%; height:44px; border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--bg-2); color:var(--ink); padding:0 14px; font-size:14px; outline:none;
+  font-family:var(--font-body); transition:border-color .2s;
+}
+.field textarea{height:auto; padding:12px 14px; resize:none; line-height:1.8}
+.field input:focus, .field textarea:focus{border-color:var(--primary)}
+
+.side-card{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface); padding:20px}
+.side-card h5{font-family:var(--font-mono); font-size:11px; letter-spacing:.3em;
+  color:var(--ink-faint); margin-bottom:14px; text-transform:uppercase}
+
+.echo-form{display:flex; gap:12px; margin-bottom:26px; flex-wrap:wrap}
+.echo-form input{height:52px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); color:var(--ink); padding:0 18px; font-size:14px; outline:none;
+  font-family:var(--font-body); transition:border-color .2s}
+.echo-form input:focus{border-color:var(--teal)}
+.echo-form .in-name{width:180px}
+.echo-form .in-msg{flex:1; min-width:220px}
+
+/* 地图悬浮卡片（星图 / 星链共用） */
+.map-tip{
+  position:absolute; pointer-events:none; z-index:5; min-width:200px; max-width:280px;
+  background:color-mix(in srgb, var(--bg-3) 92%, transparent); backdrop-filter:blur(12px);
+  border:1px solid var(--primary); border-radius:var(--r-sm); padding:14px 16px;
+  opacity:0; transform:translateY(6px); transition:opacity .2s, transform .2s;
+}
+.map-tip.show{opacity:1; transform:none}
+.map-tip h6{font-family:var(--font-serif); font-size:15px; margin-bottom:6px; line-height:1.5}
+.map-tip p{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); line-height:1.8}
+
+.avatar{width:64px; height:64px; border-radius:22px; display:grid; place-items:center;
+  font-family:var(--font-serif); font-weight:900; font-size:26px; color:#fff;
+  background:conic-gradient(from 200deg,var(--primary),var(--rose),var(--amber),var(--primary));
+  box-shadow:0 6px 20px var(--primary-soft)}
+
+input[type=range]{width:100%; accent-color:var(--primary); cursor:pointer}
+
+.foot{margin-top:90px; padding:30px 0 10px; border-top:1px solid var(--line);
+  display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;
+  font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.1em}
