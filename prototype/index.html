@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>星笺 · STELLAR INK — 把思绪挂成星图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ================= 设计 Token ================= */
+:root{
+  --bg:#0A0A12; --bg-2:#10101C; --bg-3:#161628;
+  --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
+  --ink:#EDEDF7; --ink-dim:#9B9BB4; --ink-faint:#5D5D76;
+  --primary:#8B7CFF; --primary-soft:rgba(139,124,255,.16);
+  --amber:#FFB454; --teal:#4DC9D9; --rose:#FF6B9D;
+  --line:rgba(255,255,255,.09);
+  --font-display:'Space Grotesk','Noto Serif SC',serif;
+  --font-serif:'Noto Serif SC',serif;
+  --font-body:'Noto Sans SC',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --r-lg:24px; --r-md:16px; --r-sm:10px;
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --ease-standard:cubic-bezier(.2,0,0,1);
+}
+body[data-theme="dusk"]{
+  --bg:#181022; --bg-2:#211531; --bg-3:#2B1B40;
+  --surface:rgba(255,255,255,.05); --surface-2:rgba(255,255,255,.08);
+  --ink:#F4EAF6; --ink-dim:#B9A6C4; --ink-faint:#7A6488;
+  --primary:#C99CFF; --primary-soft:rgba(201,156,255,.16);
+  --amber:#FF9E6B; --teal:#7AD9C4; --rose:#FF7A9E;
+  --line:rgba(255,255,255,.1);
+}
+body[data-theme="dawn"]{
+  --bg:#F5F1E8; --bg-2:#FBF8F1; --bg-3:#FFFFFF;
+  --surface:rgba(30,25,15,.045); --surface-2:rgba(30,25,15,.07);
+  --ink:#23201A; --ink-dim:#6E675A; --ink-faint:#A39B8C;
+  --primary:#5A4BD1; --primary-soft:rgba(90,75,209,.12);
+  --amber:#D9822B; --teal:#0E8C8C; --rose:#D94F7A;
+  --line:rgba(30,25,15,.12);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--font-body); font-weight:300;
+  min-height:100vh; overflow-x:hidden;
+  transition:background .6s var(--ease-standard), color .6s;
+}
+::selection{background:var(--primary); color:#fff}
+
+/* 背景星野 */
+#starfield{position:fixed; inset:0; z-index:0; pointer-events:none; transition:opacity .6s}
+body[data-theme="dawn"] #starfield{opacity:.12}
+body.focus-mode #starfield{opacity:.3}
+
+/* ================= 左侧星轨导航 ================= */
+.rail{
+  position:fixed; left:0; top:0; bottom:0; width:96px; z-index:50;
+  display:flex; flex-direction:column; align-items:center; padding:28px 0;
+  border-right:1px solid var(--line);
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter:blur(18px);
+  transition:background .6s, border-color .6s, opacity .5s, transform .5s;
+  overflow-y:auto; scrollbar-width:none;
+}
+.rail::-webkit-scrollbar{display:none}
+body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:none}
+.logo{
+  width:44px; height:44px; border-radius:14px; display:grid; place-items:center;
+  background:linear-gradient(135deg,var(--primary),var(--rose));
+  font-family:var(--font-mono); font-weight:600; font-size:18px; color:#fff;
+  box-shadow:0 0 24px var(--primary-soft), inset 0 0 12px rgba(255,255,255,.25);
+  margin-bottom:36px; cursor:pointer;
+}
+.nav-item{
+  width:64px; padding:12px 0 10px; margin:6px 0; border:none; border-radius:var(--r-md);
+  background:transparent; color:var(--ink-faint); cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:5px;
+  font-family:var(--font-body); font-size:11px; letter-spacing:.08em;
+  transition:all .3s var(--ease-spring); position:relative;
+}
+.nav-item .glyph{font-size:19px; line-height:1; transition:transform .3s var(--ease-spring)}
+.nav-item:hover{color:var(--ink-dim); background:var(--surface)}
+.nav-item:hover .glyph{transform:translateY(-2px) scale(1.12)}
+.nav-item.active{color:var(--ink); background:var(--primary-soft)}
+.nav-item.active::before{
+  content:''; position:absolute; left:-17px; top:50%; translate:0 -50%;
+  width:3px; height:26px; border-radius:2px; background:var(--primary);
+  box-shadow:0 0 12px var(--primary);
+}
+.rail-foot{margin-top:auto; display:flex; flex-direction:column; gap:14px; align-items:center}
+.rail-dot{width:8px; height:8px; border-radius:50%; background:var(--teal);
+  animation:pulse 2.4s infinite; box-shadow:0 0 10px var(--teal)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.rail-ver{font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); writing-mode:vertical-rl}
+
+/* ================= 主区域 ================= */
+.main{margin-left:96px; position:relative; z-index:1; transition:margin .5s}
+body.focus-mode .main{margin-left:0}
+.page{display:none; padding:clamp(24px,4vw,56px); max-width:1240px; margin:0 auto;
+  animation:none}
+.page.active{display:block}
+.page.active .reveal{animation:rise .7s var(--ease-standard) both; animation-delay:var(--d,0s)}
+@keyframes rise{from{opacity:0; transform:translateY(26px)}to{opacity:1; transform:none}}
+
+.kicker{
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.35em;
+  color:var(--primary); text-transform:uppercase; margin-bottom:14px;
+  display:flex; align-items:center; gap:12px;
+}
+.kicker::before{content:''; width:34px; height:1px; background:var(--primary)}
+
+/* ================= 首页 · 此刻 ================= */
+.hero{display:grid; grid-template-columns:1.35fr .9fr; gap:40px; align-items:center;
+  min-height:64vh; position:relative}
+.hero h1{
+  font-family:var(--font-serif); font-weight:900;
+  font-size:clamp(44px,6.2vw,84px); line-height:1.14; letter-spacing:.02em;
+}
+.hero h1 em{
+  font-style:normal;
+  background:linear-gradient(100deg,var(--primary) 10%,var(--rose) 55%,var(--amber) 95%);
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+}
+.hero-sub{margin-top:22px; color:var(--ink-dim); font-size:15px; line-height:2; max-width:44ch}
+.hero-sub b{color:var(--amber); font-weight:500}
+.hero-actions{margin-top:34px; display:flex; gap:14px; flex-wrap:wrap}
+.btn{
+  height:46px; padding:0 26px; border-radius:12px; border:none; cursor:pointer;
+  font-family:var(--font-body); font-size:14px; font-weight:500; letter-spacing:.04em;
+  transition:all .2s var(--ease-standard); display:inline-flex; align-items:center; gap:8px;
+}
+.btn-primary{background:var(--primary); color:#fff; box-shadow:0 6px 24px var(--primary-soft)}
+.btn-primary:hover{filter:brightness(1.12); transform:translateY(-2px)}
+.btn-primary:active{transform:translateY(0) scale(.97)}
+.btn-ghost{background:var(--surface); color:var(--ink-dim); border:1px solid var(--line)}
+.btn-ghost:hover{color:var(--ink); background:var(--surface-2)}
+.hero-canvas-wrap{
+  position:relative; height:420px; border-radius:var(--r-lg); overflow:hidden;
+  border:1px solid var(--line); background:linear-gradient(180deg,var(--bg-2),var(--bg-3));
+}
+#miniMap{width:100%; height:100%; display:block}
+.hero-canvas-tag{
+  position:absolute; left:16px; bottom:14px; font-family:var(--font-mono);
+  font-size:10px; letter-spacing:.25em; color:var(--ink-faint);
+}
+
+/* 思绪走马灯 */
+.ticker-band{
+  margin:10px -999px 0; padding:14px 999px; border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line); overflow:hidden; white-space:nowrap;
+  background:var(--surface);
+}
+.ticker{display:inline-block; animation:scroll 36s linear infinite}
+.ticker span{font-family:var(--font-serif); font-size:14px; color:var(--ink-dim); margin:0 34px}
+.ticker span::before{content:'✦ '; color:var(--amber)}
+@keyframes scroll{to{transform:translateX(-50%)}}
+
+/* 北极星精选 */
+.section-head{display:flex; align-items:baseline; justify-content:space-between;
+  margin:72px 0 26px; gap:16px; flex-wrap:wrap}
+.section-head h2{font-family:var(--font-serif); font-weight:900; font-size:clamp(26px,3vw,36px)}
+.section-head .more{font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
+  letter-spacing:.15em; cursor:pointer; transition:color .2s}
+.section-head .more:hover{color:var(--primary)}
+.polaris{
+  position:relative; border-radius:var(--r-lg); padding:2px; overflow:hidden;
+  background:linear-gradient(120deg,var(--primary),transparent 30%,transparent 70%,var(--amber));
+  cursor:pointer;
+}
+.polaris-inner{
+  border-radius:calc(var(--r-lg) - 2px); background:var(--bg-2);
+  padding:clamp(28px,4vw,52px); position:relative; overflow:hidden;
+  transition:background .6s;
+}
+.polaris-inner::after{
+  content:''; position:absolute; right:-120px; top:-120px; width:340px; height:340px;
+  border-radius:50%; border:1px solid var(--line);
+  box-shadow:0 0 0 40px transparent, inset 0 0 60px var(--primary-soft);
+  animation:orbit 14s linear infinite;
+}
+@keyframes orbit{to{transform:rotate(360deg)}}
+.polaris-tag{font-family:var(--font-mono); font-size:11px; color:var(--amber); letter-spacing:.3em}
+.polaris h3{font-family:var(--font-serif); font-weight:900; font-size:clamp(24px,3.4vw,42px);
+  margin:16px 0 18px; line-height:1.3; max-width:20ch}
+.polaris p{color:var(--ink-dim); line-height:2; max-width:62ch; font-size:15px}
+.polaris-meta{margin-top:28px; display:flex; gap:26px; font-family:var(--font-mono);
+  font-size:12px; color:var(--ink-faint)}
+.polaris:hover .polaris-inner{background:var(--bg-3)}
+
+/* 星尘卡片流 */
+.stardust{display:grid; grid-template-columns:repeat(auto-fill,minmax(258px,1fr)); gap:18px}
+.dust{
+  border:1px solid var(--line); border-radius:var(--r-md); padding:22px;
+  background:var(--surface); cursor:pointer; position:relative; overflow:hidden;
+  transition:transform .35s var(--ease-spring), border-color .3s, background .3s;
+}
+.dust::before{
+  content:''; position:absolute; inset:0; opacity:0; transition:opacity .35s;
+  background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),var(--primary-soft),transparent 70%);
+}
+.dust:hover{transform:translateY(-6px) rotate(-.4deg); border-color:var(--primary)}
+.dust:hover::before{opacity:1}
+.dust .date{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.1em}
+.dust h4{font-family:var(--font-serif); font-weight:600; font-size:18px; margin:12px 0 10px; line-height:1.5}
+.dust .ex{font-size:13px; color:var(--ink-dim); line-height:1.9;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+.chips{display:flex; gap:8px; margin-top:16px; flex-wrap:wrap}
+.chip{font-size:11px; padding:4px 10px; border-radius:99px; background:var(--primary-soft);
+  color:var(--primary); letter-spacing:.05em}
+.chip.warm{background:rgba(255,180,84,.14); color:var(--amber)}
+.chip.cool{background:rgba(77,201,217,.13); color:var(--teal)}
+.dust .wc{position:absolute; right:18px; top:20px; font-family:var(--font-mono);
+  font-size:10px; color:var(--ink-faint)}
+
+/* 写作脉搏 */
+.pulse-grid{display:grid; grid-template-columns:280px 1fr 1fr 1fr; gap:18px}
+.pulse-card{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+  padding:26px; display:flex; flex-direction:column; justify-content:center; gap:6px;
+  transition:transform .3s var(--ease-spring)}
+.pulse-card:hover{transform:translateY(-4px)}
+.pulse-card .num{font-family:var(--font-display); font-weight:700; font-size:40px; letter-spacing:-.02em}
+.pulse-card .num i{font-style:normal; font-size:15px; color:var(--ink-faint); margin-left:4px}
+.pulse-card .lbl{font-size:12px; color:var(--ink-faint); letter-spacing:.15em}
+.ring-wrap{align-items:center; text-align:center; position:relative}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-txt{position:absolute; inset:0; display:grid; place-items:center}
+.ring-txt b{font-family:var(--font-display); font-size:34px; font-weight:700}
+.ring-txt small{display:block; font-size:11px; color:var(--ink-faint); letter-spacing:.2em; margin-top:2px}
+
+/* ================= 执笔 · 写作舱 ================= */
+.studio{display:grid; grid-template-columns:1fr 300px; gap:28px; transition:opacity .4s}
+.studio-desk{
+  border:1px solid var(--line); border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--bg-2),var(--bg));
+  padding:clamp(26px,3.5vw,48px); position:relative; overflow:hidden; min-height:70vh;
+  display:flex; flex-direction:column;
+}
+.studio-desk::before{
+  content:''; position:absolute; inset:0; pointer-events:none; opacity:.6; transition:background 1s;
+  background:radial-gradient(600px 300px at 85% -10%,var(--mood,var(--primary-soft)),transparent 70%);
+}
+.mood-row{display:flex; gap:10px; margin-bottom:26px; flex-wrap:wrap; position:relative}
+.mood{
+  border:1px solid var(--line); background:var(--surface); border-radius:99px;
+  padding:8px 16px; font-size:13px; color:var(--ink-dim); cursor:pointer;
+  transition:all .25s var(--ease-spring); font-family:var(--font-body);
+}
+.mood:hover{transform:translateY(-2px); color:var(--ink)}
+.mood.on{background:var(--primary-soft); border-color:var(--primary); color:var(--primary)}
+.title-input{
+  width:100%; border:none; background:transparent; outline:none; color:var(--ink);
+  font-family:var(--font-serif); font-weight:900; font-size:clamp(28px,3.4vw,44px);
+  line-height:1.35; margin-bottom:8px; position:relative;
+}
+.title-input::placeholder{color:var(--ink-faint)}
+.quill-line{width:64px; height:3px; border-radius:2px; margin-bottom:28px;
+  background:linear-gradient(90deg,var(--primary),var(--rose))}
+.body-input{
+  flex:1; width:100%; border:none; background:transparent; outline:none; resize:none;
+  color:var(--ink); font-family:var(--font-body); font-weight:300; font-size:17px;
+  line-height:2.2; min-height:340px; position:relative;
+}
+.body-input::placeholder{color:var(--ink-faint)}
+.desk-foot{
+  position:relative; margin-top:26px; padding-top:18px; border-top:1px dashed var(--line);
+  display:flex; align-items:center; gap:22px; flex-wrap:wrap;
+  font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
+}
+.save-dot{display:inline-flex; align-items:center; gap:8px}
+.save-dot i{width:8px; height:8px; border-radius:50%; background:var(--teal);
+  animation:pulse 2.2s infinite; box-shadow:0 0 8px var(--teal)}
+.desk-foot .grow{margin-left:auto}
+.studio-side{display:flex; flex-direction:column; gap:18px; transition:opacity .4s, filter .4s}
+body.focus-mode .studio-side{opacity:.12; filter:blur(2px); pointer-events:none}
+.side-card{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface); padding:20px}
+.side-card h5{font-family:var(--font-mono); font-size:11px; letter-spacing:.3em;
+  color:var(--ink-faint); margin-bottom:14px; text-transform:uppercase}
+.prompt-card{
+  border-radius:var(--r-sm); padding:16px; background:var(--bg-3);
+  border-left:3px solid var(--amber); font-family:var(--font-serif); font-size:14px;
+  line-height:1.9; color:var(--ink-dim); min-height:76px; transition:all .4s;
+}
+.prompt-refresh{margin-top:12px; width:100%; height:38px; border-radius:10px; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--ink-dim); font-size:12px;
+  letter-spacing:.15em; transition:all .25s}
+.prompt-refresh:hover{border-color:var(--amber); color:var(--amber)}
+.draft{display:flex; justify-content:space-between; align-items:center; padding:11px 4px;
+  border-bottom:1px dashed var(--line); font-size:13px; color:var(--ink-dim); cursor:pointer;
+  transition:color .2s}
+.draft:last-child{border-bottom:none}
+.draft:hover{color:var(--ink)}
+.draft small{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint)}
+.focus-toggle{
+  width:100%; height:52px; border-radius:var(--r-md); cursor:pointer; border:1px solid var(--line);
+  background:var(--surface); color:var(--ink-dim); font-size:14px; letter-spacing:.1em;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  transition:all .3s var(--ease-spring); font-family:var(--font-body);
+}
+.focus-toggle:hover{border-color:var(--primary); color:var(--primary)}
+body.focus-mode .focus-toggle{background:var(--primary); color:#fff; border-color:var(--primary);
+  position:fixed; right:28px; bottom:28px; width:auto; padding:0 24px; z-index:60;
+  box-shadow:0 10px 32px var(--primary-soft)}
+
+/* ================= 星图 · 归档 ================= */
+.map-controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:22px}
+.year-chip{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
+  border-radius:99px; padding:8px 18px; font-family:var(--font-mono); font-size:13px;
+  cursor:pointer; transition:all .25s var(--ease-spring);
+}
+.year-chip:hover{transform:translateY(-2px); color:var(--ink)}
+.year-chip.on{background:var(--amber); border-color:var(--amber); color:#1a1206; font-weight:600}
+.view-switch{margin-left:auto; display:flex; border:1px solid var(--line); border-radius:99px;
+  overflow:hidden}
+.view-switch button{border:none; background:transparent; color:var(--ink-faint); padding:9px 20px;
+  font-size:13px; cursor:pointer; transition:all .25s; font-family:var(--font-body)}
+.view-switch button.on{background:var(--primary); color:#fff}
+.map-stage{
+  position:relative; border:1px solid var(--line); border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;
+}
+#starMap{width:100%; height:520px; display:block; cursor:crosshair}
+.map-tip{
+  position:absolute; pointer-events:none; z-index:5; min-width:200px; max-width:280px;
+  background:color-mix(in srgb, var(--bg-3) 92%, transparent); backdrop-filter:blur(12px);
+  border:1px solid var(--primary); border-radius:var(--r-sm); padding:14px 16px;
+  opacity:0; transform:translateY(6px); transition:opacity .2s, transform .2s;
+}
+.map-tip.show{opacity:1; transform:none}
+.map-tip h6{font-family:var(--font-serif); font-size:15px; margin-bottom:6px; line-height:1.5}
+.map-tip p{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); line-height:1.8}
+.map-legend{position:absolute; left:18px; bottom:16px; font-family:var(--font-mono);
+  font-size:10px; color:var(--ink-faint); letter-spacing:.12em; line-height:2; pointer-events:none}
+.map-legend i{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px}
+/* 长卷视图 */
+.scroll-view{display:none; padding:40px 0 20px; position:relative}
+.map-stage.river #starMap, .map-stage.river .map-legend{display:none}
+.map-stage.river .scroll-view{display:block}
+.river-line{position:absolute; left:50%; top:0; bottom:0; width:1px;
+  background:linear-gradient(180deg,transparent,var(--primary),var(--amber),transparent)}
+.river-item{position:relative; width:calc(50% - 40px); padding:22px 24px; margin-bottom:34px;
+  border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+  transition:transform .3s var(--ease-spring), border-color .3s; cursor:pointer}
+.river-item:hover{transform:scale(1.03); border-color:var(--primary)}
+.river-item:nth-child(odd of .river-item){margin-left:auto; margin-right:40px}
+.river-item:nth-child(even of .river-item){margin-left:40px}
+.river-item::after{content:''; position:absolute; top:30px; width:10px; height:10px;
+  border-radius:50%; background:var(--amber); box-shadow:0 0 12px var(--amber)}
+.river-item:nth-child(odd of .river-item)::after{left:-46px}
+.river-item:nth-child(even of .river-item)::after{right:-46px}
+.river-item .d{font-family:var(--font-mono); font-size:11px; color:var(--amber); letter-spacing:.15em}
+.river-item h4{font-family:var(--font-serif); font-size:17px; margin:8px 0 6px}
+.river-item p{font-size:12px; color:var(--ink-faint); font-family:var(--font-mono)}
+
+/* ================= 舰桥 · 设置 ================= */
+.bridge{display:grid; grid-template-columns:repeat(12,1fr); gap:18px}
+.panel{border:1px solid var(--line); border-radius:var(--r-lg); background:var(--surface);
+  padding:clamp(22px,3vw,34px); transition:border-color .3s}
+.panel:hover{border-color:color-mix(in srgb, var(--primary) 45%, var(--line))}
+.panel h3{font-family:var(--font-mono); font-size:11px; letter-spacing:.3em; color:var(--ink-faint);
+  text-transform:uppercase; margin-bottom:22px; display:flex; align-items:center; gap:10px}
+.panel h3::before{content:''; width:7px; height:7px; border-radius:50%; background:var(--primary)}
+.p-theme{grid-column:span 7}
+.p-preview{grid-column:span 5}
+.p-id{grid-column:span 5}
+.p-goal{grid-column:span 3}
+.p-data{grid-column:span 4}
+.theme-row{display:flex; gap:14px; flex-wrap:wrap}
+.theme-swatch{
+  flex:1; min-width:120px; border:2px solid var(--line); border-radius:var(--r-md);
+  padding:16px; cursor:pointer; transition:all .3s var(--ease-spring); background:transparent;
+  color:var(--ink-dim); font-family:var(--font-body); text-align:left;
+}
+.theme-swatch:hover{transform:translateY(-3px)}
+.theme-swatch.on{border-color:var(--primary); box-shadow:0 8px 26px var(--primary-soft)}
+.swatch-sky{height:64px; border-radius:10px; margin-bottom:12px; position:relative; overflow:hidden}
+.sw-night{background:linear-gradient(160deg,#0A0A12,#1B1B33)}
+.sw-dusk{background:linear-gradient(160deg,#2B1B40,#B65C7A)}
+.sw-dawn{background:linear-gradient(160deg,#FBF3E4,#F0C98A)}
+.swatch-sky::after{content:''; position:absolute; width:14px; height:14px; border-radius:50%;
+  top:12px; right:12px; background:var(--amber); box-shadow:0 0 14px var(--amber)}
+.theme-swatch b{display:block; font-size:14px; color:var(--ink); margin-bottom:2px}
+.theme-swatch small{font-size:11px}
+/* 预览窗 */
+.preview-mock{border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden;
+  background:var(--bg-2); transition:background .6s}
+.pm-bar{display:flex; gap:6px; padding:12px 14px; border-bottom:1px solid var(--line)}
+.pm-bar i{width:9px; height:9px; border-radius:50%; background:var(--ink-faint); opacity:.5}
+.pm-body{padding:18px}
+.pm-title{font-family:var(--font-serif); font-weight:900; font-size:17px; margin-bottom:10px}
+.pm-lines div{height:8px; border-radius:4px; background:var(--surface-2); margin-bottom:8px}
+.pm-lines div:nth-child(2){width:82%}.pm-lines div:nth-child(3){width:64%}
+.pm-chip{display:inline-block; margin-top:12px; font-size:10px; padding:4px 10px;
+  border-radius:99px; background:var(--primary-soft); color:var(--primary)}
+/* 身份 */
+.id-row{display:flex; gap:18px; align-items:center; margin-bottom:22px}
+.avatar{width:64px; height:64px; border-radius:22px; display:grid; place-items:center;
+  font-family:var(--font-serif); font-weight:900; font-size:26px; color:#fff;
+  background:conic-gradient(from 200deg,var(--primary),var(--rose),var(--amber),var(--primary));
+  box-shadow:0 6px 20px var(--primary-soft)}
+.field{margin-bottom:14px}
+.field label{display:block; font-size:11px; letter-spacing:.15em; color:var(--ink-faint); margin-bottom:7px}
+.field input, .field textarea{
+  width:100%; height:44px; border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--bg-2); color:var(--ink); padding:0 14px; font-size:14px; outline:none;
+  font-family:var(--font-body); transition:border-color .2s;
+}
+.field textarea{height:auto; padding:12px 14px; resize:none; line-height:1.8}
+.field input:focus, .field textarea:focus{border-color:var(--primary)}
+/* 目标环 */
+.goal-ring{display:grid; place-items:center; position:relative; margin:6px auto 14px; width:150px; height:150px}
+.goal-ring svg{transform:rotate(-90deg)}
+.goal-num{position:absolute; text-align:center}
+.goal-num b{font-family:var(--font-display); font-size:30px; font-weight:700}
+.goal-num small{display:block; font-size:10px; color:var(--ink-faint); letter-spacing:.2em}
+input[type=range]{width:100%; accent-color:var(--primary); cursor:pointer}
+/* 数据 */
+.data-row{display:flex; justify-content:space-between; align-items:center; padding:13px 0;
+  border-bottom:1px dashed var(--line); font-size:13px; color:var(--ink-dim)}
+.data-row:last-child{border:none}
+.data-row .btn{height:34px; padding:0 16px; font-size:12px}
+.danger{color:var(--rose)!important}
+
+/* ================= 深读舱 · 文章详情 ================= */
+.read-progress{position:fixed; top:0; left:96px; right:0; height:3px; z-index:40}
+body.focus-mode .read-progress{left:0}
+.read-progress i{display:block; height:100%; width:0;
+  background:linear-gradient(90deg,var(--primary),var(--rose),var(--amber))}
+.read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
+  border-radius:99px; padding:9px 20px; font-size:13px; cursor:pointer; margin-bottom:34px;
+  transition:all .25s; font-family:var(--font-body)}
+.read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
+.read-wrap{max-width:720px; margin:0 auto}
+.read-title{font-family:var(--font-serif); font-weight:900;
+  font-size:clamp(30px,4.4vw,52px); line-height:1.3; margin:12px 0 20px}
+.read-meta{display:flex; gap:20px; flex-wrap:wrap; font-family:var(--font-mono); font-size:12px;
+  color:var(--ink-faint); padding-bottom:26px; border-bottom:1px solid var(--line); margin-bottom:38px}
+.read-body p{font-size:17px; line-height:2.3; color:var(--ink-dim); margin-bottom:30px}
+.read-body p.dropcap::first-letter{font-family:var(--font-serif); font-weight:900; font-size:56px;
+  float:left; line-height:1; margin:6px 12px 0 0; color:var(--primary)}
+.read-body blockquote{font-family:var(--font-serif); font-size:clamp(20px,2.6vw,27px); font-weight:600;
+  line-height:1.8; color:var(--ink); border-left:3px solid var(--amber); padding:6px 0 6px 24px; margin:40px 0}
+.marg-note{background:var(--primary-soft); border:1px dashed var(--primary); border-radius:var(--r-sm);
+  padding:14px 18px; font-size:13px; line-height:1.9; color:var(--ink-dim); margin:-8px 0 30px}
+.marg-note b{color:var(--primary); margin-right:8px; font-size:12px}
+.read-body h3{font-family:var(--font-serif); font-weight:900; font-size:24px; margin:44px 0 18px;
+  display:flex; align-items:center; gap:14px}
+.read-body h3::before{content:'✦'; color:var(--amber); font-size:16px}
+.read-actions{text-align:center; margin:56px 0 30px}
+.glow-btn{border:1px solid var(--amber); background:rgba(255,180,84,.1); color:var(--amber);
+  border-radius:99px; padding:14px 34px; font-size:15px; cursor:pointer;
+  transition:all .3s var(--ease-spring); font-family:var(--font-body)}
+.glow-btn:hover{transform:scale(1.05); box-shadow:0 0 30px rgba(255,180,84,.25)}
+.glow-btn b{font-family:var(--font-mono); margin-left:6px}
+.read-nav{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:30px}
+.read-nav-cell{border:1px solid var(--line); border-radius:var(--r-md); padding:18px 20px;
+  background:var(--surface); cursor:pointer; transition:all .3s}
+.read-nav-cell:hover{border-color:var(--primary); transform:translateY(-3px)}
+.read-nav-cell small{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint); letter-spacing:.2em}
+.read-nav-cell h5{font-family:var(--font-serif); font-size:15px; margin-top:8px; line-height:1.6; font-weight:600}
+.read-nav-cell.next{text-align:right}
+
+/* ================= 流星 · 碎片备忘录 ================= */
+.meteor-launch{display:flex; gap:12px; margin-bottom:22px}
+.meteor-launch input{flex:1; height:52px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); color:var(--ink); padding:0 20px; font-size:15px; outline:none;
+  font-family:var(--font-body); transition:border-color .2s}
+.meteor-launch input:focus{border-color:var(--amber)}
+#meteorSky{width:100%; height:150px; display:block; border:1px solid var(--line);
+  border-radius:var(--r-lg); background:linear-gradient(180deg,var(--bg-2),var(--bg)); margin-bottom:26px}
+.meteor-feed{display:flex; flex-direction:column; gap:14px}
+.meteor-item{position:relative; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); padding:18px 22px 18px 26px; overflow:hidden;
+  animation:rise .5s var(--ease-standard) both}
+.meteor-item::before{content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:linear-gradient(180deg,var(--amber),transparent)}
+.meteor-item p{font-size:15px; line-height:1.9}
+.meteor-item small{display:block; margin-top:8px; font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+
+/* ================= 光谱 · 标签 ================= */
+.spectrum-bar{display:flex; height:14px; border-radius:99px; overflow:hidden;
+  margin-bottom:34px; border:1px solid var(--line)}
+.spectrum-bar i{height:100%; cursor:pointer; transition:filter .2s}
+.spectrum-bar i:hover{filter:brightness(1.35)}
+.spec-tags{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:30px}
+.spec-tag{border:1px solid var(--line); border-radius:99px; padding:10px 20px; font-size:14px;
+  cursor:pointer; background:var(--surface); transition:all .3s var(--ease-spring);
+  display:flex; align-items:center; gap:8px; font-family:var(--font-body)}
+.spec-tag i{width:9px; height:9px; border-radius:50%}
+.spec-tag:hover{transform:translateY(-3px)}
+.spec-tag.on{border-color:currentColor; box-shadow:0 4px 18px rgba(0,0,0,.2)}
+.spec-list{display:flex; flex-direction:column; gap:12px}
+.spec-row{display:flex; align-items:center; gap:18px; border:1px solid var(--line);
+  border-radius:var(--r-md); background:var(--surface); padding:16px 22px; cursor:pointer;
+  transition:all .25s; animation:rise .4s both}
+.spec-row:hover{border-color:var(--primary); transform:translateX(6px)}
+.spec-row .dot{width:10px; height:10px; border-radius:50%; flex-shrink:0}
+.spec-row h4{font-family:var(--font-serif); font-size:16px; flex:1; font-weight:600}
+.spec-row small{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+
+/* ================= 回声 · 漂流瓶留言 ================= */
+.echo-form{display:flex; gap:12px; margin-bottom:26px; flex-wrap:wrap}
+.echo-form input{height:52px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); color:var(--ink); padding:0 18px; font-size:14px; outline:none;
+  font-family:var(--font-body); transition:border-color .2s}
+.echo-form input:focus{border-color:var(--teal)}
+#echoName{width:180px}
+#echoMsg{flex:1; min-width:220px}
+.echo-sea{position:relative; min-height:540px; border:1px solid var(--line); border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden}
+.bottle{position:absolute; max-width:250px; background:color-mix(in srgb,var(--bg-3) 88%,transparent);
+  border:1px solid var(--teal); border-radius:14px 14px 14px 4px; padding:14px 16px;
+  font-size:13px; line-height:1.8; color:var(--ink-dim);
+  animation:drift var(--fd,7s) ease-in-out infinite alternate;
+  box-shadow:0 6px 22px rgba(0,0,0,.18)}
+.bottle b{display:block; color:var(--teal); font-size:12px; margin-bottom:5px; font-family:var(--font-mono)}
+@keyframes drift{from{transform:translateY(0) rotate(var(--rot,-2deg))}
+  to{transform:translateY(-14px) rotate(calc(var(--rot,-2deg)*-1))}}
+
+/* ================= 星链 · 友邻星座 ================= */
+.link-stage{position:relative; border:1px solid var(--line); border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden; margin-bottom:22px}
+#linkMap{width:100%; height:340px; display:block; cursor:pointer}
+.link-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; margin-bottom:26px}
+.link-card{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+  padding:20px; transition:all .3s var(--ease-spring)}
+.link-card:hover,.link-card.flash{transform:translateY(-4px); border-color:var(--teal);
+  box-shadow:0 8px 26px rgba(77,201,217,.12)}
+.link-card b{font-size:15px; font-weight:500}
+.link-card .u{font-family:var(--font-mono); font-size:11px; color:var(--teal); margin:6px 0 8px; display:block}
+.link-card p{font-size:12px; color:var(--ink-faint); line-height:1.8}
+
+/* ================= 星籍 · 关于护照 ================= */
+.passport{display:grid; grid-template-columns:1fr 1.2fr; gap:18px}
+.pp-card{border:1px solid var(--line); border-radius:var(--r-lg);
+  background:linear-gradient(140deg,var(--bg-2),var(--bg-3)); padding:32px;
+  position:relative; overflow:hidden}
+.pp-card::after{content:''; position:absolute; right:-60px; bottom:-60px; width:200px; height:200px;
+  border-radius:50%; border:1px dashed var(--primary); opacity:.4}
+.pp-head{display:flex; gap:18px; align-items:center; margin-bottom:24px}
+.pp-rows{display:flex; flex-direction:column; gap:12px; font-size:13px}
+.pp-rows div{display:flex; justify-content:space-between; border-bottom:1px dashed var(--line); padding-bottom:10px}
+.pp-rows span{color:var(--ink-faint); font-family:var(--font-mono); font-size:11px; letter-spacing:.1em}
+.pp-rows b{font-weight:500}
+.stamps{position:absolute; top:24px; right:24px; display:flex; flex-direction:column; gap:10px}
+.stamp{width:58px; height:58px; border:2px dashed var(--rose); border-radius:50%; display:grid;
+  place-items:center; font-size:9px; color:var(--rose); transform:rotate(14deg);
+  letter-spacing:.1em; text-align:center; line-height:1.5; opacity:.75}
+.stamp.g{border-color:var(--teal); color:var(--teal); transform:rotate(-10deg)}
+.pp-motto{font-family:var(--font-serif); font-size:clamp(19px,2.4vw,26px); font-weight:600;
+  line-height:2; margin-bottom:26px}
+.pp-motto em{font-style:normal; color:var(--amber)}
+.now-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.now-cell{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface); padding:16px}
+.now-cell small{font-family:var(--font-mono); font-size:10px; letter-spacing:.2em;
+  color:var(--ink-faint); display:block; margin-bottom:8px}
+.now-cell b{font-size:14px; font-weight:500; line-height:1.6}
+.now-cell .bar{height:4px; border-radius:2px; background:var(--surface-2); margin-top:12px; overflow:hidden}
+.now-cell .bar i{display:block; height:100%; border-radius:2px;
+  background:linear-gradient(90deg,var(--teal),var(--primary))}
+.his-list{position:relative; padding-left:26px; border-left:1px solid var(--line);
+  display:flex; flex-direction:column; gap:22px}
+.his-item{position:relative}
+.his-item::before{content:''; position:absolute; left:-31px; top:6px; width:9px; height:9px;
+  border-radius:50%; background:var(--primary); box-shadow:0 0 10px var(--primary)}
+.his-item small{font-family:var(--font-mono); font-size:11px; color:var(--amber); letter-spacing:.15em}
+.his-item p{font-size:14px; color:var(--ink-dim); margin-top:5px; line-height:1.8}
+.beacon-row{display:flex; gap:12px; flex-wrap:wrap}
+.beacon{border:1px solid var(--line); border-radius:99px; padding:11px 22px; font-size:13px;
+  color:var(--ink-dim); cursor:pointer; background:var(--surface);
+  transition:all .3s var(--ease-spring); font-family:var(--font-body)}
+.beacon:hover{transform:translateY(-3px); border-color:var(--amber); color:var(--amber)}
+
+/* 页脚 */
+.foot{margin-top:90px; padding:30px 0 10px; border-top:1px solid var(--line);
+  display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;
+  font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.1em}
+
+/* 响应式 */
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr}
+  .pulse-grid{grid-template-columns:1fr 1fr}
+  .studio{grid-template-columns:1fr}
+  .p-theme,.p-preview,.p-id,.p-goal,.p-data{grid-column:span 12}
+  .passport{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .rail{top:auto; bottom:0; left:0; right:0; width:auto; height:72px; flex-direction:row;
+    justify-content:center; gap:4px; border-right:none; border-top:1px solid var(--line); padding:0 8px}
+  .logo,.rail-foot{display:none}
+  .nav-item{margin:0; width:48px; font-size:10px; padding:10px 0 8px}
+  .read-nav{grid-template-columns:1fr}
+  .now-grid{grid-template-columns:1fr}
+  .read-progress{left:0}
+  .nav-item.active::before{left:50%; top:-1px; translate:-50% 0; width:26px; height:3px}
+  .main{margin-left:0; margin-bottom:72px}
+  body.focus-mode .main{margin-left:0}
+  .river-item{width:auto; margin:0 0 20px 30px!important}
+  .river-line{left:8px}
+  .river-item::after{left:-28px!important; right:auto!important}
+}
+</style>
+</head>
+<body data-theme="night">
+
+<canvas id="starfield"></canvas>
+
+<!-- ============ 星轨导航 ============ -->
+<nav class="rail">
+  <div class="logo" title="星笺">✦</div>
+  <button class="nav-item active" data-page="home"><span class="glyph">◉</span>此刻</button>
+  <button class="nav-item" data-page="write"><span class="glyph">✎</span>执笔</button>
+  <button class="nav-item" data-page="map"><span class="glyph">✧</span>星图</button>
+  <button class="nav-item" data-page="meteor"><span class="glyph">☄</span>流星</button>
+  <button class="nav-item" data-page="spectrum"><span class="glyph">❖</span>光谱</button>
+  <button class="nav-item" data-page="echo"><span class="glyph">❞</span>回声</button>
+  <button class="nav-item" data-page="links"><span class="glyph">⬡</span>星链</button>
+  <button class="nav-item" data-page="passport"><span class="glyph">✪</span>星籍</button>
+  <button class="nav-item" data-page="bridge"><span class="glyph">⚙</span>舰桥</button>
+  <div class="rail-foot">
+    <div class="rail-dot" title="灵感在线"></div>
+    <div class="rail-ver">STELLAR INK v3.0</div>
+  </div>
+</nav>
+
+<main class="main">
+
+<!-- ============ 首页 · 此刻 ============ -->
+<section class="page active" id="page-home">
+  <div class="hero">
+    <div>
+      <div class="kicker reveal" style="--d:.05s">第 128 夜 · 晴 · 宜书写</div>
+      <h1 class="reveal" style="--d:.12s">把思绪<br>挂成<em>星图</em></h1>
+      <p class="hero-sub reveal" style="--d:.2s">
+        这里不是又一个博客。每一篇文章都是一颗星，每一次书写都是一次发射。
+        今晚你已经写下 <b>1,204</b> 字 —— 星图上又多了一点微光。
+      </p>
+      <div class="hero-actions reveal" style="--d:.28s">
+        <button class="btn btn-primary" onclick="go('write')">✎ 今晚写点什么</button>
+        <button class="btn btn-ghost" onclick="go('map')">✧ 逛逛星图</button>
+      </div>
+    </div>
+    <div class="hero-canvas-wrap reveal" style="--d:.34s">
+      <canvas id="miniMap"></canvas>
+      <div class="hero-canvas-tag">LIVE · 你的思想星域</div>
+    </div>
+  </div>
+
+  <div class="ticker-band reveal" style="--d:.4s">
+    <div class="ticker" id="ticker"></div>
+  </div>
+
+  <div class="section-head reveal">
+    <h2>北极星</h2>
+    <span class="more">本周最受回望的一篇 →</span>
+  </div>
+  <div class="polaris reveal" style="--d:.08s" onclick="openPost(0)">
+    <div class="polaris-inner">
+      <span class="polaris-tag">★ POLARIS · 置顶长文</span>
+      <h3>在算法的洪流里，做一个缓慢的人</h3>
+      <p>我们这一代人被训练成即时反应的机器：消息要秒回，热点要秒追，情绪要秒发。
+        但写作教会我的第一件事，是延迟 —— 让一个念头在体内多停留三个夜晚，
+        它会自己长出骨骼和血肉……</p>
+      <div class="polaris-meta">
+        <span>2026.08.30</span><span>4,382 字</span><span>阅 12,847</span><span>☾ 写于三个深夜</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head reveal"><h2>最近星尘</h2><span class="more" onclick="go('map')">全部归档 →</span></div>
+  <div class="stardust" id="stardust"></div>
+
+  <div class="section-head reveal"><h2>写作脉搏</h2><span class="more">数据截至今夜 23:59</span></div>
+  <div class="pulse-grid reveal" style="--d:.06s">
+    <div class="pulse-card ring-wrap">
+      <svg width="150" height="150" viewBox="0 0 150 150">
+        <circle cx="75" cy="75" r="64" fill="none" stroke="var(--surface-2)" stroke-width="10"/>
+        <circle id="streakRing" cx="75" cy="75" r="64" fill="none" stroke="url(#gradA)" stroke-width="10"
+          stroke-linecap="round" stroke-dasharray="402" stroke-dashoffset="120"/>
+        <defs><linearGradient id="gradA" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#8B7CFF"/><stop offset="1" stop-color="#FF6B9D"/>
+        </linearGradient></defs>
+      </svg>
+      <div class="ring-txt"><div><b>21</b> 天<small>连续写作</small></div></div>
+    </div>
+    <div class="pulse-card"><div class="num">186<i>K</i></div><div class="lbl">累计星尘 · 总字数</div></div>
+    <div class="pulse-card"><div class="num">142<i>篇</i></div><div class="lbl">已点亮 · 文章数</div></div>
+    <div class="pulse-card"><div class="num" style="color:var(--amber)">☾ 87%</div><div class="lbl">写于夜晚 22 点后</div></div>
+  </div>
+
+  <div class="foot">
+    <span>© 2026 星笺 STELLAR INK</span>
+    <span>由 1,204 个今晚的字驱动</span>
+    <span>RSS · 星链 · 关于</span>
+  </div>
+</section>
+
+<!-- ============ 执笔 · 写作舱 ============ -->
+<section class="page" id="page-write">
+  <div class="kicker reveal">WRITING STUDIO · 留白写作舱</div>
+  <div class="studio">
+    <div class="studio-desk reveal" style="--d:.1s" id="desk">
+      <div class="mood-row" id="moodRow">
+        <button class="mood on" data-mood="rgba(139,124,255,.22)">☀️ 专注</button>
+        <button class="mood" data-mood="rgba(77,201,217,.20)">🌧️ 忧郁</button>
+        <button class="mood" data-mood="rgba(255,180,84,.20)">🌊 流动</button>
+        <button class="mood" data-mood="rgba(255,107,157,.22)">🔥 燃烧</button>
+      </div>
+      <input class="title-input" placeholder="给今晚的思绪起个名字…" id="titleInput">
+      <div class="quill-line"></div>
+      <textarea class="body-input" id="bodyInput" placeholder="从这里开始。不追求完美，只追求诚实。&#10;&#10;提示：情绪会改变舱内的光，专注模式会熄灭整个世界。"></textarea>
+      <div class="desk-foot">
+        <span class="save-dot"><i></i>已自动保存 · 23:47:02</span>
+        <span>星尘 <b id="wordCount" style="color:var(--amber)">+0</b> 字</span>
+        <span id="readTime">约 0 分钟读完</span>
+        <button class="btn btn-primary grow" style="height:40px">🚀 发射到星图</button>
+      </div>
+    </div>
+    <aside class="studio-side">
+      <button class="focus-toggle" id="focusBtn">🌑 进入专注模式</button>
+      <div class="side-card reveal" style="--d:.18s">
+        <h5>灵感签</h5>
+        <div class="prompt-card" id="promptCard">写一件你今天忍住没有说出口的话。</div>
+        <button class="prompt-refresh" id="promptBtn">↻ 换一签</button>
+      </div>
+      <div class="side-card reveal" style="--d:.26s">
+        <h5>未完的星 · 草稿</h5>
+        <div class="draft"><span>雨夜出租车观察笔记</span><small>2h 前</small></div>
+        <div class="draft"><span>论“已读不回”的礼仪</span><small>昨天</small></div>
+        <div class="draft"><span>写给三年后的自己</span><small>3 天前</small></div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ 星图 · 归档 ============ -->
+<section class="page" id="page-map">
+  <div class="kicker reveal">CONSTELLATION ARCHIVE · 不是列表，是星空</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>思想星图</h2>
+    <span class="more">悬停查看 · 点击阅读</span>
+  </div>
+  <div class="map-controls reveal" style="--d:.08s">
+    <button class="year-chip" data-year="2024">2024</button>
+    <button class="year-chip on" data-year="2025">2025</button>
+    <button class="year-chip on" data-year="2026">2026</button>
+    <div class="view-switch">
+      <button class="on" id="vMap">✧ 星图</button>
+      <button id="vRiver">☰ 长卷</button>
+    </div>
+  </div>
+  <div class="map-stage reveal" style="--d:.14s" id="mapStage">
+    <canvas id="starMap"></canvas>
+    <div class="map-tip" id="mapTip"></div>
+    <div class="map-legend">
+      <i style="background:var(--amber)"></i>星体大小 = 字数 &nbsp;
+      <i style="background:var(--primary)"></i>连线 = 相同标签<br>
+      共 142 颗星 · 已连成 9 个星座
+    </div>
+    <div class="scroll-view" id="scrollView">
+      <div class="river-line"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 舰桥 · 设置 ============ -->
+<section class="page" id="page-bridge">
+  <div class="kicker reveal">COMMAND BRIDGE · 舰桥控制台</div>
+  <div class="section-head reveal" style="margin-top:8px"><h2>舰桥</h2><span class="more">所有改动即时生效</span></div>
+  <div class="bridge">
+    <div class="panel p-theme reveal" style="--d:.06s">
+      <h3>时间主题 · 让博客跟随你的昼夜</h3>
+      <div class="theme-row">
+        <button class="theme-swatch on" data-theme="night">
+          <div class="swatch-sky sw-night"></div><b>永夜</b><small>深夜书房 · 默认</small>
+        </button>
+        <button class="theme-swatch" data-theme="dusk">
+          <div class="swatch-sky sw-dusk"></div><b>暮光</b><small>黄昏紫调</small>
+        </button>
+        <button class="theme-swatch" data-theme="dawn">
+          <div class="swatch-sky sw-dawn"></div><b>破晓</b><small>纸感浅色</small>
+        </button>
+      </div>
+    </div>
+    <div class="panel p-preview reveal" style="--d:.12s">
+      <h3>实时预览</h3>
+      <div class="preview-mock">
+        <div class="pm-bar"><i></i><i></i><i></i></div>
+        <div class="pm-body">
+          <div class="pm-title">在算法的洪流里，做一个缓慢的人</div>
+          <div class="pm-lines"><div></div><div></div><div></div></div>
+          <span class="pm-chip">✦ 随笔</span>
+        </div>
+      </div>
+    </div>
+    <div class="panel p-id reveal" style="--d:.18s">
+      <h3>身份舱</h3>
+      <div class="id-row">
+        <div class="avatar">星</div>
+        <div>
+          <b style="font-size:17px">拾星人</b>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);margin-top:4px">@stellar_ink · 第 128 夜</div>
+        </div>
+      </div>
+      <div class="field"><label>笔名</label><input value="拾星人"></div>
+      <div class="field"><label>星图签名</label><textarea rows="2">在算法的洪流里，做一个缓慢的人。</textarea></div>
+    </div>
+    <div class="panel p-goal reveal" style="--d:.24s">
+      <h3>每日星尘目标</h3>
+      <div class="goal-ring">
+        <svg width="150" height="150" viewBox="0 0 150 150">
+          <circle cx="75" cy="75" r="64" fill="none" stroke="var(--surface-2)" stroke-width="10"/>
+          <circle id="goalRing" cx="75" cy="75" r="64" fill="none" stroke="var(--amber)" stroke-width="10"
+            stroke-linecap="round" stroke-dasharray="402" stroke-dashoffset="160"/>
+        </svg>
+        <div class="goal-num"><b id="goalNum">500</b><small>字 / 天</small></div>
+      </div>
+      <input type="range" min="100" max="2000" step="50" value="500" id="goalRange">
+    </div>
+    <div class="panel p-data reveal" style="--d:.3s">
+      <h3>数据舱</h3>
+      <div class="data-row"><span>导出全部星尘（Markdown）</span><button class="btn btn-ghost">导出</button></div>
+      <div class="data-row"><span>生成年度星座报告</span><button class="btn btn-ghost">生成</button></div>
+      <div class="data-row"><span>RSS 订阅源</span><button class="btn btn-ghost">复制</button></div>
+      <div class="data-row danger"><span>熄灭整片星图（删除博客）</span><button class="btn btn-ghost danger">慎用</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 深读舱 · 文章详情 ============ -->
+<section class="page" id="page-read">
+  <div class="read-progress"><i id="readBar"></i></div>
+  <article class="read-wrap">
+    <button class="read-back" onclick="go(lastPage)">← 返回星域</button>
+    <div class="kicker reveal">DEEP READING · 深读舱</div>
+    <h1 class="read-title reveal" style="--d:.06s" id="readTitle"></h1>
+    <div class="read-meta reveal" style="--d:.12s" id="readMeta"></div>
+    <div class="read-body reveal" style="--d:.18s" id="readBody"></div>
+    <div class="read-actions reveal" style="--d:.24s">
+      <button class="glow-btn" id="glowBtn">✦ 为这颗星补充光芒 <b id="glowN">128</b></button>
+    </div>
+    <div class="read-nav reveal" style="--d:.3s">
+      <div class="read-nav-cell" id="readPrev"></div>
+      <div class="read-nav-cell next" id="readNext"></div>
+    </div>
+  </article>
+</section>
+
+<!-- ============ 流星 · 碎片备忘录 ============ -->
+<section class="page" id="page-meteor">
+  <div class="kicker reveal">METEOR MEMO · 流星备忘录</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>流星</h2>
+    <span class="more">长文给星图，碎片给流星</span>
+  </div>
+  <div class="meteor-launch reveal" style="--d:.08s">
+    <input id="meteorInput" placeholder="此刻划过脑海的…（回车即发射）">
+    <button class="btn btn-primary" id="meteorBtn">☄ 发射</button>
+  </div>
+  <canvas id="meteorSky" class="reveal" style="--d:.14s"></canvas>
+  <div class="meteor-feed reveal" style="--d:.2s" id="meteorFeed"></div>
+</section>
+
+<!-- ============ 光谱 · 标签 ============ -->
+<section class="page" id="page-spectrum">
+  <div class="kicker reveal">TAG SPECTRUM · 标签不是云，是一条光谱</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>光谱</h2>
+    <span class="more">点击任意波段，收听那个频率</span>
+  </div>
+  <div class="spectrum-bar reveal" style="--d:.08s" id="specBar"></div>
+  <div class="spec-tags reveal" style="--d:.14s" id="specTags"></div>
+  <div class="spec-list reveal" style="--d:.2s" id="specList"></div>
+</section>
+
+<!-- ============ 回声 · 漂流瓶留言 ============ -->
+<section class="page" id="page-echo">
+  <div class="kicker reveal">DRIFTING ECHOES · 留言板不在墙上，在海里</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>回声</h2>
+    <span class="more" id="echoCount"></span>
+  </div>
+  <div class="echo-form reveal" style="--d:.08s">
+    <input id="echoName" placeholder="署名（可匿名）">
+    <input id="echoMsg" placeholder="把话装进瓶子，扔进这片海…">
+    <button class="btn btn-primary" id="echoBtn">🫙 投入海中</button>
+  </div>
+  <div class="echo-sea reveal" style="--d:.14s" id="echoSea"></div>
+</section>
+
+<!-- ============ 星链 · 友邻星座 ============ -->
+<section class="page" id="page-links">
+  <div class="kicker reveal">NEIGHBOR CONSTELLATION · 友链即友邻星座</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>星链</h2>
+    <span class="more">悬停认识他们 · 点击降落</span>
+  </div>
+  <div class="link-stage reveal" style="--d:.08s">
+    <canvas id="linkMap"></canvas>
+    <div class="map-tip" id="linkTip"></div>
+  </div>
+  <div class="link-grid reveal" style="--d:.14s" id="linkGrid"></div>
+  <div class="side-card reveal" style="--d:.2s">
+    <h5>申请接入星链 · 交换友链</h5>
+    <div class="echo-form" style="margin-bottom:0">
+      <input id="linkName" placeholder="你的站点名" style="width:180px">
+      <input id="linkUrl" placeholder="站点地址，如 myblog.com" style="flex:1;min-width:200px">
+      <button class="btn btn-ghost" id="linkBtn">⬡ 发送信号</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 星籍 · 关于护照 ============ -->
+<section class="page" id="page-passport">
+  <div class="kicker reveal">STELLAR PASSPORT · 不是关于页，是一本星籍</div>
+  <div class="section-head reveal" style="margin-top:8px">
+    <h2>星籍档案</h2>
+    <span class="more">签发机关：深夜书房</span>
+  </div>
+  <div class="passport">
+    <div class="pp-card reveal" style="--d:.08s">
+      <div class="stamps">
+        <div class="stamp">142 星<br>已点亮</div>
+        <div class="stamp g">连续<br>21 夜</div>
+      </div>
+      <div class="pp-head">
+        <div class="avatar">星</div>
+        <div>
+          <b style="font-size:20px">拾星人</b>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);margin-top:5px">STELLAR PASSPORT</div>
+        </div>
+      </div>
+      <div class="pp-rows">
+        <div><span>星籍编号</span><b>NO.ST-2024-0307</b></div>
+        <div><span>注册星历</span><b>2024.03.07 · 第 1 夜</b></div>
+        <div><span>当前坐标</span><b>中国 · 某座有便利店的城市</b></div>
+        <div><span>职业轨道</span><b>白天 HR · 深夜写作者</b></div>
+        <div><span>信仰</span><b>缓慢、诚实、长句子</b></div>
+      </div>
+    </div>
+    <div class="pp-card reveal" style="--d:.14s">
+      <p class="pp-motto">“在算法的洪流里，做一个<em>缓慢的人</em>。写长长的句子，爱具体的人。”</p>
+      <div class="now-grid">
+        <div class="now-cell"><small>♪ 正在循环</small><b>坂本龍一《async》</b><div class="bar"><i style="width:62%"></i></div></div>
+        <div class="now-cell"><small>✉ 正在慢读</small><b>《夜航西飞》第三遍</b><div class="bar"><i style="width:45%"></i></div></div>
+        <div class="now-cell"><small>☕ 今日摄入</small><b>3 杯美式 · 超标</b><div class="bar"><i style="width:88%"></i></div></div>
+        <div class="now-cell"><small>☾ 本周写作</small><b>4 夜 · 6,820 字</b><div class="bar"><i style="width:74%"></i></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="section-head reveal"><h2>站点大事记</h2><span class="more">一部小型星际移民史</span></div>
+  <div class="his-list reveal" style="--d:.08s">
+    <div class="his-item"><small>2024.03</small><p>星笺 v1 上线，纯静态 HTML，第一颗星《搬家：物品的告别式》点亮。</p></div>
+    <div class="his-item"><small>2024.11</small><p>第 50 颗星点亮，第一次收到陌生读者的长邮件，决定一直写下去。</p></div>
+    <div class="his-item"><small>2025.08</small><p>星图归档上线，正式弃用列表式归档 —— 文章从此有了坐标。</p></div>
+    <div class="his-item"><small>2026.02</small><p>星尘突破 150K 字，相当于写完一本不太厚的书。</p></div>
+    <div class="his-item"><small>2026.09</small><p>v3「留白写作舱」发布：情绪环境光、专注模式、漂流瓶回声。</p></div>
+  </div>
+  <div class="section-head reveal"><h2>信标</h2><span class="more">向这些频率发信号，会收到回复</span></div>
+  <div class="beacon-row reveal" style="--d:.08s">
+    <button class="beacon">📮 hi@stellar.ink</button>
+    <button class="beacon">✦ RSS 订阅</button>
+    <button class="beacon">⬡ GitHub</button>
+    <button class="beacon">☄ 即刻 @拾星人</button>
+  </div>
+</section>
+
+</main>
+
+<script>
+/* ================= 数据 ================= */
+const POSTS=[
+ {t:'在算法的洪流里，做一个缓慢的人',d:'2026-08-30',w:4382,tags:['随笔','沉思'],y:2026},
+ {t:'雨夜出租车观察笔记',d:'2026-08-24',w:1860,tags:['城市','速写'],y:2026},
+ {t:'论“已读不回”的礼仪',d:'2026-08-17',w:2340,tags:['随笔','社交'],y:2026},
+ {t:'我的桌面改造：从效率到呼吸',d:'2026-07-29',w:3120,tags:['工具','生活'],y:2026},
+ {t:'读《夜航西飞》三次',d:'2026-06-15',w:2710,tags:['读书','沉思'],y:2026},
+ {t:'把博客写成一座花园',d:'2025-12-02',w:1980,tags:['写作','工具'],y:2025},
+ {t:'凌晨四点的便利店',d:'2025-10-11',w:1520,tags:['城市','速写'],y:2025},
+ {t:'一年写 18 万字的方法',d:'2025-08-08',w:3650,tags:['写作','沉思'],y:2025},
+ {t:'告别朋友圈的第九十天',d:'2025-05-19',w:2230,tags:['社交','生活'],y:2025},
+ {t:'海边的路由器',d:'2024-11-23',w:1740,tags:['旅行','速写'],y:2024},
+ {t:'第一行代码与第一首诗',d:'2024-06-30',w:2890,tags:['工具','随笔'],y:2024},
+ {t:'搬家：物品的告别式',d:'2024-03-14',w:2050,tags:['生活','沉思'],y:2024},
+];
+const PROMPTS=['写一件你今天忍住没有说出口的话。','如果给五年前的自己发一条 50 字的消息？','描述一种只有你知道的声音。','写一个你没有去成的远方。','你最近一次改变主意，是因为什么？','把今天的一种情绪写成天气。'];
+
+/* ================= 导航 ================= */
+const pages={home:'page-home',write:'page-write',map:'page-map',meteor:'page-meteor',spectrum:'page-spectrum',echo:'page-echo',links:'page-links',passport:'page-passport',bridge:'page-bridge',read:'page-read'};
+let lastPage='home';
+function go(k){
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===k));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const pg=document.getElementById(pages[k]); void pg.offsetWidth; pg.classList.add('active');
+  window.scrollTo({top:0});
+  if(k!=='read') lastPage=k;
+  if(k==='map') requestAnimationFrame(drawMap);
+  if(k==='links') requestAnimationFrame(drawLinks);
+}
+document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>go(b.dataset.page));
+
+/* ================= 背景星野 ================= */
+const sf=document.getElementById('starfield'),sfx=sf.getContext('2d');
+let stars=[];
+function initStars(){sf.width=innerWidth;sf.height=innerHeight;stars=Array.from({length:130},()=>({
+  x:Math.random()*sf.width,y:Math.random()*sf.height,r:Math.random()*1.3+.3,
+  p:Math.random()*Math.PI*2,s:.008+Math.random()*.015}));}
+initStars();addEventListener('resize',initStars);
+(function loopSf(){sfx.clearRect(0,0,sf.width,sf.height);
+  const dawn=document.body.dataset.theme==='dawn';
+  stars.forEach(s=>{s.p+=s.s;const a=(Math.sin(s.p)+1)/2*.7+.15;
+    sfx.beginPath();sfx.arc(s.x,s.y,s.r,0,7);
+    sfx.fillStyle=dawn?`rgba(90,75,60,${a*.5})`:`rgba(237,237,247,${a})`;sfx.fill();});
+  requestAnimationFrame(loopSf);})();
+
+/* ================= 走马灯 ================= */
+const tk=document.getElementById('ticker');
+const frag=POSTS.slice(0,7).map(p=>`<span>${p.t}</span>`).join('');
+tk.innerHTML=frag+frag;
+
+/* ================= 星尘卡片 ================= */
+const tagCls={'随笔':'','沉思':'cool','写作':'warm','城市':'cool','工具':'warm','社交':'','读书':'cool','生活':'warm','速写':'','旅行':'cool'};
+document.getElementById('stardust').innerHTML=POSTS.slice(1,5).map((p,i)=>`
+  <article class="dust reveal" style="--d:${.06*i}s">
+    <span class="wc">${(p.w/1000).toFixed(1)}K 字</span>
+    <div class="date">${p.d}</div><h4>${p.t}</h4>
+    <div class="ex">夜里的念头总比白天诚实。这一篇写给同样在深夜里清醒着的你——关于慢、关于光、关于那些不必说透的事……</div>
+    <div class="chips">${p.tags.map(t=>`<span class="chip ${tagCls[t]||''}">#${t}</span>`).join('')}</div>
+  </article>`).join('');
+document.querySelectorAll('.dust').forEach(c=>c.addEventListener('mousemove',e=>{
+  const r=c.getBoundingClientRect();c.style.setProperty('--mx',e.clientX-r.left+'px');
+  c.style.setProperty('--my',e.clientY-r.top+'px');}));
+
+/* ================= 首页迷你星图 ================= */
+const mm=document.getElementById('miniMap'),mmx=mm.getContext('2d');
+function drawMini(){
+  const w=mm.width=mm.clientWidth*2,h=mm.height=mm.clientHeight*2;
+  mmx.clearRect(0,0,w,h);
+  const pts=POSTS.map((p,i)=>({x:(.14+((i*73)%80)/100)*w,y:(.12+((i*41)%76)/100)*h,
+    r:Math.sqrt(p.w)/14*2,t:Date.now()/900+i}));
+  mmx.strokeStyle='rgba(139,124,255,.25)';mmx.lineWidth=1;
+  for(let i=0;i<pts.length-1;i++){mmx.beginPath();mmx.moveTo(pts[i].x,pts[i].y);
+    mmx.lineTo(pts[i+1].x,pts[i+1].y);mmx.stroke();}
+  pts.forEach((p,i)=>{const tw=(Math.sin(Date.now()/700+i)+1)/2*.4+.6;
+    mmx.beginPath();mmx.arc(p.x,p.y,p.r*tw,0,7);
+    mmx.fillStyle=i===0?'#FFB454':'#8B7CFF';
+    mmx.shadowColor=i===0?'#FFB454':'#8B7CFF';mmx.shadowBlur=18;mmx.fill();mmx.shadowBlur=0;});
+  requestAnimationFrame(drawMini);
+}
+drawMini();
+
+/* ================= 执笔 ================= */
+document.querySelectorAll('.mood').forEach(m=>m.onclick=()=>{
+  document.querySelectorAll('.mood').forEach(x=>x.classList.remove('on'));
+  m.classList.add('on');
+  document.getElementById('desk').style.setProperty('--mood',m.dataset.mood);
+});
+const bi=document.getElementById('bodyInput');
+bi.addEventListener('input',()=>{
+  const n=bi.value.replace(/\s/g,'').length;
+  document.getElementById('wordCount').textContent='+'+n;
+  document.getElementById('readTime').textContent='约 '+Math.ceil(n/400)+' 分钟读完';
+});
+document.getElementById('promptBtn').onclick=()=>{
+  const c=document.getElementById('promptCard');
+  c.style.opacity=0;setTimeout(()=>{c.textContent=PROMPTS[Math.floor(Math.random()*PROMPTS.length)];c.style.opacity=1;},300);
+};
+document.getElementById('focusBtn').onclick=function(){
+  document.body.classList.toggle('focus-mode');
+  this.textContent=document.body.classList.contains('focus-mode')?'☀️ 退出专注模式':'🌑 进入专注模式';
+};
+
+/* ================= 星图归档 ================= */
+const sm=document.getElementById('starMap'),smx=sm.getContext('2d');
+const tip=document.getElementById('mapTip');
+let mapPts=[],activeYears=new Set([2025,2026]);
+function layoutPts(){
+  const w=sm.width=sm.clientWidth*2,h=sm.height=520*2;
+  mapPts=POSTS.map((p,i)=>{
+    const gx=(i*97)%88+6, gy=(i*53+((i*31)%17))%80+10;
+    return {...p,i,x:gx/100*w,y:gy/100*h,r:Math.max(4,Math.sqrt(p.w)/7)};
+  });
+}
+function drawMap(){
+  layoutPts();
+  const w=sm.width,h=sm.height,t=Date.now()/800;
+  smx.clearRect(0,0,w,h);
+  const vis=mapPts.filter(p=>activeYears.has(p.y));
+  /* 连线：相同标签 */
+  smx.lineWidth=1.5;
+  for(let i=0;i<vis.length;i++)for(let j=i+1;j<vis.length;j++){
+    if(vis[i].tags.some(g=>vis[j].tags.includes(g))){
+      smx.beginPath();smx.moveTo(vis[i].x,vis[i].y);smx.lineTo(vis[j].x,vis[j].y);
+      smx.strokeStyle='rgba(139,124,255,.22)';smx.stroke();
+    }}
+  vis.forEach((p,i)=>{
+    const tw=(Math.sin(t+i*1.7)+1)/2*.35+.65;
+    smx.beginPath();smx.arc(p.x,p.y,p.r*tw,0,7);
+    const hot=p.y===2026;
+    smx.fillStyle=hot?'#FFB454':'#8B7CFF';
+    smx.shadowColor=hot?'#FFB454':'#8B7CFF';smx.shadowBlur=20*tw;smx.fill();smx.shadowBlur=0;
+    smx.beginPath();smx.arc(p.x,p.y,p.r*tw+5,0,7);
+    smx.strokeStyle=hot?'rgba(255,180,84,.35)':'rgba(139,124,255,.3)';smx.lineWidth=1;smx.stroke();
+  });
+  if(document.getElementById('page-map').classList.contains('active')&&!document.getElementById('mapStage').classList.contains('river'))
+    requestAnimationFrame(drawMap);
+}
+sm.addEventListener('mousemove',e=>{
+  const r=sm.getBoundingClientRect(),sx=sm.width/r.width,sy=sm.height/r.height;
+  const mx=(e.clientX-r.left)*sx,my=(e.clientY-r.top)*sy;
+  let best=null,bd=1e9;
+  mapPts.filter(p=>activeYears.has(p.y)).forEach(p=>{
+    const d=Math.hypot(p.x-mx,p.y-my);if(d<bd){bd=d;best=p;}});
+  if(best&&bd<best.r*2+26){
+    tip.innerHTML=`<h6>${best.t}</h6><p>${best.d} · ${best.w.toLocaleString()} 字<br>#${best.tags.join(' #')}</p>`;
+    tip.style.left=Math.min(e.clientX-r.left+16,r.width-240)+'px';
+    tip.style.top=(e.clientY-r.top-10)+'px';
+    tip.classList.add('show');
+  }else tip.classList.remove('show');
+});
+sm.addEventListener('mouseleave',()=>tip.classList.remove('show'));
+sm.addEventListener('click',e=>{
+  const r=sm.getBoundingClientRect(),sx=sm.width/r.width,sy=sm.height/r.height;
+  const mx=(e.clientX-r.left)*sx,my=(e.clientY-r.top)*sy;
+  let best=null,bd=1e9;
+  mapPts.filter(p=>activeYears.has(p.y)).forEach(p=>{
+    const d=Math.hypot(p.x-mx,p.y-my);if(d<bd){bd=d;best=p;}});
+  if(best&&bd<best.r*2+26) openPost(best.i);
+});
+document.querySelectorAll('.year-chip').forEach(c=>c.onclick=()=>{
+  const y=+c.dataset.year;
+  activeYears.has(y)?(activeYears.size>1&&activeYears.delete(y),c.classList.remove('on'))
+    :(activeYears.add(y),c.classList.add('on'));
+  drawMap();
+});
+/* 长卷视图 */
+const sv=document.getElementById('scrollView');
+sv.insertAdjacentHTML('beforeend',POSTS.map(p=>`
+  <div class="river-item"><span class="d">${p.d}</span><h4>${p.t}</h4>
+  <p>${p.w.toLocaleString()} 字 · #${p.tags.join(' #')}</p></div>`).join(''));
+document.getElementById('vMap').onclick=function(){
+  document.getElementById('mapStage').classList.remove('river');
+  this.classList.add('on');document.getElementById('vRiver').classList.remove('on');drawMap();};
+document.getElementById('vRiver').onclick=function(){
+  document.getElementById('mapStage').classList.add('river');
+  this.classList.add('on');document.getElementById('vMap').classList.remove('on');};
+
+/* ================= 舰桥 ================= */
+document.querySelectorAll('.theme-swatch').forEach(s=>s.onclick=()=>{
+  document.querySelectorAll('.theme-swatch').forEach(x=>x.classList.remove('on'));
+  s.classList.add('on');document.body.dataset.theme=s.dataset.theme;
+});
+const C=2*Math.PI*64;
+document.getElementById('goalRange').addEventListener('input',e=>{
+  const v=+e.target.value;
+  document.getElementById('goalNum').textContent=v;
+  document.getElementById('goalRing').style.strokeDashoffset=C*(1-v/2000);
+});
+document.getElementById('streakRing').style.strokeDashoffset=C*(1-21/30);
+
+/* ================= 深读舱 ================= */
+const PARA_POOL=[
+ '我们总是以为，写得快才算活着。可真正留下来的句子，都是在慢里熬出来的。夜越深，世界越安静，一个念头才有空间舒展成它本来该有的样子。',
+ '有人问我为什么坚持写博客，而不是把一切都交给时间线。我的答案是：时间线属于别人，博客属于自己。在这里，每一篇文章都有固定的坐标，不会被新的噪音冲走。',
+ '写作是一种延迟的艺术。让情绪先沉淀，让事实先冷却，等到某个不经意的夜晚，它们会自己浮上来，带着更清晰的轮廓。',
+ '你读到的每一段，都改过至少五遍。删掉的字比留下的多。但那些删掉的部分并没有消失——它们变成了这篇文章的骨密度。',
+ '如果说写作有什么秘诀，那就是：诚实面对那些让你犹豫要不要写下来的东西。犹豫的地方，往往就是光进来的地方。',
+ '写到这里，夜已经深了。窗外的城市像一张摊开的星图，每一盏灯都是某个人的此刻。而我的此刻，就是这篇文章，和正在读它的你。'
+];
+function openPost(i){
+  const p=POSTS[i]; if(!p) return;
+  document.getElementById('readTitle').textContent=p.t;
+  document.getElementById('readMeta').innerHTML=
+    `<span>${p.d}</span><span>${p.w.toLocaleString()} 字 · 约 ${Math.ceil(p.w/400)} 分钟</span><span>#${p.tags.join(' #')}</span><span>☾ 写于深夜</span>`;
+  const P=PARA_POOL;
+  document.getElementById('readBody').innerHTML=`
+    <p class="dropcap">${P[i%6]}</p>
+    <p>${P[(i+1)%6]}</p>
+    <blockquote>“犹豫的地方，往往就是光进来的地方。”</blockquote>
+    <p>${P[(i+2)%6]}</p>
+    <div class="marg-note"><b>✎ 批注</b>这一段写于第三次修改，原稿有八百字，删剩两句。</div>
+    <p>${P[(i+3)%6]}</p>
+    <h3>夜的第二部分</h3>
+    <p>${P[(i+4)%6]}</p>
+    <p>${P[(i+5)%6]}</p>`;
+  document.getElementById('glowN').textContent=120+i*7;
+  const pi=(i-1+POSTS.length)%POSTS.length, ni=(i+1)%POSTS.length;
+  document.getElementById('readPrev').innerHTML=`<small>← 上一颗星</small><h5>${POSTS[pi].t}</h5>`;
+  document.getElementById('readPrev').onclick=()=>openPost(pi);
+  document.getElementById('readNext').innerHTML=`<small>下一颗星 →</small><h5>${POSTS[ni].t}</h5>`;
+  document.getElementById('readNext').onclick=()=>openPost(ni);
+  go('read');
+}
+document.getElementById('glowBtn').onclick=function(){
+  const n=document.getElementById('glowN'); n.textContent=+n.textContent+1;
+  this.style.transform='scale(.94)'; setTimeout(()=>this.style.transform='',180);
+};
+addEventListener('scroll',()=>{
+  if(!document.getElementById('page-read').classList.contains('active'))return;
+  const h=document.documentElement, f=h.scrollTop/(h.scrollHeight-h.clientHeight||1);
+  document.getElementById('readBar').style.width=(f*100)+'%';
+});
+
+/* ================= 流星备忘录 ================= */
+const METEORS=[
+ {t:'便利店的关东煮，在凌晨两点最有尊严。',d:'今天 01:12'},
+ {t:'忽然明白：所谓成长，就是把“为什么是我”换成“接下来呢”。',d:'昨天 23:40'},
+ {t:'楼下的猫今天允许我摸了三秒。历史性突破。',d:'昨天 18:05'},
+ {t:'把待办清单烧掉一半，效率反而翻倍。',d:'3 天前'},
+ {t:'雨声是最好的白噪音，前提是屋里没漏。',d:'5 天前'},
+];
+function renderMeteors(){
+  document.getElementById('meteorFeed').innerHTML=METEORS.map(m=>`
+    <div class="meteor-item"><p>${m.t}</p><small>☄ ${m.d}</small></div>`).join('');
+}
+renderMeteors();
+function launchMeteor(){
+  const inp=document.getElementById('meteorInput'), v=inp.value.trim(); if(!v)return;
+  METEORS.unshift({t:v,d:'刚刚'}); inp.value=''; renderMeteors(); spawnMeteor();
+}
+document.getElementById('meteorBtn').onclick=launchMeteor;
+document.getElementById('meteorInput').addEventListener('keydown',e=>{if(e.key==='Enter')launchMeteor();});
+const ms=document.getElementById('meteorSky'),msx=ms.getContext('2d');
+let meteors=[];
+function spawnMeteor(){meteors.push({x:ms.width*(.35+Math.random()*.6),y:-10,
+  vx:-(3+Math.random()*3),vy:2+Math.random()*1.6,life:1});}
+(function loopMeteor(){
+  if(ms.clientWidth&&ms.width!==ms.clientWidth*2){ms.width=ms.clientWidth*2;ms.height=300;}
+  msx.clearRect(0,0,ms.width,ms.height);
+  if(Math.random()<.012&&meteors.length<4)spawnMeteor();
+  meteors=meteors.filter(m=>m.life>0);
+  meteors.forEach(m=>{
+    m.x+=m.vx*2;m.y+=m.vy*2;m.life-=.012;
+    const tx=m.x+90,ty=m.y-44;
+    const g=msx.createLinearGradient(m.x,m.y,tx,ty);
+    g.addColorStop(0,`rgba(255,180,84,${m.life})`);g.addColorStop(1,'rgba(255,180,84,0)');
+    msx.strokeStyle=g;msx.lineWidth=3;msx.beginPath();msx.moveTo(m.x,m.y);msx.lineTo(tx,ty);msx.stroke();
+    msx.beginPath();msx.arc(m.x,m.y,3.4,0,7);msx.fillStyle=`rgba(255,224,170,${m.life})`;
+    msx.shadowColor='#FFB454';msx.shadowBlur=16;msx.fill();msx.shadowBlur=0;
+  });
+  requestAnimationFrame(loopMeteor);
+})();
+
+/* ================= 光谱标签 ================= */
+const TAGS=[
+ {n:'随笔',c:'#8B7CFF'},{n:'沉思',c:'#4DC9D9'},{n:'写作',c:'#FFB454'},{n:'城市',c:'#FF6B9D'},
+ {n:'速写',c:'#7AD9C4'},{n:'工具',c:'#C99CFF'},{n:'生活',c:'#FF9E6B'},{n:'社交',c:'#5AB0FF'},
+ {n:'读书',c:'#8FD16A'},{n:'旅行',c:'#FFD166'}
+];
+const tagCount=n=>POSTS.filter(p=>p.tags.includes(n)).length+((n.charCodeAt(0)+n.length)%5)+1;
+function renderSpectrum(){
+  const bar=document.getElementById('specBar');
+  bar.innerHTML=TAGS.map(t=>`<i data-tag="${t.n}" style="background:${t.c};flex-grow:${tagCount(t.n)}" title="#${t.n}"></i>`).join('');
+  bar.querySelectorAll('i').forEach(seg=>seg.onclick=()=>filterTag(seg.dataset.tag));
+  document.getElementById('specTags').innerHTML=TAGS.map(t=>`
+    <button class="spec-tag" data-tag="${t.n}" style="color:${t.c}">
+      <i style="background:${t.c}"></i>#${t.n}<small style="color:var(--ink-faint)">${tagCount(t.n)}</small>
+    </button>`).join('');
+  document.querySelectorAll('.spec-tag').forEach(b=>b.onclick=()=>filterTag(b.dataset.tag));
+  filterTag('沉思');
+}
+function filterTag(n){
+  document.querySelectorAll('.spec-tag').forEach(b=>b.classList.toggle('on',b.dataset.tag===n));
+  const tag=TAGS.find(t=>t.n===n);
+  const rows=POSTS.map((p,i)=>({...p,i})).filter(p=>p.tags.includes(n));
+  document.getElementById('specList').innerHTML=rows.length?rows.map(p=>`
+    <div class="spec-row" onclick="openPost(${p.i})"><span class="dot" style="background:${tag.c}"></span>
+      <h4>${p.t}</h4><small>${p.d} · ${p.w.toLocaleString()} 字</small></div>`).join('')
+    :`<div class="spec-row"><h4 style="color:var(--ink-faint)">这个波段还没有星，去写一篇吧 →</h4></div>`;
+}
+renderSpectrum();
+
+/* ================= 回声漂流瓶 ================= */
+const ECHOS=[
+ {n:'远岛的鲸',m:'你的《缓慢的人》让我在地铁上坐过了站，谢谢。'},
+ {n:'Momo',m:'交换星链吗？我也在写夜间博客。'},
+ {n:'匿名旅人',m:'今天也是忍住没发朋友圈的一天。'},
+ {n:'老白',m:'RSS 已订阅，请继续发射。'},
+ {n:'青柠',m:'星图归档太浪漫了，偷走这个灵感（会注明出处！）。'},
+ {n:'K',m:'在破晓主题里读完了所有沉思标签。'},
+ {n:'白昼梦',m:'第 21 天连续写作，怎么做到的？求一期方法论。'},
+];
+function renderBottles(){
+  document.getElementById('echoSea').innerHTML=ECHOS.map(e=>`
+    <div class="bottle" style="left:${3+Math.random()*66}%;top:${5+Math.random()*68}%;
+      --rot:${(Math.random()*8-4).toFixed(1)}deg;--fd:${(6+Math.random()*4).toFixed(1)}s">
+      <b>🫙 ${e.n}</b>${e.m}</div>`).join('');
+  document.getElementById('echoCount').textContent=`${ECHOS.length} 只瓶子正在海上漂`;
+}
+renderBottles();
+document.getElementById('echoBtn').onclick=()=>{
+  const m=document.getElementById('echoMsg').value.trim(); if(!m)return;
+  const n=document.getElementById('echoName').value.trim()||'匿名旅人';
+  ECHOS.unshift({n,m}); renderBottles();
+  document.getElementById('echoMsg').value=''; document.getElementById('echoName').value='';
+};
+
+/* ================= 星链友邻 ================= */
+const FRIENDS=[
+ {n:'夜航书店',u:'nightbooks.blog',d:'在书页之间巡航的人，书评写得比书还慢。',x:.16,y:.3},
+ {n:'雾中电台',u:'fogradio.fm',d:'每周一期的声音随笔，适合雨夜收听。',x:.38,y:.62},
+ {n:'盐的实验室',u:'saltlab.dev',d:'前端 × 生成艺术，Canvas 重度玩家。',x:.56,y:.22},
+ {n:'山月记',u:'shanmoon.com',d:'古典文学慢读计划，一年只读十二本。',x:.74,y:.5},
+ {n:'废纸篓',u:'trashcan.ink',d:'写废稿比写成稿多，但篇篇真诚。',x:.3,y:.82},
+ {n:'零点公园',u:'0park.life',d:'城市夜游观察，凌晨街灯收藏家。',x:.85,y:.78},
+];
+const lm=document.getElementById('linkMap'),lmx=lm.getContext('2d');
+const linkTip=document.getElementById('linkTip');
+let linkPts=[],hoverLink=-1;
+function drawLinks(){
+  lm.width=lm.clientWidth*2; lm.height=680;
+  linkPts=FRIENDS.map(f=>({...f,px:f.x*lm.width,py:f.y*lm.height}));
+  const t=Date.now()/700, ink=getComputedStyle(document.body).getPropertyValue('--ink').trim()||'#EDEDF7';
+  lmx.clearRect(0,0,lm.width,lm.height);
+  const edges=[[0,1],[1,4],[0,2],[2,3],[3,5],[1,2],[4,5]];
+  lmx.strokeStyle='rgba(77,201,217,.25)';lmx.lineWidth=1.5;
+  edges.forEach(([a,b])=>{lmx.beginPath();lmx.moveTo(linkPts[a].px,linkPts[a].py);
+    lmx.lineTo(linkPts[b].px,linkPts[b].py);lmx.stroke();});
+  lmx.textAlign='center';
+  linkPts.forEach((p,i)=>{
+    const tw=(Math.sin(t+i*2)+1)/2*.4+.6;
+    lmx.beginPath();lmx.arc(p.px,p.py,7*tw+3,0,7);
+    lmx.fillStyle=i===hoverLink?'#FFB454':'#4DC9D9';
+    lmx.shadowColor=lmx.fillStyle;lmx.shadowBlur=18*tw;lmx.fill();lmx.shadowBlur=0;
+    lmx.fillStyle=ink;lmx.font=`500 ${20}px 'Noto Sans SC'`;
+    lmx.fillText(p.n,p.px,p.py+34);
+  });
+  if(document.getElementById('page-links').classList.contains('active'))
+    requestAnimationFrame(drawLinks);
+}
+lm.addEventListener('mousemove',e=>{
+  const r=lm.getBoundingClientRect(),sx=lm.width/r.width,sy=lm.height/r.height;
+  const mx=(e.clientX-r.left)*sx,my=(e.clientY-r.top)*sy;
+  let bd=1e9; hoverLink=-1; let best=null;
+  linkPts.forEach((p,i)=>{const d=Math.hypot(p.px-mx,p.py-my);if(d<bd){bd=d;best=p;hoverLink=i;}});
+  if(best&&bd<70){
+    linkTip.innerHTML=`<h6>${best.n}</h6><p>${best.u}<br>${best.d}</p>`;
+    linkTip.style.left=Math.min(e.clientX-r.left+16,r.width-240)+'px';
+    linkTip.style.top=(e.clientY-r.top-10)+'px';
+    linkTip.classList.add('show'); lm.style.cursor='pointer';
+  }else{linkTip.classList.remove('show'); lm.style.cursor='default'; hoverLink=-1;}
+});
+lm.addEventListener('mouseleave',()=>linkTip.classList.remove('show'));
+lm.addEventListener('click',()=>{
+  if(hoverLink<0)return;
+  const card=document.getElementById('linkCard'+hoverLink);
+  card.scrollIntoView({behavior:'smooth',block:'center'});
+  card.classList.add('flash'); setTimeout(()=>card.classList.remove('flash'),1400);
+});
+document.getElementById('linkGrid').innerHTML=FRIENDS.map((f,i)=>`
+  <div class="link-card" id="linkCard${i}"><b>${f.n}</b><span class="u">${f.u}</span><p>${f.d}</p></div>`).join('');
+document.getElementById('linkBtn').onclick=()=>{
+  const n=document.getElementById('linkName').value.trim(); if(!n)return;
+  const u=document.getElementById('linkUrl').value.trim()||'unknown.space';
+  const i=FRIENDS.length;
+  FRIENDS.push({n,u,d:'新来的邻居，信号确认中…',x:.15+Math.random()*.7,y:.15+Math.random()*.7});
+  document.getElementById('linkGrid').insertAdjacentHTML('beforeend',
+    `<div class="link-card flash" id="linkCard${i}"><b>${n}</b><span class="u">${u}</span><p>新来的邻居，信号确认中…</p></div>`);
+  document.getElementById('linkName').value=''; document.getElementById('linkUrl').value='';
+  drawLinks();
+};
+</script>
+</body>
+</html>

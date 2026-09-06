@@ -1,0 +1,11 @@
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 依赖与构建产物（stellar-ink-web 内另有细化规则）
+node_modules/
+dist/
