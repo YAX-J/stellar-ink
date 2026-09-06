@@ -1,0 +1,29 @@
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--font-body); font-weight:300;
+  min-height:100vh; overflow-x:hidden;
+  transition:background .6s var(--ease-standard), color .6s;
+}
+::selection{background:var(--primary); color:#fff}
+
+/* 背景星野 */
+.starfield{position:fixed; inset:0; z-index:0; pointer-events:none; transition:opacity .6s}
+body[data-theme="dawn"] .starfield{opacity:.12}
+body.focus-mode .starfield{opacity:.3}
+
+/* 主区域 */
+.main{margin-left:96px; position:relative; z-index:1; transition:margin .5s}
+body.focus-mode .main{margin-left:0}
+
+/* 页面容器与入场动画 */
+.page{padding:clamp(24px,4vw,56px); max-width:1240px; margin:0 auto}
+.page .reveal{animation:rise .7s var(--ease-standard) both; animation-delay:var(--d,0s)}
+@keyframes rise{from{opacity:0; transform:translateY(26px)}to{opacity:1; transform:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+@media (max-width:720px){
+  .main{margin-left:0; margin-bottom:72px}
+  body.focus-mode .main{margin-left:0}
+}
