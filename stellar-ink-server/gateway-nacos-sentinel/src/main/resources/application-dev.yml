@@ -1,0 +1,126 @@
+# 开发环境服务器配置
+spring:
+  config:
+    activate:
+      on-profile: dev # 仅在 dev 环境激活
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # 导入Nacos配置（可选，未上传不影响启动）
+  cloud:
+    # Nacos配置 - 注册中心和配置中心
+    nacos:
+      # 配置中心
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml  # 明确指定为 yaml
+        group: DEFAULT_GROUP
+        refresh-enabled: true  # 开启配置动态刷新
+      # 服务发现
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        group: DEFAULT_GROUP
+
+    # 网关配置
+    gateway:
+      # 跨域配置：宽松策略，方便前端调试
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: "*"
+            allowed-methods: [ "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH" ]
+            allowed-headers: "*"
+            max-age: 3600 # 预检请求缓存时间（秒）
+      # 服务发现路由：启用自动路由，无需手动配置每个服务
+      discovery:
+        locator:
+          enabled: true
+          lowerCaseServiceId: true
+      # 路由定义（显式声明，保证对外路径稳定）
+      routes:
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/auth/**,/user/**
+        - id: post-service
+          uri: lb://post-service
+          predicates:
+            - Path=/posts/**,/tags/**,/search/**
+        - id: meteor-service
+          uri: lb://meteor-service
+          predicates:
+            - Path=/meteors/**
+        - id: echo-service
+          uri: lb://echo-service
+          predicates:
+            - Path=/echos/**
+        - id: link-service
+          uri: lb://link-service
+          predicates:
+            - Path=/links/**
+        - id: stats-service
+          uri: lb://stats-service
+          predicates:
+            - Path=/stats/**
+
+    # Sentinel 限流熔断（规则可在 Nacos 配置中心动态下发）
+    sentinel:
+      eager: true
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+      # 网关流控模式（0 表示根据 route 维度限流）
+      filter:
+        enabled: true
+
+# 基础不可变配置
+sa-token:
+  # token名称（同时也是cookie名称）
+  token-name: Authorization
+  # token 风格
+  token-style: uuid
+  # 本地开发关闭操作日志
+  is-log: false
+  # JWT 密钥（必须与各业务服务一致）
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET:stellar-ink-satoken-jwt-secret-32bytes}
+  # token有效期，单位s，设置7天
+  timeout: 604800
+  # 是否允许同一账号并发登录
+  is-concurrent: true
+  # 多人登录同一账号是否共用一个token
+  is-share: true
+
+# SpringDoc OpenAPI配置 - API文档路径
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+# Actuator端点暴露 - 用于健康检查和配置验证
+# 临时将某个包的日志级别调整为 DEBUG：
+# curl -X POST "http://localhost:8080/actuator/loggers/org.springframework.cloud.gateway" \
+# -H "Content-Type: application/json" -d '{"configuredLevel": "DEBUG"}'
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+    loggers:
+      enabled: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN

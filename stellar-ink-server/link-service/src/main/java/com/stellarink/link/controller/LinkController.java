@@ -1,0 +1,85 @@
+package com.stellarink.link.controller;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.link.mapper.LinkMapper;
+import com.stellarink.link.pojo.Link;
+import com.stellarink.sharedmodel.dto.link.LinkApplyDTO;
+import com.stellarink.sharedmodel.enums.ErrorCode;
+import com.stellarink.sharedmodel.response.Response;
+import com.stellarink.sharedmodel.vo.link.LinkVO;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Slf4j
+@RestController
+@RequestMapping("/links")
+@RequiredArgsConstructor
+public class LinkController {
+
+    private final LinkMapper linkMapper;
+
+    @GetMapping
+    public Response<List<LinkVO>> list() {
+        return Response.success(linkMapper.selectList(new LambdaQueryWrapper<Link>()
+                .orderByAsc(Link::getId))
+                .stream().map(this::toVO).toList());
+    }
+
+    /** 申请接入星链（公开） */
+    @PostMapping
+    public Response<Void> apply(@RequestBody LinkApplyDTO dto) {
+        if (!StringUtils.hasText(dto.getName())) {
+            throw BusinessExceptionHelper.of("你的站点名是空的。");
+        }
+        if (!StringUtils.hasText(dto.getUrl())) {
+            throw BusinessExceptionHelper.of("站点地址是空的，信号发不出去。");
+        }
+        Link entity = new Link();
+        entity.setName(dto.getName().trim());
+        entity.setUrl(dto.getUrl().trim());
+        entity.setDescription(StringUtils.hasText(dto.getDescription())
+                ? dto.getDescription().trim() : "新来的邻居，信号确认中…");
+        entity.setStatus(0);
+        entity.setCreatedAt(LocalDateTime.now());
+        linkMapper.insert(entity);
+        log.info("友链申请 id={} name={} url={}", entity.getId(), entity.getName(), entity.getUrl());
+        return Response.success();
+    }
+
+    /** 站长确认 / 拒绝（网关鉴权）：status 1 接入 0 待确认 */
+    @PutMapping("/{id}/status")
+    public Response<Void> updateStatus(@PathVariable Long id, @RequestParam Integer status) {
+        Link entity = linkMapper.selectById(id);
+        if (entity == null) {
+            throw BusinessExceptionHelper.of(ErrorCode.NOT_FOUND, "这个邻居不存在");
+        }
+        entity.setStatus(status);
+        linkMapper.updateById(entity);
+        log.info("友链 {} 状态变更为 {}", id, status);
+        return Response.success();
+    }
+
+    private LinkVO toVO(Link entity) {
+        LinkVO vo = new LinkVO();
+        vo.setId(entity.getId());
+        vo.setName(entity.getName());
+        vo.setUrl(entity.getUrl());
+        vo.setDescription(entity.getDescription());
+        vo.setStatus(entity.getStatus());
+        vo.setCreatedAt(entity.getCreatedAt());
+        return vo;
+    }
+}

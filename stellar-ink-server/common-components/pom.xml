@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.stellarink</groupId>
+        <artifactId>stellar-ink-server</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>common-components</artifactId>
+    <packaging>pom</packaging>
+    <description>公共组件聚合（被所有微服务依赖，非独立运行）</description>
+
+    <modules>
+        <module>shared-model</module>
+        <module>common-core</module>
+        <module>service-api</module>
+    </modules>
+</project>

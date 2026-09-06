@@ -1,0 +1,270 @@
+# =============================================================================
+# 星笺 STELLAR INK 生产部署编排（Docker Compose v2，需 Docker 20.10+ 支持 host-gateway）
+#
+# 拓扑：web(nginx:80) → gateway(:8080 对外) → 业务服务(8101-8106，仅内部网络)
+#       全部服务注册/读配置到 nacos(:8848，compose 内部网络)
+#
+# 服务器上已有的 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器由本机维护，
+# 本编排不重复创建：业务服务经 host-gateway 访问宿主机 3306 上的 MySQL；
+# Redis/Qdrant 现阶段业务未使用，后续接入限流/AI 时再纳入。
+#
+# 敏感配置统一放同目录 .env（参照 .env.example）；首次部署步骤见同目录 README.md
+# =============================================================================
+name: stellar-ink
+
+# —— 所有 Java 服务公共环境变量 ——
+x-common-env: &common-env
+  TZ: Asia/Shanghai
+  SPRING_PROFILES_ACTIVE: prod
+  NACOS_ADDR: nacos:8848
+  NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
+  NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
+  SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
+  # 堆上限跟随容器 mem_limit，各服务内存预算见 README
+  JAVA_OPTS: >-
+    -XX:MaxRAMPercentage=70.0
+    -XX:+UseG1GC
+    -Dfile.encoding=UTF-8
+    -Duser.timezone=Asia/Shanghai
+
+# —— 走数据库的业务服务在 common 基础上追加 ——
+x-db-env: &db-env
+  <<: *common-env
+  MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+  MYSQL_PORT: ${MYSQL_PORT:-3306}
+  MYSQL_DB: ${MYSQL_DB:-stellar_ink}
+  MYSQL_USER: ${MYSQL_USER:-root}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
+
+# —— 后端镜像：共用一个 Dockerfile，仅 JAR_PATH 不同（Maven 全量编译只执行一次）——
+x-server-build: &server-build
+  context: ../..
+  dockerfile: stellar-ink-server/Dockerfile
+
+# —— 从容器内访问宿主机服务（Linux 需 host-gateway）——
+x-extra-hosts: &extra-hosts
+  - "host.docker.internal:host-gateway"
+
+# —— 健康检查默认参数 ——
+x-health: &health-defaults
+  interval: 15s
+  timeout: 5s
+  retries: 6
+  start_period: 90s
+
+# —— 日志轮转 ——
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  # ------------------------------------------------------------ 注册/配置中心
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: stellar-ink-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+      TZ: Asia/Shanghai
+    ports:
+      # 控制台仅绑宿主机回环，走 SSH 隧道访问：ssh -L 8848:127.0.0.1:8848 <服务器>
+      - "127.0.0.1:8848:8848"
+      - "127.0.0.1:9848:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+      - nacos-logs:/home/nacos/logs
+    healthcheck:
+      # 用 bash /dev/tcp 探端口，避免依赖镜像内是否有 curl
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8848' || exit 1"]
+      <<: *health-defaults
+    mem_limit: 640m
+    logging: *default-logging
+
+  # -------------------------------------------------------------------- 网关
+  gateway:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: gateway-nacos-sentinel/target/gateway-nacos-sentinel.jar
+    image: stellar-ink/gateway:latest
+    container_name: stellar-ink-gateway
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-*}
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - ./logs/gateway:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+    mem_limit: 512m
+    logging: *default-logging
+
+  # ---------------------------------------------------------------- 业务服务
+  user-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: user-service/target/user-service.jar
+    image: stellar-ink/user-service:latest
+    container_name: stellar-ink-user-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/user-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8101/actuator/health || exit 1"]
+    mem_limit: 384m
+    logging: *default-logging
+
+  post-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: post-service/target/post-service.jar
+    image: stellar-ink/post-service:latest
+    container_name: stellar-ink-post-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/post-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8102/actuator/health || exit 1"]
+    mem_limit: 384m
+    logging: *default-logging
+
+  meteor-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: meteor-service/target/meteor-service.jar
+    image: stellar-ink/meteor-service:latest
+    container_name: stellar-ink-meteor-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/meteor-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8103/actuator/health || exit 1"]
+    mem_limit: 384m
+    logging: *default-logging
+
+  echo-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: echo-service/target/echo-service.jar
+    image: stellar-ink/echo-service:latest
+    container_name: stellar-ink-echo-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/echo-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8104/actuator/health || exit 1"]
+    mem_limit: 384m
+    logging: *default-logging
+
+  link-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: link-service/target/link-service.jar
+    image: stellar-ink/link-service:latest
+    container_name: stellar-ink-link-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *db-env
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/link-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8105/actuator/health || exit 1"]
+    mem_limit: 384m
+    logging: *default-logging
+
+  # 无库服务（OpenFeign 聚合），不需要 MySQL/JWT 之外的配置
+  stats-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: stats-service/target/stats-service.jar
+    image: stellar-ink/stats-service:latest
+    container_name: stellar-ink-stats-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+    volumes:
+      - ./logs/stats-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8106/actuator/health || exit 1"]
+    mem_limit: 320m
+    logging: *default-logging
+
+  # -------------------------------------------------------------------- 前端
+  web:
+    build:
+      context: ../..
+      dockerfile: stellar-ink-web/Dockerfile
+    image: stellar-ink/web:latest
+    container_name: stellar-ink-web
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    ports:
+      - "${WEB_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 64m
+    logging: *default-logging
+
+volumes:
+  nacos-data:
+  nacos-logs:

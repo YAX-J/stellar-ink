@@ -1,0 +1,9 @@
+# 基础应用配置
+server:
+  port: 8101
+
+spring:
+  application:
+    name: user-service
+  profiles:
+    active: dev

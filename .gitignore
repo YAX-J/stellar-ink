@@ -9,3 +9,11 @@ Thumbs.db
 # 依赖与构建产物（stellar-ink-web 内另有细化规则）
 node_modules/
 dist/
+target/
+tools/
+
+# 运行时日志
+logs/
+
+# Docker 部署敏感配置
+deploy/docker/.env
