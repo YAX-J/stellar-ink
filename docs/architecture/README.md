@@ -72,6 +72,20 @@ stellar-ink-server/
 共享库模式（一个 `stellar_ink` 库，各服务只读写自己的表），兼容云数据库无建库权限场景。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
 
+## Docker 部署（deploy/docker）
+
+生产环境一键编排：`deploy/docker/docker-compose.yml`（Nacos + 网关 + 6 服务 + 前端 Nginx，内部网络互通）。
+
+- 服务器已有的 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器不归编排管；业务服务经
+  `host.docker.internal`（host-gateway）访问宿主机 3306 上的 MySQL，Redis/Qdrant 暂未使用仅预留
+- 敏感配置统一放 `deploy/docker/.env`（从 `.env.example` 复制，不入库）；各 Java 服务配 `mem_limit`
+  并按 `MaxRAMPercentage=70` 控堆
+- 后端统一镜像 `stellar-ink-server/Dockerfile`：Maven 多阶段构建全 reactor，各服务仅 build arg
+  `JAR_PATH` 不同（jar 名对应各模块 `<finalName>`）
+- 前端镜像 `stellar-ink-web/Dockerfile`：Vite 构建 → Nginx 托管 SPA（history 路由回退），
+  `/posts` 等 API 前缀同源反代网关
+- 首次部署 / 日常更新 / 运维命令见 `deploy/docker/README.md`
+
 ## 演进路线（按需，暂不实施）
 
 - Sentinel 规则持久化到 Nacos（sentinel-datasource-nacos 已引入）

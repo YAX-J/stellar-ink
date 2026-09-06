@@ -1,0 +1,22 @@
+# 版本控制与 IDE
+.git
+.gitignore
+.idea
+.vscode
+
+# 依赖与构建产物（全部在镜像内构建，宿主机产物不进上下文）
+**/node_modules
+**/dist
+**/target
+**/logs
+
+# 与镜像构建无关的目录
+tools/
+docs/
+prototype/
+stellar-ink-ai/
+stellar-ink-server/stellar-ink-ai-client/
+deploy/sql/
+deploy/scripts/
+deploy/docker/logs/
+deploy/docker/.env

@@ -32,7 +32,8 @@ stellar-ink/
 ├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
 ├── docs/architecture/              微服务架构说明
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
-└── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
+├── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
+└── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/6 服务/前端 Nginx，详见其 README）
 ```
 
 ## 2. 常用命令与端口
@@ -46,6 +47,10 @@ npm run build                                          # 构建验证
 cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos
 cd stellar-ink-server && mvn -DskipTests package       # 2. 构建
 deploy\scripts\start-all.bat                           # 3. 一键起全部（或按模块手动 java -jar）
+
+# 生产部署（Linux 服务器 Docker Compose；MySQL/Redis/Qdrant 复用服务器已有容器）
+cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET
+docker compose up -d --build                           # 2. 构建 + 启动（步骤详见 deploy/docker/README.md）
 ```
 
 - 提交前必须验证：前端 `npm run build` 通过；后端 `mvn package` 通过，且启动后通过网关（:8080）curl 过改动到的接口。

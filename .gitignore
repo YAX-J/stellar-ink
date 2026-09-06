@@ -14,3 +14,6 @@ tools/
 
 # 运行时日志
 logs/
+
+# Docker 部署敏感配置
+deploy/docker/.env
