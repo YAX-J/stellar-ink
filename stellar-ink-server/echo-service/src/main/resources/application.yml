@@ -1,0 +1,8 @@
+server:
+  port: 8104
+
+spring:
+  application:
+    name: echo-service
+  profiles:
+    active: dev

@@ -8,25 +8,31 @@
 「星笺 · STELLAR INK」：一个把文章比作星辰的夜间写作博客。设计基调是深色星空、
 缓慢、诗意 —— **任何 UI 改动不得破坏这个气质**（不引入亮色系大色块、不用圆角/字体之外的花哨组件库）。
 
+后端微服务架构**对齐参考工程 `E:\resume_project\enterprise_digital_platform`**（模块划分、
+配置文件风格、公共组件分层均以其为准），业务域换成本项目的文章/流星/回声/星链。
+
 ```
 stellar-ink/
-├── prototype/           高保真原型（单文件 HTML，UI 的唯一视觉基准）
-├── stellar-ink-web/     前端：Vue 3 + Vite + Pinia + Vue Router（已跑通，尚未接后端）
-├── stellar-ink-server/  后端：Spring Cloud Alibaba 微服务（已跑通）
-│   ├── stellar-ink-common/            公共库（Result/JwtUtil/异常，零 Spring 依赖）
-│   ├── stellar-ink-gateway/           网关 :8080（路由 + CORS + JWT 鉴权）
-│   ├── stellar-ink-service-user/      用户服务 :8101（登录/资料，表 user）
-│   ├── stellar-ink-service-post/      文章服务 :8102（文章/标签/搜索，表 post）
-│   ├── stellar-ink-service-meteor/    流星服务 :8103（表 meteor）
-│   ├── stellar-ink-service-echo/      回声服务 :8104（表 echo）
-│   ├── stellar-ink-service-link/      星链服务 :8105（表 link）
-│   ├── stellar-ink-service-stats/     统计服务 :8106（Feign 聚合，无库）
-│   └── stellar-ink-ai-client/         预留目录，AI 功能暂不开发，未经用户明确要求不得动它
-├── stellar-ink-ai/      Python AI 服务占位，暂不开发
-├── tools/nacos/         Nacos Server 本体（gitignore，不入库）
-├── docs/architecture/   微服务架构说明
-├── docs/api/README.md   接口文档（改接口必须同步更新）
-└── deploy/sql|scripts/  数据库初始化脚本 / 一键启动脚本
+├── prototype/                      高保真原型（单文件 HTML，UI 的唯一视觉基准）
+├── stellar-ink-web/                前端：Vue 3 + Vite + Pinia + Vue Router（已跑通，尚未接后端）
+├── stellar-ink-server/             后端：Spring Cloud Alibaba 微服务（已跑通）
+│   ├── common-components/          公共组件聚合（非独立运行）
+│   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO
+│   │   ├── common-core/            基础设施：全局异常(Servlet+Reactive)/TraceId/MP配置/健康检查
+│   │   └── service-api/            跨服务 Feign 契约 + FallbackFactory
+│   ├── gateway-nacos-sentinel/     网关 :8080（WebFlux：路由/CORS/Sa-Token 鉴权/Sentinel）
+│   ├── user-service/   :8101       登录认证、站长资料（表 user）
+│   ├── post-service/   :8102       文章/标签/搜索（表 post）
+│   ├── meteor-service/ :8103       流星备忘录（表 meteor）
+│   ├── echo-service/   :8104       回声漂流瓶（表 echo）
+│   ├── link-service/   :8105       星链友链（表 link）
+│   ├── stats-service/  :8106       写作脉搏（OpenFeign 聚合，无库）
+│   └── stellar-ink-ai-client/      预留目录，AI 功能暂不开发，未经用户明确要求不得动它
+├── stellar-ink-ai/                 Python AI 服务占位，暂不开发
+├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
+├── docs/architecture/              微服务架构说明
+├── docs/api/README.md              接口文档（改接口必须同步更新）
+└── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
 ```
 
 ## 2. 常用命令与端口
@@ -50,7 +56,7 @@ deploy\scripts\start-all.bat                           # 3. 一键起全部（�
 
 - **Git**：功能走 `feature/*` 分支；提交信息格式 `type(范围): 中文主题`，正文用 `-` 列要点。
   常用 type：feat / fix / docs / chore / refactor。**只做用户要求的提交与推送**。
-- **禁止入库**：`node_modules/`、`dist/`、`target/`、`.vite/`、`.idea/`、`tools/`（Nacos 本体）等（见根 .gitignore）。
+- **禁止入库**：`node_modules/`、`dist/`、`target/`、`.vite/`、`.idea/`、`tools/`、`logs/`（见根 .gitignore）。
 - 新增依赖要克制：前端不加 UI 组件库；后端版本必须整体联动（见下），先在父 pom `dependencyManagement` 登记。
 - 所有文本文件 UTF-8（Windows 下注意别让 IDE 存成 GBK）。
 - 文档同步：改了接口/启动方式/目录结构，必须同步更新 `docs/api/README.md`、`docs/architecture/README.md` 和本文档。
@@ -87,51 +93,66 @@ deploy\scripts\start-all.bat                           # 3. 一键起全部（�
 
 ## 5. 后端规范（stellar-ink-server，Spring Cloud Alibaba 微服务）
 
-### 版本矩阵（必须整体联动升级，不可单点调整）
-- Spring Boot 3.3.12 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0.3.3（官方匹配组合）
-- MyBatis-Plus 3.5.12（分页拦截器需额外引 mybatis-plus-jsqlparser）、jjwt 0.12.6
+### 版本矩阵（必须整体联动升级，不可单点调整；对齐参考工程）
+- Spring Boot 3.2.12 / Spring Cloud 2023.0.6 / Spring Cloud Alibaba 2023.0.3.4 / Java 17
+- MyBatis-Plus 3.5.15（分页拦截器需额外引 mybatis-plus-jsqlparser）、Druid 1.2.20、
+  Sa-Token 1.44.0（JWT 无状态模式）、springdoc 2.3.0 + knife4j 4.5.0
 
 ### 架构与边界
 - 拓扑/端口/调用关系见 `docs/architecture/README.md`；对外唯一入口是网关 :8080，API 路径与前端约定保持稳定。
 - 服务按业务域拆分，**表归属严格划分**：user→`user`、post→`post`、meteor→`meteor`、echo→`echo`、
   link→`link`；stats 无库（OpenFeign 聚合 post-service 的 `/internal/posts/summary`）。
-- 共享库模式：一个 `stellar_ink` 库（兼容云数据库无建库权限），各服务**只读写自己的表**；
-  拆库时改各服务的 `MYSQL_DB` 环境变量即可，无需改代码。
-- **鉴权在网关**（AuthGlobalFilter）：放行 GET/OPTIONS、`/auth/**`、公开写接口
-  （`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；其余对
-  `/posts|/meteors|/links|/user` 的写请求校验 JWT 后注入 `X-User-Id`（剥离客户端伪造的同名头）。
-  下游服务不校验 JWT，只读 `X-User-Id`，缺失视为绕过网关直接抛 401。
-- 服务间调用用 OpenFeign；`/internal/**` 为服务间接口，网关不配路由，外部不可达。
-- 跨服务 DTO 复制不共享：服务间契约模型定义在调用方（如 stats 的 PostSummary），字段与提供方对齐；
-  提供方接口改动必须通知调用方同步。
+- 共享库模式：一个 `stellar_ink` 库，各服务**只读写自己的表**；拆库时改各服务 `MYSQL_DB` 环境变量。
+- **鉴权在网关**（Sa-Token，JWT 无状态模式 `StpLogicJwtForStateless`）：放行 GET/OPTIONS、
+  `/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
+  其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
+  下游服务用 `AuthHelper.loginId()`（StpUtil 验签）取用户 id，不校验路由级权限。
+- 服务间调用：Feign 契约统一放 `service-api`（@FeignClient + FallbackFactory，resilience4j 断路器，
+  调用方配 `feign.circuitbreaker.enabled: true`）；`/internal/**` 为服务间接口，网关不配路由。
+- 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
 
-### 工程约定
-- 包结构：`com.stellarink.<service>/{controller,service,entity,mapper,dto,vo,config}`；
-  启动类 `@MapperScan` 指向本服务 mapper 包。
-- 公共库 `stellar-ink-common`（Result/ResultCode/BusinessException/JwtUtil/常量）**保持零 Spring 依赖**，
-  需要注册为 Bean 的（JwtUtil）在各服务 `config/` 里 `@Bean` 包装。
-- 所有对外与内部接口统一返回 `Result<T>`；`Result` 必须保持可被 Feign/Jackson 反序列化
-  （@NoArgsConstructor + @Setter，曾有裸数组/不可反序列化踩坑）。
-- 业务校验失败抛 `BusinessException`（ResultCode.NOT_FOUND 等），全局处理器同步 4xx/5xx HTTP 状态码。
+### 工程约定（对齐参考工程）
+- 包结构：`com.stellarink.<service>/{controller,service,service.impl,mapper,pojo,config}`——
+  实体包叫 **pojo**（不是 entity），服务接口在 service、实现放 `service/impl`。
+- 启动类模板：`@SpringBootApplication @ComponentScan(basePackages={"com.stellarink.<svc>","com.stellarink.common"})
+  @EnableDiscoveryClient @MapperScan("com.stellarink.<svc>.**.mapper")`；需要 Feign 的加
+  `@EnableFeignClients(basePackages="com.stellarink.serviceapi.feign")`。
+- 公共模块：`shared-model`（Response/ErrorCode/BusinessException/DTO/VO）、
+  `common-core`（GlobalExceptionHandler(Servlet+Reactive)/TraceIdFilter/LogInterceptor/
+  MybatisPlusConfig/SimpleHealthController/AuthHelper/BusinessExceptionHelper）。
+- 所有接口统一返回 `Response<T>`（code/msg/data/traceId）；业务校验失败抛 `BusinessException`
+  （用 `BusinessExceptionHelper.of(...)`），全局处理器带 traceId 并写 MDC。
+- 无数据库的服务（stats）：启动类 `exclude = {DataSourceAutoConfiguration.class, MybatisPlusAutoConfiguration.class}`。
+
+### 配置文件风格（照参考工程，每个服务统一 5 件）
+| 文件 | 内容 |
+|---|---|
+| `application.yml` | 极简：port + 应用名 + `profiles.active: dev` |
+| `application-dev.yml` | `spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator 全暴露 + 日志降噪 |
+| `application-prod.yml` | 生产：敏感项全走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
+| `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放敏感/可调项 |
+| `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天+200MB 滚动，30 天） |
+
+- Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）；
+  MySQL 用 `MYSQL_HOST/PORT/DB/USER/PASSWORD`；JWT 密钥用 `SA_TOKEN_JWT_SECRET`。
 
 ### 数据库
-- 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`。
-- dev：各服务内置 H2（`schema.sql` 含幂等种子，与前端 prototype 的 mock 对齐）；
-  生产：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等，无建库权限场景友好）。**两处结构改动必须同步**。
-- 已知坑：`user` 是 H2 保留字，dev 数据源 URL 带 `NON_KEYWORDS=USER`，别删。
+- 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
+- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）。
+- 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 
-### 日志（slf4j）
+### 日志（slf4j + logback-spring.xml）
 - 一律 `@Slf4j`；关键业务动作 info，登录失败/未授权/业务异常 warn（不含敏感信息），未捕获 error。
-- 每服务独立日志文件 `logs/stellar-ink-<服务>.log`（UTF-8，按天+20MB 滚动，留 14 天）；
-  访问日志 logger 名 `API-ACCESS`（RequestLogFilter），业务代码不重复记路径。
+- 访问日志由 common-core 的 `LogInterceptor` 输出（`API-ACCESS 方法 路径 状态 耗时`）；
+  链路追踪 `TraceIdFilter`（MDC + `X-Trace-Id` 响应头），异常响应带 traceId。
 
 ### 安全
-- 密码只存 BCrypt；JWT 密钥各服务与网关保持一致，生产用环境变量 `STELLAR_JWT_SECRET` 覆盖，
-  代码里不得出现新的硬编码密钥。
+- 密码只存 BCrypt；`SA_TOKEN_JWT_SECRET` 生产用环境变量覆盖，
+  网关与所有业务服务的 jwt-secret-key 必须一致，代码里不得出现新的硬编码密钥。
 
 ## 6. 当前状态与边界（不要越界开发）
 
-- 已完成：前端全部 10 页（mock 数据）；后端微服务化（网关 + 6 服务 + Nacos 注册，全链路已实测）。
+- 已完成：前端全部 10 页（mock 数据）；后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
 - **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、注册与多用户、评论系统、文件上传、
-  全文检索引擎（现用 LIKE）、熔断限流（Sentinel）、配置中心（nacos-config）——用户明确要求后再动。
+  全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化——用户明确要求后再动。
 - 下一步方向（用户提出再做）：前端 store 从 mock 切到网关接口（:8080，路径不变，CORS 网关已放开）。

@@ -1,57 +1,80 @@
-# 星笺后端架构（Spring Cloud Alibaba 微服务）
+# 星笺后端架构（Spring Cloud Alibaba 微服务，对齐企业级参考架构）
 
-> v2 架构：单体改造为微服务。对外 API 路径与 v1 完全一致，前端无感。
-> 依赖版本矩阵：Spring Boot 3.3.12 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0.3.3（官方匹配组合）。
+> 版本矩阵：Spring Boot 3.2.12 / Spring Cloud 2023.0.6 / Spring Cloud Alibaba 2023.0.3.4 / Java 17 / MyBatis-Plus 3.5.15。
+> 对外 API 路径与单体时期一致，前端无感。
 
 ## 拓扑
 
 ```
-                      ┌────────────────────┐
-  前端 / curl ────────▶│  gateway :8080     │ 统一入口：路由 + CORS + JWT 鉴权
-                      └───────┬────────────┘
-                              │ 按前缀路由（lb:// 服务发现负载均衡）
+                      ┌──────────────────────────────┐
+  前端 / curl ────────▶│ gateway-nacos-sentinel :8080 │ WebFlux 网关
+                      │  SaReactorFilter 登录校验     │ Nacos 配置中心导入
+                      │  Sentinel 网关限流            │ discovery locator 自动路由
+                      └───────┬──────────────────────┘
+                              │ 按前缀路由（lb:// 负载均衡）
         ┌──────────┬──────────┼──────────┬──────────┬──────────┐
         ▼          ▼          ▼          ▼          ▼          ▼
    user-service post-service meteor-svc echo-svc  link-svc  stats-service
       :8101       :8102       :8103      :8104      :8105      :8106
-        │           │                          │          │
-        │ MySQL     │ MySQL  H2/MySQL  H2/MySQL │ MySQL    │ 无库
-        └───────────┴──────────共享 stellar_ink 库─┴──────────┘
+        │           │                                 │          │
+        │      MySQL（共享 stellar_ink 库，表归属严格划分）     │ 无库
+        └───────────┴──────────────────────────────────┴──────────┘
                               ▲
-                              │ OpenFeign（/internal/posts/summary）
+                              │ OpenFeign（service-api 契约 + fallback）
                        stats ─┘
-        全部服务注册到 ──▶ Nacos :8848（standalone，控制台 /nacos）
+        全部服务注册到 ──▶ Nacos :8848（standalone；注册中心 + 配置中心）
 ```
 
-## 服务清单
+## 模块结构（对齐参考工程）
 
-| 服务 | 端口 | 职责 | 拥有的表 |
-|---|---|---|---|
-| gateway-service | 8080 | 对外唯一入口：路由、CORS、JWT 校验并注入 `X-User-Id` | - |
-| user-service | 8101 | 登录（JWT 签发）、站长资料 | `user` |
-| post-service | 8102 | 文章 CRUD/分页/详情/相邻星/glow、标签光谱、搜索、内部汇总 | `post` |
-| meteor-service | 8103 | 流星备忘录 | `meteor` |
-| echo-service | 8104 | 回声漂流瓶 | `echo` |
-| link-service | 8105 | 友链申请与确认 | `link` |
-| stats-service | 8106 | 写作脉搏（OpenFeign 聚合 post-service） | - |
+```
+stellar-ink-server/
+├── pom.xml                    父 POM：统一版本管理
+├── common-components/         公共组件（被所有服务依赖，非独立运行）
+│   ├── shared-model/          共享模型：Response/ErrorCode/异常/DTO/VO
+│   ├── common-core/           核心基础设施：全局异常(Servlet+Reactive)/TraceId/MyBatis-Plus 配置/健康检查
+│   └── service-api/           跨服务 Feign 契约：PostServiceClient + FallbackFactory
+├── gateway-nacos-sentinel/    API 网关（8080，WebFlux）
+├── user-service/              用户服务（8101）
+├── post-service/              文章服务（8102）
+├── meteor-service/            流星服务（8103）
+├── echo-service/              回声服务（8104）
+├── link-service/              星链服务（8105）
+└── stats-service/             统计服务（8106，无库）
+```
 
-公共库 `stellar-ink-common`：`Result` 统一响应、`BusinessException`、`JwtUtil`、常量（零 Spring 依赖）。
+## 配置文件风格（每个服务统一）
 
-## 鉴权边界（网关 AuthGlobalFilter）
+| 文件 | 作用 |
+|---|---|
+| `application.yml` | 极简：port + 应用名 + `profiles.active: dev` |
+| `application-dev.yml` | dev 全量配置：`spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator |
+| `application-prod.yml` | 生产：敏感项全部走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
+| `nacos-application-dev.yml` | 上传到 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`） |
+| `logback-spring.xml` | 控制台 + 文件异步日志（`./logs/<app>.log`，按天+200MB 滚动，30 天） |
 
-- 放行：所有 GET/OPTIONS、`/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）
-- 需 JWT：对 `/posts/**`、`/meteors/**`、`/links/**`、`/user/**` 的写请求
-- 校验通过后网关**剥离客户端伪造的 `X-User-Id`**，注入可信用户头转发下游；下游只读 `X-User-Id`
+## 鉴权（Sa-Token，JWT 无状态模式）
+
+- 登录：user-service `/auth/login` 调 `StpUtil.login(userId)` 签发 JWT，返回 `tokenName(Authorization) + tokenValue`
+- 网关 `SaReactorFilter`：放行 GET/OPTIONS、`/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
+  其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`
+- 无状态模式（`StpLogicJwtForStateless`）：token 自包含签名，网关与各服务用同一 `jwt-secret-key` 独立验签，无需 Redis 共享会话
+- 鉴权失败由网关统一返回 `{"code":401,...}`（HTTP 200，SaResult 约定）
+
+## 服务间调用
+
+- 契约集中在 `service-api`：`@FeignClient(name="post-service", fallbackFactory=...)` + resilience4j 断路器（调用方配 `feign.circuitbreaker.enabled: true`）
 - `/internal/**` 为服务间接口，网关不配路由，外部不可达
+- `FeignTraceInterceptor` 透传 `X-Trace-Id` 与用户身份头
 
 ## 数据库策略
 
-当前为共享库模式（一个 `stellar_ink` 库，各服务只读写自己的表）——兼容云数据库无建库权限的场景。
-初始化脚本见 `deploy/sql/`。若将来拆库：每个服务有独立的 `MYSQL_DB` 环境变量，改环境变量即可。
+共享库模式（一个 `stellar_ink` 库，各服务只读写自己的表），兼容云数据库无建库权限场景。
+初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 ## 演进路线（按需，暂不实施）
 
-- Nacos 同时作为配置中心（`spring-cloud-starter-alibaba-nacos-config`）
-- 服务间调用加 Sentinel 限流熔断
-- stats 改为事件驱动（MQ）或物化视图，替代实时 Feign 聚合
+- Sentinel 规则持久化到 Nacos（sentinel-datasource-nacos 已引入）
+- Redis 分布式令牌桶限流（网关 RequestRateLimiter）
+- stats 改事件驱动（RocketMQ）或物化视图
 - 共享库拆分为 per-service 数据库

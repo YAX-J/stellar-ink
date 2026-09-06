@@ -1,0 +1,49 @@
+# 开发环境服务器配置（统计服务无数据库，经 Feign 聚合 post-service）
+spring:
+  config:
+    activate:
+      on-profile: dev # 仅在 dev 环境激活
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        group: DEFAULT_GROUP
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+
+# Feign 断路器（resilience4j）+ 降级工厂
+feign:
+  circuitbreaker:
+    enabled: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN

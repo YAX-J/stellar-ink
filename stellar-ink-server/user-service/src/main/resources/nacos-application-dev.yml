@@ -1,0 +1,15 @@
+# Nacos 动态配置文件模板 - 用户服务开发环境
+# 上传到 Nacos 后的 Data ID：user-service-dev.yaml
+# 放在 Nacos 的内容在此维护（敏感与可动态调整项）
+
+# Sa-Token 敏感配置（与网关保持一致）
+sa-token:
+  jwt-secret-key: stellar-ink-satoken-jwt-secret-32bytes
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+# SpringDoc 动态路径（如生产环境关闭 Swagger）
+springdoc:
+  swagger-ui:
+    enabled: true

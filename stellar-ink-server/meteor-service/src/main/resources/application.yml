@@ -1,0 +1,8 @@
+server:
+  port: 8103
+
+spring:
+  application:
+    name: meteor-service
+  profiles:
+    active: dev

@@ -1,0 +1,27 @@
+# 生产环境服务器配置（统计服务无数据库）
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        group: DEFAULT_GROUP
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        group: DEFAULT_GROUP
+
+feign:
+  circuitbreaker:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+      base-path: /actuator
