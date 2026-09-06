@@ -1,0 +1,30 @@
+server:
+  port: 8102
+
+spring:
+  application:
+    name: post-service
+  datasource:
+    url: jdbc:h2:mem:si_post;MODE=MySQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:schema.sql
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+
+logging:
+  file:
+    name: logs/stellar-ink-post.log
+  charset:
+    console: UTF-8
+    file: UTF-8
+  level:
+    root: info
+    com.stellarink: debug

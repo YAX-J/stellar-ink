@@ -1,18 +1,23 @@
 package com.stellarink.common.result;
 
 import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 /**
  * 统一响应包装：{ code, message, data }
+ * 字段可变且带无参构造，供 Feign / Jackson 在服务间调用时反序列化
  */
 @Getter
+@Setter
+@NoArgsConstructor
 public class Result<T> {
 
-    private final int code;
-    private final String message;
-    private final T data;
+    private int code;
+    private String message;
+    private T data;
 
-    private Result(int code, String message, T data) {
+    public Result(int code, String message, T data) {
         this.code = code;
         this.message = message;
         this.data = data;
