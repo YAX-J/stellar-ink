@@ -11,10 +11,12 @@ import com.stellarink.domain.dto.UserUpdateDTO;
 import com.stellarink.domain.vo.LoginVO;
 import com.stellarink.domain.vo.UserVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -31,8 +33,11 @@ public class UserServiceImpl implements UserService {
         UserEntity user = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
                 .eq(UserEntity::getUsername, dto.getUsername().trim()));
         if (user == null || !passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
+            log.warn("登录失败 username={} 原因={}", dto.getUsername(),
+                    user == null ? "用户不存在" : "密码不匹配");
             throw new BusinessException(ResultCode.UNAUTHORIZED, "用户名或密码不对。");
         }
+        log.info("登录成功 userId={} username={}", user.getId(), user.getUsername());
         return new LoginVO(jwtUtil.create(user.getId(), user.getUsername()), toVO(user));
     }
 
@@ -57,6 +62,7 @@ public class UserServiceImpl implements UserService {
             user.setDailyGoal(Math.max(0, dto.getDailyGoal()));
         }
         userMapper.updateById(user);
+        log.info("更新资料 userId={} nickname={} dailyGoal={}", userId, user.getNickname(), user.getDailyGoal());
         return toVO(user);
     }
 

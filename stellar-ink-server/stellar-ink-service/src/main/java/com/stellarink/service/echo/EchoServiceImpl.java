@@ -7,12 +7,14 @@ import com.stellarink.dao.mapper.EchoMapper;
 import com.stellarink.domain.dto.EchoCreateDTO;
 import com.stellarink.domain.vo.EchoVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EchoServiceImpl implements EchoService {
@@ -38,6 +40,7 @@ public class EchoServiceImpl implements EchoService {
         entity.setContent(dto.getContent().trim());
         entity.setCreatedAt(LocalDateTime.now());
         echoMapper.insert(entity);
+        log.info("投瓶入海 id={} 昵称={}", entity.getId(), entity.getNickname());
         return entity.getId();
     }
 

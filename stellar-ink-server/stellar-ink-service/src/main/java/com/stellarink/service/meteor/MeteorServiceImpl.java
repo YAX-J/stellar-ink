@@ -8,12 +8,14 @@ import com.stellarink.dao.mapper.MeteorMapper;
 import com.stellarink.domain.dto.MeteorCreateDTO;
 import com.stellarink.domain.vo.MeteorVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MeteorServiceImpl implements MeteorService {
@@ -37,12 +39,14 @@ public class MeteorServiceImpl implements MeteorService {
         entity.setContent(dto.getContent().trim());
         entity.setCreatedAt(LocalDateTime.now());
         meteorMapper.insert(entity);
+        log.info("发射流星 id={}", entity.getId());
         return entity.getId();
     }
 
     @Override
     public void delete(Long id) {
         meteorMapper.deleteById(id);
+        log.info("删除流星 id={}", id);
     }
 
     private MeteorVO toVO(MeteorEntity entity) {

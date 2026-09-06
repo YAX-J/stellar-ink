@@ -16,6 +16,22 @@ mybatis-plus:
   global-config:
     banner: false
 
+logging:
+  file:
+    # 相对启动目录，生产可用 --logging.file.name=... 覆盖
+    name: logs/stellar-ink.log
+  charset:
+    console: UTF-8
+    file: UTF-8
+  logback:
+    rollingpolicy:
+      file-name-pattern: logs/stellar-ink-%d{yyyy-MM-dd}.%i.log.gz
+      max-file-size: 20MB
+      max-history: 14
+      total-size-cap: 200MB
+  level:
+    root: info
+
 stellar:
   jwt:
     # 生产环境务必通过环境变量覆盖：STELLAR_JWT_SECRET

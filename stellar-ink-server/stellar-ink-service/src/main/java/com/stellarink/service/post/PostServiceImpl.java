@@ -15,6 +15,7 @@ import com.stellarink.domain.enums.PostStatus;
 import com.stellarink.domain.vo.PostDetailVO;
 import com.stellarink.domain.vo.PostVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -24,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PostServiceImpl implements PostService {
@@ -87,6 +89,8 @@ public class PostServiceImpl implements PostService {
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         postMapper.insert(entity);
+        log.info("发射新星 id={} title={} 字数={} tags={}",
+                entity.getId(), entity.getTitle(), entity.getWordCount(), entity.getTags());
         return entity.getId();
     }
 
@@ -109,12 +113,14 @@ public class PostServiceImpl implements PostService {
         }
         post.setUpdatedAt(LocalDateTime.now());
         postMapper.updateById(post);
+        log.info("更新文章 id={} title={}", id, post.getTitle());
     }
 
     @Override
     public void delete(Long id) {
-        requirePost(id);
+        PostEntity post = requirePost(id);
         postMapper.deleteById(id);
+        log.info("熄灭星体 id={} title={}", id, post.getTitle());
     }
 
     @Override
@@ -123,7 +129,9 @@ public class PostServiceImpl implements PostService {
         postMapper.update(null, new LambdaUpdateWrapper<PostEntity>()
                 .eq(PostEntity::getId, id)
                 .setSql("glow = glow + 1"));
-        return postMapper.selectById(id).getGlow();
+        int glow = postMapper.selectById(id).getGlow();
+        log.debug("文章 {} 光芒 +1 -> {}", id, glow);
+        return glow;
     }
 
     private PostEntity requirePost(Long id) {

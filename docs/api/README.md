@@ -103,6 +103,15 @@ stellar-ink-server
 （stellar-ink-ai-client 预留目录，AI 功能后续接入）
 ```
 
+## 日志
+
+统一走 SLF4J（Spring Boot 默认 Logback 实现）：
+
+- **访问日志**：`API-ACCESS` logger 记录每个请求的 `方法 路径 状态码 耗时`（`RequestLogFilter`）
+- **业务日志**：各 service 记录关键动作（发射新星/更新/熄灭、流星、投瓶、友链申请与确认、登录成败、资料更新）；登录失败与未授权写请求为 WARN，业务异常 WARN，未捕获异常 ERROR
+- **输出**：控制台 + `logs/stellar-ink.log`（相对启动目录），UTF-8；按天 + 20MB 滚动 gzip，保留 14 天、总量上限 200MB
+- **级别**：默认 `root=info`；dev profile 下 `com.stellarink=debug`（含 MyBatis SQL 明细），生产建议 info
+
 ## 已知边界（后续迭代）
 
 - 搜索为 LIKE 匹配，数据量大后可换全文索引

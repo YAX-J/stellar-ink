@@ -9,12 +9,14 @@ import com.stellarink.domain.dto.LinkApplyDTO;
 import com.stellarink.domain.enums.LinkStatus;
 import com.stellarink.domain.vo.LinkVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LinkServiceImpl implements LinkService {
@@ -44,6 +46,7 @@ public class LinkServiceImpl implements LinkService {
         entity.setStatus(LinkStatus.PENDING.getValue());
         entity.setCreatedAt(LocalDateTime.now());
         linkMapper.insert(entity);
+        log.info("友链申请 id={} name={} url={}", entity.getId(), entity.getName(), entity.getUrl());
         return entity.getId();
     }
 
@@ -55,6 +58,7 @@ public class LinkServiceImpl implements LinkService {
         }
         entity.setStatus(status);
         linkMapper.updateById(entity);
+        log.info("友链 {} 状态变更为 {}", id, status);
     }
 
     private LinkVO toVO(LinkEntity entity) {

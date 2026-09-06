@@ -5,6 +5,7 @@ import com.stellarink.common.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -12,6 +13,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 /**
  * 写操作鉴权：登记的路径下放行 GET/OPTIONS，其余要求有效 JWT
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class AuthInterceptor implements HandlerInterceptor {
@@ -33,6 +35,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                 return true;
             }
         }
+        log.warn("未授权的写请求 {} {} from {}", request.getMethod(), request.getRequestURI(),
+                request.getRemoteAddr());
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write("{\"code\":401,\"message\":\"未登录或登录已过期\",\"data\":null}");
