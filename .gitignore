@@ -20,3 +20,9 @@ deploy/docker/.env
 
 # 本地启动脚本（含服务器 IP/密码等连接信息，不入库）
 deploy/scripts/start-all.bat
+
+# IDEA 运行配置（含服务器 IP/密码，仅本机使用）
+.run/
+
+# WorkBuddy 本地会话笔记（含服务器 IP、库口令等连接信息，不入库）
+.workbuddy/
