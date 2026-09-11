@@ -26,3 +26,8 @@ deploy/scripts/start-all.bat
 
 # WorkBuddy 本地会话笔记（含服务器 IP、库口令等连接信息，不入库）
 .workbuddy/
+
+# 安全审查报告等本地文档不入库
+# 注意：docs/api、docs/architecture 下的文件已被 git 跟踪，不受影响；
+# 但将来在 docs/ 下新增的文件会被静默忽略，如需入库用 git add -f 或收窄此规则
+docs/
