@@ -25,7 +25,7 @@ spring:
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&useSSL=false&nullCatalogMeansCurrent=true
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
     druid:
@@ -55,11 +55,24 @@ management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,metrics,loggers
       base-path: /actuator
   endpoint:
     health:
       show-details: always
+    # 安全：高危端点显式关闭（即使被误加回 exposure 也不会开启）
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
 
 logging:
   level:

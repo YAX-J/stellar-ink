@@ -37,11 +37,24 @@ management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,metrics,loggers
       base-path: /actuator
   endpoint:
     health:
       show-details: always
+    # 安全：高危端点显式关闭（即使被误加回 exposure 也不会开启）
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
 
 # Feign 断路器（resilience4j）+ 降级工厂
 feign:
