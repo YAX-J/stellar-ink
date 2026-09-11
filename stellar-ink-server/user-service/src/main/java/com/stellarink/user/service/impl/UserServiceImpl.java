@@ -2,6 +2,7 @@ package com.stellarink.user.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
@@ -157,6 +158,21 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserVO profile(Long userId) {
         return toVO(requireUser(userId));
+    }
+
+    @Override
+    public void changePassword(Long userId, ChangePasswordDTO dto) {
+        User user = requireUser(userId);
+        if (!passwordEncoder.matches(dto.getOldPassword(), user.getPassword())) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "原密码不正确。");
+        }
+        if (passwordEncoder.matches(dto.getNewPassword(), user.getPassword())) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "新密码不能与旧密码相同。");
+        }
+        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        userMapper.updateById(user);
+        log.info("修改密码成功 userId={}", userId);
+        // 注意：JWT 无状态，改密后旧 token 仍有效（项目既有取舍，无法服务端吊销）
     }
 
     @Override

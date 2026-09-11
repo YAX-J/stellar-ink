@@ -36,4 +36,13 @@ public class AuthController {
         LoginVO vo = new LoginVO(StpUtil.getTokenName(), StpUtil.getTokenValue(), user);
         return Response.success(vo);
     }
+
+    /**
+     * 登出：JWT 无状态模式下无法在服务端吊销 token，
+     * 此处仅作语义收口（要求携带有效 token 到达，网关已校验），前端丢弃 token 即可。
+     */
+    @PostMapping("/logout")
+    public Response<Void> logout() {
+        return Response.success();
+    }
 }

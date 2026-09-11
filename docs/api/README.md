@@ -40,8 +40,10 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 |---|---|---|---|
 | POST | `/auth/register` | 注册（开放），注册即登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/login` | 登录，返回 `{tokenName, tokenValue, user}` | 公开 |
+| POST | `/auth/logout` | 登出（无状态 JWT 语义收口，前端丢 token） | 登录 |
 | GET | `/user/profile` | 站长资料 | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
+| PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
 
 ### post-service :8102
 
