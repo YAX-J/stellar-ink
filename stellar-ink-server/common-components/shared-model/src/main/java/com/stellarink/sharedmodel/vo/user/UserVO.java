@@ -23,5 +23,8 @@ public class UserVO {
     /** 每日星尘目标（字） */
     private Integer dailyGoal;
 
+    /** 角色：READER 读者 / AUTHOR 作者 / ADMIN 站长 */
+    private String role;
+
     private LocalDateTime createdAt;
 }
