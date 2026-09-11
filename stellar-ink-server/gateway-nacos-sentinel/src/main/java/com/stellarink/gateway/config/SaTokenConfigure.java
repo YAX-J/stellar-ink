@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
  * <p>放行项：
  * <ul>
  *   <li>{@code POST /auth/login}：登录本身</li>
+ *   <li>{@code POST /auth/register}：开放注册（注册即登录，无需先有 token）</li>
  *   <li>GET / HEAD / OPTIONS：读请求与 CORS 预检</li>
  *   <li>公开写接口白名单：回声投瓶、友链申请、文章 glow（见 {@link #isPublicWrite}）</li>
  * </ul>
@@ -42,8 +43,9 @@ public class SaTokenConfigure {
                     String method = request.getMethod();
                     String path = request.getRequestPath();
 
-                    // 1) 登录接口：否则拿不到 token
-                    if ("POST".equalsIgnoreCase(method) && "/auth/login".equals(path)) {
+                    // 1) 登录 / 注册接口：否则拿不到 token
+                    if ("POST".equalsIgnoreCase(method)
+                            && ("/auth/login".equals(path) || "/auth/register".equals(path))) {
                         return;
                     }
                     // 2) 读请求与 CORS 预检放行

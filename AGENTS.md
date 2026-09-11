@@ -110,7 +110,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   link→`link`；stats 无库（OpenFeign 聚合 post-service 的 `/internal/posts/summary`）。
 - 共享库模式：一个 `stellar_ink` 库，各服务**只读写自己的表**；拆库时改各服务 `MYSQL_DB` 环境变量。
 - **鉴权在网关**（Sa-Token，JWT 无状态模式 `StpLogicJwtForStateless`）：放行 GET/OPTIONS、
-  `/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
+  `POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
   其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
   下游服务用 `AuthHelper.loginId()`（StpUtil 验签）取用户 id，不校验路由级权限。
 - 服务间调用：Feign 契约统一放 `service-api`（@FeignClient + FallbackFactory，resilience4j 断路器，
@@ -160,6 +160,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ## 6. 当前状态与边界（不要越界开发）
 
 - 已完成：前端全部 10 页（mock 数据）；后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
-- **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、注册与多用户、评论系统、文件上传、
+- **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、评论系统、文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化——用户明确要求后再动。
+- **已做开放注册**（`POST /auth/register`，注册即登录返回 token）：注意文章/流星/友链仍是**全局数据、未按用户隔离**，
+  注册者即拥有站长级增删改权限；如需多租户隔离需另行设计（user_id 归属 + 数据权限）。
 - 下一步方向（用户提出再做）：前端 store 从 mock 切到网关接口（:8080，路径不变，CORS 网关已放开）。

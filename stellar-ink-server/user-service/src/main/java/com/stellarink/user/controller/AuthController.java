@@ -2,6 +2,7 @@ package com.stellarink.user.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
+import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.user.LoginVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
@@ -24,6 +25,14 @@ public class AuthController {
     @PostMapping("/login")
     public Response<LoginVO> login(@Valid @RequestBody LoginDTO dto) {
         UserVO user = userService.login(dto);
+        LoginVO vo = new LoginVO(StpUtil.getTokenName(), StpUtil.getTokenValue(), user);
+        return Response.success(vo);
+    }
+
+    /** 注册：开放注册，注册即登录，返回与登录相同的 token 结构 */
+    @PostMapping("/register")
+    public Response<LoginVO> register(@Valid @RequestBody RegisterDTO dto) {
+        UserVO user = userService.register(dto);
         LoginVO vo = new LoginVO(StpUtil.getTokenName(), StpUtil.getTokenValue(), user);
         return Response.success(vo);
     }

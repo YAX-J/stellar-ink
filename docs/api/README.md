@@ -29,7 +29,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 ## 鉴权（Sa-Token，网关统一）
 
 - 登录返回 `tokenName: Authorization` 与 `tokenValue`；后续请求带 `Authorization: <tokenValue>`（无 Bearer 前缀）
-- 放行：GET/OPTIONS、`/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）
+- 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）
 - 其余对 `/posts|/meteors|/links|/user` 的写请求需有效 token，失败返回 `{"code":401,...}`
 
 ## 接口一览（经网关调用）
@@ -38,6 +38,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| POST | `/auth/register` | 注册（开放），注册即登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/login` | 登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | GET | `/user/profile` | 站长资料 | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
@@ -105,4 +106,4 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 
 - Sentinel 规则未持久化（sentinel-datasource-nacos 已引入，待配规则）
 - 未启用 Redis 令牌桶限流（需 Redis）
-- 搜索为 LIKE；未做注册/多用户/评论/文件上传
+- 搜索为 LIKE；已做开放注册（`POST /auth/register`）；未做评论/文件上传/多租户数据隔离

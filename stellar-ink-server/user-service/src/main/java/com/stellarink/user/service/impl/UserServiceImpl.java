@@ -3,6 +3,7 @@ package com.stellarink.user.service.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
+import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.exception.BusinessException;
@@ -12,10 +13,12 @@ import com.stellarink.user.pojo.User;
 import com.stellarink.user.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -69,6 +72,34 @@ public class UserServiceImpl implements UserService {
         StpUtil.login(user.getId());
         log.info("登录成功 userId={} username={}", user.getId(), user.getUsername());
         return toVO(user);
+    }
+
+    @Override
+    public UserVO register(RegisterDTO dto) {
+        String username = dto.getUsername().trim();
+        // 唯一性预检：uk_username + utf8mb4_unicode_ci（大小写不敏感）
+        Long exists = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                .eq(User::getUsername, username));
+        if (exists != null && exists > 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "这个登录名已经被占用了，换一个吧。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        User entity = new User();
+        entity.setUsername(username);
+        entity.setPassword(passwordEncoder.encode(dto.getPassword()));
+        entity.setNickname(StringUtils.hasText(dto.getNickname()) ? dto.getNickname().trim() : username);
+        entity.setDailyGoal(500);
+        entity.setCreatedAt(now);
+        try {
+            userMapper.insert(entity);
+        } catch (DuplicateKeyException e) {
+            // 并发兜底：唯一键冲突统一转成友好提示
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "这个登录名已经被占用了，换一个吧。");
+        }
+        log.info("注册新账号 userId={} username={}", entity.getId(), entity.getUsername());
+        // 注册即登录：与 login 一致签发 JWT
+        StpUtil.login(entity.getId());
+        return toVO(entity);
     }
 
     /** 已锁定则直接拒绝，避免继续付出 BCrypt 计算开销 */
