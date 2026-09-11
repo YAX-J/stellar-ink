@@ -1,15 +1,18 @@
 # Nacos 动态配置文件模板 - 网关开发环境
 # 上传到 Nacos 后的 Data ID：gateway-nacos-sentinel-dev.yaml
-# 放在 Nacos 的内容在此维护（限流阈值、密钥等可动态调整项）
+# 放在 Nacos 的内容在此维护（限流阈值等可动态调整项）
 
 # 基于来源 IP 的限流阈值（参考；当前网关未启用 Redis 令牌桶过滤器）
 rate-limit:
   permits-per-second: 500
   burst-capacity: 1000
 
-# Sa-Token 敏感配置（与各业务服务保持一致）
+# Sa-Token 可动态调整项（与各业务服务保持一致）
+#
+# 安全：jwt-secret-key 绝不要写进本文件！
+#   Nacos 配置是共享的 —— 当前 NACOS_AUTH_ENABLE=false，任何能访问 8848 的客户端都能读到；
+#   密钥只走环境变量 SA_TOKEN_JWT_SECRET（各服务 application-dev/prod.yml 中的占位符）。
 sa-token:
-  jwt-secret-key: stellar-ink-satoken-jwt-secret-32bytes
   timeout: 604800
   is-concurrent: true
   is-share: true
