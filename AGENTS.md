@@ -117,9 +117,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **角色门槛（三档，权限累积，仅做操作开关、不做数据隔离）**：`READER 读者` ⊃ 基础读与公开互动；
   `AUTHOR 作者` = READER + 写/改/删文章、发射/删除流星；`ADMIN 站长` = AUTHOR + 友链审核 + 调整用户角色。
   角色在登录/注册时写入 JWT 的 `role` extra（`Role` 枚举见 shared-model，键 `Role.JWT_KEY`）；
-  网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做写操作门槛（文章/流星写需 AUTHOR，`PUT /links/{id}/status`、
-  `PUT /user/{id}/role` 需 ADMIN），角色不足返回 403；服务内用 `AuthHelper.currentRole()/requireAtLeast()`
-  做防御性复核。注册固定 READER，种子账号 stellar 为 ADMIN。
+  网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做门槛（文章/流星写需 AUTHOR，`PUT /links/{id}/status`、
+  `PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /user/list` 是管理端读接口，
+  须在网关「GET 全放行」之前单独拦下做 ADMIN 校验），角色不足返回 403；服务内用
+  `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。注册固定 READER，种子账号 stellar 为 ADMIN。
 - 服务间调用：Feign 契约统一放 `service-api`（@FeignClient + FallbackFactory，resilience4j 断路器，
   调用方配 `feign.circuitbreaker.enabled: true`）；`/internal/**` 为服务间接口，网关不配路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
@@ -166,10 +167,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ## 6. 当前状态与边界（不要越界开发）
 
-- 已完成：前端全部 10 页（mock 数据）；后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
+- 已完成：前端 10 页（内容页仍为 mock 数据）+ 鉴权/账号页（登录/注册/账号，已接网关 :8080）；
+  后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
 - **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、评论系统、文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化——用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章/流星/友链仍是**全局数据、未按用户隔离**，
   但写操作已按角色门槛收敛（READER 不可创作/删改，AUTHOR 可写文章流星，ADMIN 兼管友链与角色）；
   如需多租户数据隔离仍需另行设计（user_id 归属 + 数据权限）。
-- 下一步方向（用户提出再做）：前端 store 从 mock 切到网关接口（:8080，路径不变，CORS 网关已放开）。
+- 前端鉴权已接网关：`src/api/client.js`（fetch 封装 + token）+ `src/stores/auth.js`（会话持久化），
+  页面 `/login` `/register` `/account`（改密/登出/ADMIN 角色管理）；内容页（文章/流星/回声/友链）仍是 mock，
+  「前端 store 从 mock 切到网关接口」仍属后续方向（路径不变，CORS 网关已放开，Vite dev 已配代理）。

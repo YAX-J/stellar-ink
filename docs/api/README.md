@@ -41,7 +41,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | ADMIN | 站长 | AUTHOR 全部 + 友链审核 + 调整用户角色 |
 
 - 角色在登录/注册时写入 JWT；注册固定 `READER`，种子账号 `stellar` 为 `ADMIN`
-- 网关按角色做写操作门槛：文章/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role` 需 `ADMIN`
+- 网关按角色做门槛：文章/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role`、`GET /user/list` 需 `ADMIN`
 - 角色不足返回 `{"code":403,...}`；角色不参与数据归属（文章/流星不区分作者）
 
 ## 接口一览（经网关调用）
@@ -57,6 +57,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
 | PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
 | PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user | ADMIN |
+| GET | `/user/list` | 用户列表（供角色管理页枚举） | ADMIN |
 
 ### post-service :8102
 
