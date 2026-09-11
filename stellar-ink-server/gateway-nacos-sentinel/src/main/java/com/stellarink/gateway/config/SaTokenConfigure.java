@@ -5,7 +5,6 @@ import cn.dev33.satoken.exception.NotRoleException;
 import cn.dev33.satoken.jwt.StpLogicJwtForStateless;
 import cn.dev33.satoken.reactor.filter.SaReactorFilter;
 import cn.dev33.satoken.stp.StpUtil;
-import cn.dev33.satoken.util.SaResult;
 import com.stellarink.sharedmodel.enums.Role;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -65,19 +64,28 @@ public class SaTokenConfigure {
                             && ("/auth/login".equals(path) || "/auth/register".equals(path))) {
                         return;
                     }
-                    // 2) 读请求与 CORS 预检放行
+                    // 2) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
+                    if ("GET".equalsIgnoreCase(method) && "/user/list".equals(path)) {
+                        StpUtil.checkLogin();
+                        Role adminRole = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
+                        if (!adminRole.atLeast(Role.ADMIN)) {
+                            throw new NotRoleException(Role.ADMIN.name());
+                        }
+                        return;
+                    }
+                    // 3) 读请求与 CORS 预检放行
                     if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                             || "OPTIONS".equalsIgnoreCase(method)) {
                         return;
                     }
-                    // 3) 公开写接口白名单
+                    // 4) 公开写接口白名单
                     if ("POST".equalsIgnoreCase(method) && isPublicWrite(path)) {
                         return;
                     }
-                    // 4) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
+                    // 5) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
                     StpUtil.checkLogin();
 
-                    // 5) 角色门槛（登录后，按写操作细分）
+                    // 6) 角色门槛（登录后，按写操作细分）
                     Role role = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
                     if (requiresAdmin(method, path) && !role.atLeast(Role.ADMIN)) {
                         throw new NotRoleException(Role.ADMIN.name());
@@ -87,11 +95,15 @@ public class SaTokenConfigure {
                     }
                 })
                 .setError(e -> {
-                    // 角色不足返回 403，未登录等返回 401
+                    // 统一返回 JSON + 正确 HTTP 状态：角色不足 403，未登录等 401
+                    // （默认 writeResult 是 text/plain + SaResult.toString() 的 Map 格式，前端无法解析，故显式覆写）
+                    SaHolder.getResponse().setHeader("Content-Type", "application/json;charset=UTF-8");
                     if (e instanceof NotRoleException) {
-                        return SaResult.code(403).setMsg("权限不足：该操作需要更高角色");
+                        SaHolder.getResponse().setStatus(403);
+                        return "{\"code\":403,\"msg\":\"权限不足：该操作需要更高角色\"}";
                     }
-                    return SaResult.code(401).setMsg("未登录或登录已过期");
+                    SaHolder.getResponse().setStatus(401);
+                    return "{\"code\":401,\"msg\":\"未登录或登录已过期\"}";
                 });
     }
 
