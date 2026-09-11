@@ -8,6 +8,7 @@ import com.stellarink.sharedmodel.dto.link.LinkApplyDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.link.LinkVO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
@@ -40,7 +41,7 @@ public class LinkController {
 
     /** 申请接入星链（公开） */
     @PostMapping
-    public Response<Void> apply(@RequestBody LinkApplyDTO dto) {
+    public Response<Void> apply(@Valid @RequestBody LinkApplyDTO dto) {
         if (!StringUtils.hasText(dto.getName())) {
             throw BusinessExceptionHelper.of("你的站点名是空的。");
         }

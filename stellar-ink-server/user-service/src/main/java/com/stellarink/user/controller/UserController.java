@@ -6,6 +6,7 @@ import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.service.UserService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -26,7 +27,7 @@ public class UserController {
     }
 
     @PutMapping("/profile")
-    public Response<UserVO> updateProfile(@RequestBody UserUpdateDTO dto) {
+    public Response<UserVO> updateProfile(@Valid @RequestBody UserUpdateDTO dto) {
         return Response.success(userService.updateProfile(AuthHelper.loginId(), dto));
     }
 }

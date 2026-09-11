@@ -7,6 +7,7 @@ import com.stellarink.meteor.pojo.Meteor;
 import com.stellarink.sharedmodel.dto.meteor.MeteorCreateDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.meteor.MeteorVO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
@@ -32,15 +33,17 @@ public class MeteorController {
 
     @GetMapping
     public Response<List<MeteorVO>> list(@RequestParam(required = false, defaultValue = "50") Integer limit) {
+        // limit 为 Integer，不存在注入；但过大的值会拖垮查询，这里夹紧到 1~200
+        int safeLimit = Math.min(Math.max(limit == null ? 50 : limit, 1), 200);
         List<Meteor> items = meteorMapper.selectList(new LambdaQueryWrapper<Meteor>()
                 .orderByDesc(Meteor::getId)
-                .last(limit != null && limit > 0 ? "LIMIT " + limit : ""));
+                .last("LIMIT " + safeLimit));
         return Response.success(items.stream().map(this::toVO).toList());
     }
 
     /** 发射流星（网关鉴权） */
     @PostMapping
-    public Response<Void> create(@RequestBody MeteorCreateDTO dto) {
+    public Response<Void> create(@Valid @RequestBody MeteorCreateDTO dto) {
         if (!StringUtils.hasText(dto.getContent())) {
             throw BusinessExceptionHelper.of("此刻的念头是空的，写一句再发射。");
         }

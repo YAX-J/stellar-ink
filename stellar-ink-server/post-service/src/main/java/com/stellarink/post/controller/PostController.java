@@ -9,6 +9,7 @@ import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.post.PostDetailVO;
 import com.stellarink.sharedmodel.vo.post.PostVO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -56,12 +57,12 @@ public class PostController {
 
     /** 执笔舱发射（网关鉴权） */
     @PostMapping
-    public Response<Map<String, Long>> create(@RequestBody PostCreateDTO dto) {
+    public Response<Map<String, Long>> create(@Valid @RequestBody PostCreateDTO dto) {
         return Response.success(Map.of("id", postService.create(dto)));
     }
 
     @PutMapping("/{id}")
-    public Response<Void> update(@PathVariable Long id, @RequestBody PostUpdateDTO dto) {
+    public Response<Void> update(@PathVariable Long id, @Valid @RequestBody PostUpdateDTO dto) {
         postService.update(id, dto);
         return Response.success();
     }

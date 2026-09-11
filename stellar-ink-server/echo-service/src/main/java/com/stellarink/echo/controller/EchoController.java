@@ -7,6 +7,7 @@ import com.stellarink.echo.pojo.Echo;
 import com.stellarink.sharedmodel.dto.echo.EchoCreateDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.echo.EchoVO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
@@ -38,7 +39,7 @@ public class EchoController {
 
     /** 投瓶入海（公开） */
     @PostMapping
-    public Response<Void> create(@RequestBody EchoCreateDTO dto) {
+    public Response<Void> create(@Valid @RequestBody EchoCreateDTO dto) {
         if (!StringUtils.hasText(dto.getContent())) {
             throw BusinessExceptionHelper.of("瓶子是空的，写句话再投进海里。");
         }

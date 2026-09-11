@@ -22,5 +22,11 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- 参数校验注解（@NotBlank/@Size/@Pattern…）只需 API；
+             校验实现由 common-core 的 spring-boot-starter-validation 提供 -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
     </dependencies>
 </project>
