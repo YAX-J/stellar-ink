@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/user")
 @RequiredArgsConstructor
@@ -27,6 +29,12 @@ public class UserController {
     @GetMapping("/profile")
     public Response<UserVO> profile() {
         return Response.success(userService.profile(AuthHelper.loginId()));
+    }
+
+    /** 用户列表（仅站长，供角色管理页枚举；网关已做 ADMIN 门槛 + 服务内防御性校验） */
+    @GetMapping("/list")
+    public Response<List<UserVO>> listUsers() {
+        return Response.success(userService.listUsers(AuthHelper.loginId()));
     }
 
     @PutMapping("/profile")

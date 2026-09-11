@@ -6,6 +6,8 @@ import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 
+import java.util.List;
+
 public interface UserService {
 
     /** 登录并签发 Sa-Token JWT */
@@ -19,6 +21,9 @@ public interface UserService {
 
     /** 管理员调整用户角色（仅 ADMIN，服务内再做防御性校验） */
     UserVO changeRole(Long operatorId, Long targetUserId, String role);
+
+    /** 管理员列出全部用户（仅 ADMIN，供角色管理页枚举） */
+    List<UserVO> listUsers(Long operatorId);
 
     UserVO profile(Long userId);
 

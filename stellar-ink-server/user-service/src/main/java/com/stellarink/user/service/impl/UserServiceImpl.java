@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -181,6 +182,15 @@ public class UserServiceImpl implements UserService {
         userMapper.updateById(user);
         log.info("调整角色 operatorId={} targetUserId={} role={}", operatorId, targetUserId, target.name());
         return toVO(user);
+    }
+
+    @Override
+    public List<UserVO> listUsers(Long operatorId) {
+        // 防御性校验：即便网关漏拦，也拒绝非 ADMIN 操作
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return userMapper.selectList(new LambdaQueryWrapper<User>()
+                        .orderByAsc(User::getId))
+                .stream().map(this::toVO).toList();
     }
 
     @Override
