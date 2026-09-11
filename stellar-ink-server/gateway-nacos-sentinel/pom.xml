@@ -54,6 +54,11 @@
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-jwt</artifactId>
         </dependency>
+        <!-- 公共模型（角色枚举 Role 等，供网关读 JWT 角色做门槛校验） -->
+        <dependency>
+            <groupId>com.stellarink</groupId>
+            <artifactId>shared-model</artifactId>
+        </dependency>
         <!-- 监控 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
