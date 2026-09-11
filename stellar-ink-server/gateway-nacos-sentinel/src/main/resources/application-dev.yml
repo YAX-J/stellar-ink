@@ -35,10 +35,13 @@ spring:
             allowed-methods: [ "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH" ]
             allowed-headers: "*"
             max-age: 3600 # 预检请求缓存时间（秒）
-      # 服务发现路由：启用自动路由，无需手动配置每个服务
+      # 服务发现路由：必须保持关闭！
+      # 开启后会为每个注册服务自动生成 /{serviceId}/** 路由（如 /post-service/**），
+      # 该前缀不在任何显式路由与鉴权白名单内，会绕过网关鉴权直接访问下游（含 /internal/**）。
+      # 路由一律在下方 routes 中显式声明。
       discovery:
         locator:
-          enabled: true
+          enabled: false
           lowerCaseServiceId: true
       # 路由定义（显式声明，保证对外路径稳定）
       routes:
@@ -85,6 +88,10 @@ sa-token:
   # 本地开发关闭操作日志
   is-log: false
   # JWT 密钥（必须与各业务服务一致）
+  # 安全：此默认值仅供本地联调，7 个服务共用所以不能各自乱改；
+  #       生产由环境变量 SA_TOKEN_JWT_SECRET 注入（prod 配置无默认值，缺失即启动失败），
+  #       且 common-core 的 SecretGuard 会在 prod 下检测到该默认值直接拒绝启动。
+  #       想让本地也走环境变量，可在 deploy/scripts/start-all.bat 或 IDEA 运行配置里设置（两者均已 gitignore）。
   jwt-secret-key: ${SA_TOKEN_JWT_SECRET:stellar-ink-satoken-jwt-secret-32bytes}
   # token有效期，单位s，设置7天
   timeout: 604800
@@ -100,15 +107,23 @@ springdoc:
   swagger-ui:
     path: /swagger.html
 
-# Actuator端点暴露 - 用于健康检查和配置验证
-# 临时将某个包的日志级别调整为 DEBUG：
+# Actuator端点暴露
+# 安全：绝不使用 include: "*"。下列端点即使被误加回 exposure 也已单独关闭：
+#   heapdump   导出堆内存（含 JWT 密钥、DB 口令的明文）—— 脱敏对它无效，最危险
+#   env        配置项与生效来源
+#   configprops 全部 @ConfigurationProperties
+#   beans      类结构
+#   threaddump 线程栈
+#   shutdown   可直接停服
+# 需要临时调整某包日志级别时（写操作需携带有效 token，网关已默认拒绝匿名写）：
 # curl -X POST "http://localhost:8080/actuator/loggers/org.springframework.cloud.gateway" \
-# -H "Content-Type: application/json" -d '{"configuredLevel": "DEBUG"}'
+#   -H "Authorization: <token>" -H "Content-Type: application/json" \
+#   -d '{"configuredLevel": "DEBUG"}'
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,metrics,loggers
       base-path: /actuator
   endpoint:
     health:
@@ -119,6 +134,18 @@ management:
       enabled: true
     loggers:
       enabled: true
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
 
 logging:
   level:
