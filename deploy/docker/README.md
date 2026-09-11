@@ -18,7 +18,7 @@ Docker Compose 一键编排：**Nacos + 网关 + 6 个微服务 + 前端 Nginx**
 | 服务 | 容器端口 | 对外暴露 | 说明 |
 |---|---|---|---|
 | nacos | 8848 / 9848 | 仅宿主机 `127.0.0.1` | 注册中心 + 配置中心（standalone，数据落 volume） |
-| gateway | 8080 | `GATEWAY_PORT`（默认 8080） | 后端唯一入口 |
+| gateway | 8080 | **仅宿主机 `127.0.0.1`**（`GATEWAY_PORT`，默认 8080） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
 | user/post/meteor/echo/link/stats | 8101-8106 | 不暴露 | 内部网络经 Nacos 服务发现互相调用 |
 | web（nginx） | 80 | `WEB_PORT`（默认 80） | 前端静态资源 + `/posts` 等 API 前缀反代到网关 |
 
@@ -40,7 +40,23 @@ cp .env.example .env
 vi .env
 ```
 
-必填两项：`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`（`openssl rand -base64 48` 生成）。
+必填六项，**留空会导致 `docker compose` 直接报错退出**（刻意设计的 fail-safe，宁可起不来也不要默认放开）：
+
+| 变量 | 说明 |
+|---|---|
+| `MYSQL_PASSWORD` | 数据库口令 |
+| `SA_TOKEN_JWT_SECRET` | JWT 签名密钥，`openssl rand -base64 48` 生成 |
+| `GATEWAY_CORS_ORIGINS` | 前端实际域名，多个逗号分隔；**不要填 `*`** |
+| `NACOS_AUTH_TOKEN` | Nacos 服务端鉴权 token，Base64 且解码后 ≥ 32 字节，`openssl rand -base64 48` 生成 |
+| `NACOS_AUTH_IDENTITY_KEY` | Nacos 服务端身份键，任意随机串 |
+| `NACOS_AUTH_IDENTITY_VALUE` | Nacos 服务端身份值，任意随机串 |
+
+> **Nacos 已开启认证**（`NACOS_AUTH_ENABLE=true`）：关闭认证时任何能访问 8848 的客户端都能读写全部配置，
+> 配合各服务的配置动态刷新即可改写配置下发到所有服务。
+> `NACOS_USERNAME` / `NACOS_PASSWORD` 默认 `nacos/nacos` —— 这是公开的弱凭据，
+> **首次部署后请通过控制台改掉默认密码，并同步更新 `.env`**。
+> 另：`NACOS_AUTH_TOKEN` / `NACOS_AUTH_IDENTITY_KEY` / `NACOS_AUTH_IDENTITY_VALUE`
+> 一旦变更需**重建 nacos 容器**（`docker compose up -d --force-recreate nacos`）才生效。
 
 ### 2. 初始化数据库（一次性，复用已有 mysql 容器）
 
@@ -107,9 +123,23 @@ docker compose down -v                  # ⚠️ 连 nacos 数据卷一并清空
 - **Nacos 控制台**：8848 仅绑定宿主机回环。本机 `ssh -L 8848:127.0.0.1:8848 root@服务器` 后访问 `http://127.0.0.1:8848/nacos`。不要改成对外网开放。
 - **业务日志**：容器内写 `/app/logs`，同时挂载到宿主机 `deploy/docker/logs/<服务名>/`（logback 按天 + 200MB 滚动，保留 30 天）。
 - **Knife4j 接口文档**：各服务在内部网络，未对外暴露；调试需要时可临时在 compose 给对应服务加 `ports` 映射。
-- **HTTPS**：建议由服务器上的宿主机 Nginx / Caddy / 云面板做 TLS 终结，反代到 `WEB_PORT` 与 `GATEWAY_PORT`，本编排不做证书管理。
+- **HTTPS**：建议由服务器上的宿主机 Nginx / Caddy / 云面板做 TLS 终结，反代到 `WEB_PORT`；如需直连网关，反代到 `127.0.0.1:GATEWAY_PORT`（网关端口只绑回环，见下条），本编排不做证书管理。
+- **网关端口**：`gateway` 的 `8080` 只绑宿主机 `127.0.0.1`。前端经 `web` 容器走容器内网 `http://gateway:8080`，不经过宿主机端口；若把 8080 暴露到公网，`/actuator/prometheus` 等内部指标会匿名可达，且可绕过 nginx 的边缘限流直连网关。需本机调试时用 SSH 隧道：`ssh -L 8080:127.0.0.1:8080 root@服务器`。
 
-## 五、内存预算（默认 mem_limit）
+## 五、安全配置要点（上线前请确认）
+
+| 项 | 现状 | 说明 |
+|---|---|---|
+| 网关自动路由 | **已关闭** | `spring.cloud.gateway.discovery.locator.enabled: false`。开启后会生成 `/{serviceId}/**` 自动路由（如 `/post-service/**`），该前缀不在鉴权白名单内，**可绕过网关鉴权直接读写下游**（含 `/internal/**`）。路由一律在 `routes` 中显式声明 |
+| 网关鉴权策略 | **默认拒绝 + 显式白名单** | 除登录、读请求、公开写接口外一律要求有效 token。新增路由默认受保护，不会因漏配置而裸奔 |
+| Actuator | 已收敛 | 仅 `health,info,metrics,loggers`；`heapdump`/`env`/`configprops`/`beans`/`threaddump`/`shutdown` 已单独 `enabled: false`。**heapdump 可导出堆内存明文（含 JWT 密钥），脱敏无效，绝不可暴露** |
+| 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠 |
+| 登录防爆破 | 已启用 | user-service 按用户名计数，连续失败 5 次锁定 15 分钟（进程内实现，**多实例部署需换 Redis**） |
+| 容器权限 | 已加固 | 7 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
+| 网关端口 | 仅宿主机回环 | `127.0.0.1:${GATEWAY_PORT}:8080`。前端走容器内网 `gateway:8080`，无需对外发布端口 |
+| JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。校验范围＝配置了 `sa-token.jwt-secret-key` 的服务；本编排对 7 个服务统一注入 `SA_TOKEN_JWT_SECRET`，因此 7 个都会校验（密钥弱则整体拒绝启动，属预期的 fail-closed） |
+
+## 六、内存预算（默认 mem_limit）
 
 | 服务 | 上限 | | 服务 | 上限 |
 |---|---|---|---|---|
@@ -120,11 +150,15 @@ docker compose down -v                  # ⚠️ 连 nacos 数据卷一并清空
 JVM 堆按 `MaxRAMPercentage=70` 跟随容器上限。加上已有的 mysql/redis/qdrant，建议服务器 ≥ 4G 内存；
 2C2G 机器请把业务服务降到 320m 并接受较紧的运行水位（直接改 compose 里的 `mem_limit`）。
 
-## 六、常见问题
+## 七、常见问题
 
 - **端口被占用**：改 `.env` 的 `WEB_PORT` / `GATEWAY_PORT`。
 - **业务服务起不来、报 MySQL 连接失败**：核对 `.env` 密码与账号；确认该账号允许从 Docker 网段连接（见上文建账号 SQL）；`docker compose logs user-service` 看详情。
 - **网关反复重启**：多为 `SA_TOKEN_JWT_SECRET` 未设置或各服务密钥不一致，检查 `.env`。
+- **业务服务启动报 `SecretGuard ... 拒绝启动`**：说明 prod 下 JWT 密钥为空/过短/沿用了仓库中的 dev 默认值。
+  用 `openssl rand -base64 48` 重新生成并写入 `.env` 的 `SA_TOKEN_JWT_SECRET` 即可。
+- **nacos 容器起不来**：多因 `NACOS_AUTH_TOKEN` 缺失或解码后不足 32 字节，检查 `.env` 与 `docker compose logs nacos`。
+- **前端报 429**：触发了 Nginx 限流（`limit_req`）。阈值见 `deploy/docker/nginx/default.conf`，按需调整。
 - **首次构建慢/超时**：国内网络可给 Docker daemon 配置镜像加速器；或本地 `docker compose build` 后 `docker save | docker load` 到服务器。
 - **Sentinel dashboard 未部署**：网关 Sentinel 会尝试上报 `localhost:8858`，连接失败仅是无害告警，需要时再单独部署 dashboard。
 - **Redis/Qdrant 接入**：业务暂未使用。将来接入时把对应服务加入 compose 网络即可（同一网络内直接用容器名作主机名，或继续走 host-gateway 用宿主机端口）。

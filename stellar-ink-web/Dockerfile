@@ -15,6 +15,8 @@ RUN npm run build
 FROM nginx:1.27-alpine
 ENV TZ=Asia/Shanghai
 COPY deploy/docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+# 反代公共指令片段（被 default.conf 中多个 location 通过 include 引用）
+COPY deploy/docker/nginx/api_proxy.inc /etc/nginx/conf.d/api_proxy.inc
 COPY --from=build /web/dist /usr/share/nginx/html
 
 EXPOSE 80
