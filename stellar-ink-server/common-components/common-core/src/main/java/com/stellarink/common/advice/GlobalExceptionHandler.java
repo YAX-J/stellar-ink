@@ -41,8 +41,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(SystemException.class)
     public Response<?> handleSystemException(SystemException e, HttpServletRequest request) {
         String traceId = generateTraceId();
+        // 安全：内部异常的 message 可能含 SQL/路径/主机等细节，只记日志、不返回给客户端
         log.error("系统异常[{}]: {}, 请求路径: {}", traceId, e.getMessage(), request.getRequestURI(), e);
-        return Response.error(e.getCode(), e.getMessage()).withTraceId(traceId);
+        return Response.error(e.getCode(), ErrorCode.SYSTEM_ERROR.getMsg()).withTraceId(traceId);
     }
 
     /** 未登录（Sa-Token） */
