@@ -1,7 +1,7 @@
 # =============================================================================
 # 星笺 STELLAR INK 生产部署编排（Docker Compose v2，需 Docker 20.10+ 支持 host-gateway）
 #
-# 拓扑：web(nginx:80) → gateway(:8080 对外) → 业务服务(8101-8106，仅内部网络)
+# 拓扑：web(nginx:80，唯一对公网入口) → gateway(:8080，仅容器内网) → 业务服务(8101-8106，仅内部网络)
 #       全部服务注册/读配置到 nacos(:8848，compose 内部网络)
 #
 # 服务器上已有的 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器由本机维护，
@@ -17,6 +17,8 @@ x-common-env: &common-env
   TZ: Asia/Shanghai
   SPRING_PROFILES_ACTIVE: prod
   NACOS_ADDR: nacos:8848
+  # 注意：Nacos 已开启认证，下列账号即服务端凭据；首次部署后请通过控制台/API
+  # 把默认口令 nacos/nacos 改掉，并同步更新 .env（默认值仅为本机联调便利保留）
   NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
   NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
   SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
@@ -67,7 +69,14 @@ services:
     restart: unless-stopped
     environment:
       MODE: standalone
-      NACOS_AUTH_ENABLE: "false"
+      # 安全：必须开启认证。关闭时任何能访问 8848 的客户端都能读写全部配置，
+      # 配合各服务的 refresh-enabled: true 即可动态改写配置下发到全部服务。
+      NACOS_AUTH_ENABLE: "true"
+      # 下面两项 Nacos 2.2+ 起要求非默认值，否则服务端拒绝启动；务必在 .env 中设置。
+      # NACOS_AUTH_TOKEN 为 Base64 字符串，解码后不得少于 32 字节：openssl rand -base64 48
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?请在 deploy/docker/.env 中设置 NACOS_AUTH_TOKEN}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:?请在 deploy/docker/.env 中设置 NACOS_AUTH_IDENTITY_KEY}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?请在 deploy/docker/.env 中设置 NACOS_AUTH_IDENTITY_VALUE}
       JVM_XMS: 256m
       JVM_XMX: 512m
       JVM_XMN: 128m
@@ -100,14 +109,26 @@ services:
         condition: service_healthy
     environment:
       <<: *common-env
-      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-*}
+      # 必填、无默认值：避免漏配时默认放开通配 "*"
+      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:?请在 deploy/docker/.env 中设置 GATEWAY_CORS_ORIGINS（如 https://www.example.com）}
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+      # 安全：仅绑宿主机回环。前端经 web(nginx) 走容器内网 http://gateway:8080，
+      # 不经过宿主机端口；把 8080 暴露到公网会让 /actuator/prometheus 等内部指标匿名可达，
+      # 且能绕过 nginx 的边缘限流直连网关。需本机调试时用 SSH 隧道：
+      #   ssh -L 8080:127.0.0.1:8080 <服务器>
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     volumes:
       - ./logs/gateway:/app/logs
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 512m
     logging: *default-logging
 
@@ -131,6 +152,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8101/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 384m
     logging: *default-logging
 
@@ -153,6 +181,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8102/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 384m
     logging: *default-logging
 
@@ -175,6 +210,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8103/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 384m
     logging: *default-logging
 
@@ -197,6 +239,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8104/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 384m
     logging: *default-logging
 
@@ -219,6 +268,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8105/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 384m
     logging: *default-logging
 
@@ -241,6 +297,13 @@ services:
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8106/actuator/health || exit 1"]
+    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
+    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
+    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 320m
     logging: *default-logging
 
