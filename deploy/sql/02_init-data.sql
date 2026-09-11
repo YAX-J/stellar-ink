@@ -12,8 +12,8 @@
 -- -------------------------------------------------------------
 -- 站长
 -- -------------------------------------------------------------
-INSERT IGNORE INTO `user` (`id`, `username`, `password`, `nickname`, `signature`, `avatar_text`, `daily_goal`, `created_at`) VALUES
-(1, 'stellar', '$2b$10$/Y2gZHVQbuUI8VDF96YrDONvBeVPz4H44LX2bTrrTTGeRaf1nZN4a', '拾星人', '在算法的洪流里，做一个缓慢的人。', '星', 500, '2024-03-07 23:00:00');
+INSERT IGNORE INTO `user` (`id`, `username`, `password`, `nickname`, `signature`, `avatar_text`, `daily_goal`, `role`, `created_at`) VALUES
+(1, 'stellar', '$2b$10$/Y2gZHVQbuUI8VDF96YrDONvBeVPz4H44LX2bTrrTTGeRaf1nZN4a', '拾星人', '在算法的洪流里，做一个缓慢的人。', '星', 500, 'ADMIN', '2024-03-07 23:00:00');
 
 -- -------------------------------------------------------------
 -- 文章（id 按新→旧排列，1 为最新；13-15 为近三夜短文，保证统计有数据）

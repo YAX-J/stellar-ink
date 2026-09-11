@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS `user` (
     `signature`   VARCHAR(200)                          COMMENT '星图签名',
     `avatar_text` VARCHAR(10)                           COMMENT '头像底字',
     `daily_goal`  INT          DEFAULT 500             COMMENT '每日星尘目标（字）',
+    `role`        VARCHAR(20)  NOT NULL DEFAULT 'READER' COMMENT '角色：READER 读者 / AUTHOR 作者 / ADMIN 站长',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '注册星历',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`)
