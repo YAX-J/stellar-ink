@@ -17,6 +17,9 @@ public interface UserService {
     /** 修改当前用户密码（校验旧密码） */
     void changePassword(Long userId, ChangePasswordDTO dto);
 
+    /** 管理员调整用户角色（仅 ADMIN，服务内再做防御性校验） */
+    UserVO changeRole(Long operatorId, Long targetUserId, String role);
+
     UserVO profile(Long userId);
 
     UserVO updateProfile(Long userId, UserUpdateDTO dto);

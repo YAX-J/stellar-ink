@@ -1,12 +1,15 @@
 package com.stellarink.user.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
+import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.mapper.UserMapper;
@@ -69,8 +72,8 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码不对。");
         }
         clearFailures(attemptKey);
-        // Sa-Token JWT 无状态登录：token 由网关与各服务用相同密钥验签
-        StpUtil.login(user.getId());
+        // Sa-Token JWT 无状态登录：token 由网关与各服务用相同密钥验签；角色一并写入 JWT 供门槛校验
+        StpUtil.login(user.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, roleOf(user)));
         log.info("登录成功 userId={} username={}", user.getId(), user.getUsername());
         return toVO(user);
     }
@@ -90,6 +93,8 @@ public class UserServiceImpl implements UserService {
         entity.setPassword(passwordEncoder.encode(dto.getPassword()));
         entity.setNickname(StringUtils.hasText(dto.getNickname()) ? dto.getNickname().trim() : username);
         entity.setDailyGoal(500);
+        // 开放注册一律 READER，不信任客户端自报角色
+        entity.setRole(Role.READER.name());
         entity.setCreatedAt(now);
         try {
             userMapper.insert(entity);
@@ -98,8 +103,8 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "这个登录名已经被占用了，换一个吧。");
         }
         log.info("注册新账号 userId={} username={}", entity.getId(), entity.getUsername());
-        // 注册即登录：与 login 一致签发 JWT
-        StpUtil.login(entity.getId());
+        // 注册即登录：与 login 一致签发 JWT（新账号固定 READER）
+        StpUtil.login(entity.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, Role.READER.name()));
         return toVO(entity);
     }
 
@@ -161,6 +166,24 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public UserVO changeRole(Long operatorId, Long targetUserId, String role) {
+        // 防御性校验：即便网关漏拦，也拒绝非 ADMIN 操作（读 JWT 中的角色）
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        Role target = Role.parse(role);
+        if (target == null) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "角色不合法，可选 READER / AUTHOR / ADMIN。");
+        }
+        if (operatorId != null && operatorId.equals(targetUserId)) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "不能修改自己的角色，以免把自己锁在门外。");
+        }
+        User user = requireUser(targetUserId);
+        user.setRole(target.name());
+        userMapper.updateById(user);
+        log.info("调整角色 operatorId={} targetUserId={} role={}", operatorId, targetUserId, target.name());
+        return toVO(user);
+    }
+
+    @Override
     public void changePassword(Long userId, ChangePasswordDTO dto) {
         User user = requireUser(userId);
         if (!passwordEncoder.matches(dto.getOldPassword(), user.getPassword())) {
@@ -203,6 +226,11 @@ public class UserServiceImpl implements UserService {
         return user;
     }
 
+    /** 规范化用户角色：DB 值缺失或非法时回退 READER */
+    private String roleOf(User user) {
+        return Role.parseOrDefault(user.getRole()).name();
+    }
+
     private UserVO toVO(User user) {
         UserVO vo = new UserVO();
         vo.setId(user.getId());
@@ -211,6 +239,7 @@ public class UserServiceImpl implements UserService {
         vo.setSignature(user.getSignature());
         vo.setAvatarText(user.getAvatarText());
         vo.setDailyGoal(user.getDailyGoal());
+        vo.setRole(roleOf(user));
         vo.setCreatedAt(user.getCreatedAt());
         return vo;
     }
