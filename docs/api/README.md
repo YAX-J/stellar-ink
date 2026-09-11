@@ -30,7 +30,19 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 
 - 登录返回 `tokenName: Authorization` 与 `tokenValue`；后续请求带 `Authorization: <tokenValue>`（无 Bearer 前缀）
 - 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）
-- 其余对 `/posts|/meteors|/links|/user` 的写请求需有效 token，失败返回 `{"code":401,...}`
+- 其余写请求需有效 token，失败返回 `{"code":401,...}`
+
+### 角色模型（三档，权限向下累积）
+
+| 角色 | 中文 | 能力 |
+|---|---|---|
+| READER | 读者 | 读 + 公开互动（点赞/投瓶/申请友链），不可创作 |
+| AUTHOR | 作者 | READER 全部 + 写/改/删文章、发射/删除流星 |
+| ADMIN | 站长 | AUTHOR 全部 + 友链审核 + 调整用户角色 |
+
+- 角色在登录/注册时写入 JWT；注册固定 `READER`，种子账号 `stellar` 为 `ADMIN`
+- 网关按角色做写操作门槛：文章/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role` 需 `ADMIN`
+- 角色不足返回 `{"code":403,...}`；角色不参与数据归属（文章/流星不区分作者）
 
 ## 接口一览（经网关调用）
 
@@ -44,6 +56,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | GET | `/user/profile` | 站长资料 | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
 | PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
+| PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user | ADMIN |
 
 ### post-service :8102
 
@@ -51,8 +64,8 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 |---|---|---|---|
 | GET | `/posts` | 分页列表；`page/size/year/tag/keyword/status` | 公开 |
 | GET | `/posts/{id}` | 详情（正文、阅读时长、prev/next 相邻星） | 公开 |
-| POST | `/posts` | 发射 `{title, content, tags[], status}` | 登录 |
-| PUT / DELETE | `/posts/{id}` | 更新 / 删除 | 登录 |
+| POST | `/posts` | 发射 `{title, content, tags[], status}` | AUTHOR |
+| PUT / DELETE | `/posts/{id}` | 更新 / 删除 | AUTHOR |
 | POST | `/posts/{id}/glow` | 补充光芒，返回 `{glow}` | 公开 |
 | GET | `/tags` | 标签计数（光谱） | 公开 |
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
@@ -63,8 +76,8 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/meteors?limit=50` | 最近流星 | 公开 |
-| POST | `/meteors` | 发射 `{content}` | 登录 |
-| DELETE | `/meteors/{id}` | 删除 | 登录 |
+| POST | `/meteors` | 发射 `{content}` | AUTHOR |
+| DELETE | `/meteors/{id}` | 删除 | AUTHOR |
 
 ### echo-service :8104
 
@@ -79,7 +92,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 |---|---|---|---|
 | GET | `/links` | 友邻列表 | 公开 |
 | POST | `/links` | 申请接入 `{name, url, description?}` | 公开 |
-| PUT | `/links/{id}/status?status=1` | 站长确认/驳回 | 登录 |
+| PUT | `/links/{id}/status?status=1` | 站长确认/驳回 | ADMIN |
 
 ### stats-service :8106
 
@@ -108,4 +121,4 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 
 - Sentinel 规则未持久化（sentinel-datasource-nacos 已引入，待配规则）
 - 未启用 Redis 令牌桶限流（需 Redis）
-- 搜索为 LIKE；已做开放注册（`POST /auth/register`）；未做评论/文件上传/多租户数据隔离
+- 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）；未做评论/文件上传/多租户数据隔离
