@@ -21,10 +21,11 @@ x-common-env: &common-env
   NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
   NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
   SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
-  # 堆上限跟随容器 mem_limit，各服务内存预算见 README
+  # 小内存服务器方案：显式限制堆并使用 SerialGC，避免 JVM 按容器上限预留大堆。
   JAVA_OPTS: >-
-    -XX:MaxRAMPercentage=70.0
-    -XX:+UseG1GC
+    -Xms32m
+    -Xmx128m
+    -XX:+UseSerialGC
     -Dfile.encoding=UTF-8
     -Duser.timezone=Asia/Shanghai
 
@@ -93,7 +94,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 512m
+    mem_limit: 256m
     logging: *default-logging
 
   # ---------------------------------------------------------------- 业务服务
@@ -120,7 +121,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 384m
+    mem_limit: 256m
     logging: *default-logging
 
   post-service:
@@ -146,7 +147,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 384m
+    mem_limit: 256m
     logging: *default-logging
 
   meteor-service:
@@ -172,7 +173,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 384m
+    mem_limit: 256m
     logging: *default-logging
 
   echo-service:
@@ -198,7 +199,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 384m
+    mem_limit: 256m
     logging: *default-logging
 
   link-service:
@@ -224,7 +225,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 384m
+    mem_limit: 256m
     logging: *default-logging
 
   # 无库服务（OpenFeign 聚合），不需要 MySQL/JWT 之外的配置
@@ -251,7 +252,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 320m
+    mem_limit: 256m
     logging: *default-logging
 
   # -------------------------------------------------------------------- 前端

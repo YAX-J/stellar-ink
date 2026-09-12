@@ -133,12 +133,12 @@ docker compose down                     # 停止并移除本项目容器，不�
 
 | 服务 | 上限 | | 服务 | 上限 |
 |---|---|---|---|---|
-| gateway | 512m | | 五个业务服务 | 各 384m |
-| stats | 320m | | web | 64m |
-| **本编排合计** | ≈ 2.8G | | 宿主机 Nacos | 独立预算 |
+| gateway | 256m | | 五个业务服务 | 各 256m |
+| stats | 256m | | web | 64m |
+| **本编排合计** | ≈ 1.86G | | 宿主机 Nacos | 独立预算 |
 
-JVM 堆按 `MaxRAMPercentage=70` 跟随容器上限。加上已有的 mysql/redis/qdrant，建议服务器 ≥ 4G 内存；
-2C2G 机器请把业务服务降到 320m 并接受较紧的运行水位（直接改 compose 里的 `mem_limit`）。
+Java 服务统一使用 `-Xms32m -Xmx128m` 和 `SerialGC`，适合低并发个人博客；`256m` 上限包含 JVM 堆外内存，不建议继续盲目下调。
+加上已有的 mysql/redis/qdrant，建议服务器至少 2G 内存；如果出现容器 `OOMKilled` 或 `OutOfMemoryError`，再把相关服务上限调到 320m。
 
 ## 七、常见问题
 
