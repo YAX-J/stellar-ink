@@ -42,7 +42,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 
 - 角色在登录/注册时写入 JWT；注册固定 `READER`，种子账号 `stellar` 为 `ADMIN`
 - 网关按角色做门槛：文章/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role`、`GET /user/list` 需 `ADMIN`
-- 角色不足返回 `{"code":403,...}`；角色不参与数据归属（文章/流星不区分作者）
+- 角色不足返回 `{"code":403,...}`；文章与流星按 `user_id` 记录作者归属，AUTHOR 只能维护自己的内容，ADMIN 可管理全部内容
 
 ## 接口一览（经网关调用）
 
@@ -53,7 +53,8 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | POST | `/auth/register` | 注册（开放），注册即登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/login` | 登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/logout` | 登出（无状态 JWT 语义收口，前端丢 token） | 登录 |
-| GET | `/user/profile` | 站长资料 | 登录 |
+| GET | `/user/authors?ids=1,2` | 批量查询公开作者摘要（最多 100 个，仅返回 id/笔名/头像底字） | 公开 |
+| GET | `/user/profile` | 当前用户资料 | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
 | PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
 | PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user | ADMIN |
@@ -63,10 +64,11 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| GET | `/posts` | 分页列表；`page/size/year/tag/keyword/status` | 公开 |
-| GET | `/posts/{id}` | 详情（正文、阅读时长、prev/next 相邻星） | 公开 |
+| GET | `/posts` | 已发布文章分页列表；`page/size/year/tag/keyword` | 公开 |
+| GET | `/posts/mine` | 当前作者自己的草稿列表 | AUTHOR |
+| GET | `/posts/{id}` | 详情（已发布文章公开；草稿仅作者本人或 ADMIN） | 按状态 |
 | POST | `/posts` | 发射 `{title, content, tags[], status}` | AUTHOR |
-| PUT / DELETE | `/posts/{id}` | 更新 / 删除 | AUTHOR |
+| PUT / DELETE | `/posts/{id}` | 更新 / 删除；AUTHOR 仅自己的文章，ADMIN 可操作全部 | AUTHOR |
 | POST | `/posts/{id}/glow` | 补充光芒，返回 `{glow}` | 公开 |
 | GET | `/tags` | 标签计数（光谱） | 公开 |
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
@@ -78,7 +80,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 |---|---|---|---|
 | GET | `/meteors?limit=50` | 最近流星 | 公开 |
 | POST | `/meteors` | 发射 `{content}` | AUTHOR |
-| DELETE | `/meteors/{id}` | 删除 | AUTHOR |
+| DELETE | `/meteors/{id}` | 删除；AUTHOR 仅自己的流星，ADMIN 可操作全部 | AUTHOR |
 
 ### echo-service :8104
 
@@ -111,7 +113,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 ## 数据库
 
 共享库模式：一个 `stellar_ink` 库，各服务只读写自己的表（Druid 连接池，dev 直连本机 MySQL）。
-初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。拆库：改各服务 `MYSQL_DB` 环境变量。
+初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。已有数据库升级多作者归属时执行一次 `deploy/sql/03_multi-author.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 ## 日志
 

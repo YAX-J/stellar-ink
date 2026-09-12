@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 站长用户（单用户博客；身份舱/星籍资料合并于此）
+ * 用户账号（身份舱与星籍资料合并于此）。
  */
 @Data
 @TableName("`user`")

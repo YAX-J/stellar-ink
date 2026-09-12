@@ -4,6 +4,7 @@ import { useMeteorStore } from '@/stores/meteors'
 import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
 import MeteorSky from '@/components/canvas/MeteorSky.vue'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const meteorStore = useMeteorStore()
 const auth = useAuthStore()
@@ -11,6 +12,10 @@ const text = ref('')
 const sky = ref(null)
 const launching = ref(false)
 const canLaunch = computed(() => auth.isAuthorOrAbove)
+
+function canDelete(meteor) {
+  return auth.isAdmin || (auth.isAuthorOrAbove && Number(auth.user?.id) === Number(meteor.userId))
+}
 
 onMounted(() => meteorStore.ensureLoaded().catch(() => {}))
 
@@ -25,6 +30,11 @@ async function launch() {
   } finally {
     launching.value = false
   }
+}
+
+async function remove(meteor) {
+  if (!window.confirm('确定熄灭这颗流星吗？')) return
+  await meteorStore.remove(meteor.id).catch(() => {})
 }
 </script>
 
@@ -48,9 +58,13 @@ async function launch() {
     </p>
     <MeteorSky ref="sky" class="reveal" style="--d:.14s" />
     <div class="meteor-feed reveal" style="--d:.2s">
-      <div v-for="(m, i) in meteorStore.items" :key="i" class="meteor-item">
+      <div v-for="m in meteorStore.items" :key="m.id" class="meteor-item">
         <p>{{ m.t }}</p>
-        <small>☄ {{ m.d }}</small>
+        <div class="meteor-meta">
+          <AuthorBadge :user-id="m.userId" compact />
+          <small>☄ {{ m.d }}</small>
+          <button v-if="canDelete(m)" class="meteor-delete" title="删除流星" @click="remove(m)">×</button>
+        </div>
       </div>
     </div>
   </section>
@@ -74,5 +88,9 @@ async function launch() {
 .meteor-item::before{content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
   background:linear-gradient(180deg,var(--amber),transparent)}
 .meteor-item p{font-size:15px; line-height:1.9}
-.meteor-item small{display:block; margin-top:8px; font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+.meteor-meta{display:flex; align-items:center; gap:12px; margin-top:8px; font-family:var(--font-mono); font-size:10px}
+.meteor-item small{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+.meteor-delete{width:28px; height:28px; margin-left:auto; border:0; background:transparent; color:var(--ink-faint);
+  font-size:20px; cursor:pointer; transition:color .2s}
+.meteor-delete:hover{color:var(--rose)}
 </style>

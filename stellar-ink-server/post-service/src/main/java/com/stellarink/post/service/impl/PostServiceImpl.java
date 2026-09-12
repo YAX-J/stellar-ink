@@ -1,9 +1,11 @@
 package com.stellarink.post.service.impl;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
 import com.stellarink.post.mapper.PostMapper;
 import com.stellarink.post.pojo.Post;
@@ -12,6 +14,7 @@ import com.stellarink.sharedmodel.dto.post.PostCreateDTO;
 import com.stellarink.sharedmodel.dto.post.PostQueryDTO;
 import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
+import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.vo.post.PostDetailVO;
 import com.stellarink.sharedmodel.vo.post.PostVO;
 import lombok.RequiredArgsConstructor;
@@ -53,10 +56,25 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    public IPage<PostVO> mine(PostQueryDTO query) {
+        LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
+                .eq(query.getStatus() != null, Post::getStatus, query.getStatus())
+                .eq(Post::getUserId, AuthHelper.loginId())
+                .orderByDesc(Post::getUpdatedAt)
+                .orderByDesc(Post::getId);
+        IPage<Post> page = postMapper.selectPage(
+                new Page<>(query.getPage(), query.getSize()), wrapper);
+        return page.convert(this::toVO);
+    }
+
+    @Override
     public PostDetailVO detail(Long id) {
         Post post = requirePost(id);
+        ensureReadable(post);
         PostDetailVO vo = new PostDetailVO();
         vo.setId(post.getId());
+        vo.setUserId(post.getUserId());
+        vo.setStatus(post.getStatus());
         vo.setTitle(post.getTitle());
         vo.setContent(post.getContent());
         vo.setTags(splitTags(post.getTags()));
@@ -72,9 +90,11 @@ public class PostServiceImpl implements PostService {
 
     @Override
     public Long create(PostCreateDTO dto) {
-        String content = requireContent(dto.getContent());
+        String content = dto.getStatus() != null && dto.getStatus() == 0
+                ? optionalContent(dto.getContent()) : requireContent(dto.getContent());
         LocalDateTime now = LocalDateTime.now();
         Post entity = new Post();
+        entity.setUserId(AuthHelper.loginId());
         entity.setTitle(StringUtils.hasText(dto.getTitle()) ? dto.getTitle().trim() : "无题的一夜");
         entity.setContent(content);
         entity.setTags(joinTags(dto.getTags()));
@@ -92,16 +112,22 @@ public class PostServiceImpl implements PostService {
     @Override
     public void update(Long id, PostUpdateDTO dto) {
         Post post = requirePost(id);
+        ensureEditable(post);
+        Integer nextStatus = dto.getStatus() == null ? post.getStatus() : dto.getStatus();
         if (StringUtils.hasText(dto.getTitle())) {
             post.setTitle(dto.getTitle().trim());
         }
         if (dto.getContent() != null) {
-            String content = requireContent(dto.getContent());
+            String content = nextStatus != null && nextStatus == 0
+                    ? optionalContent(dto.getContent()) : requireContent(dto.getContent());
             post.setContent(content);
             post.setWordCount(countWords(content));
         }
         if (dto.getTags() != null) {
             post.setTags(joinTags(dto.getTags()));
+        }
+        if (Integer.valueOf(1).equals(nextStatus)) {
+            requireContent(post.getContent());
         }
         if (dto.getStatus() != null) {
             post.setStatus(dto.getStatus());
@@ -114,13 +140,17 @@ public class PostServiceImpl implements PostService {
     @Override
     public void delete(Long id) {
         Post post = requirePost(id);
+        ensureEditable(post);
         postMapper.deleteById(id);
         log.info("熄灭星体 id={} title={}", id, post.getTitle());
     }
 
     @Override
     public Integer glow(Long id) {
-        requirePost(id);
+        Post post = requirePost(id);
+        if (!Integer.valueOf(1).equals(post.getStatus())) {
+            throw BusinessExceptionHelper.of(ErrorCode.NOT_FOUND, "这颗星还没有发射");
+        }
         postMapper.update(null, new LambdaUpdateWrapper<Post>()
                 .eq(Post::getId, id)
                 .setSql("glow = glow + 1"));
@@ -166,6 +196,8 @@ public class PostServiceImpl implements PostService {
         vo.setDate(post.getCreatedAt().toLocalDate().format(DATE_FMT));
         vo.setGlow(post.getGlow());
         vo.setStatus(post.getStatus());
+        vo.setUserId(post.getUserId());
+        vo.setUpdatedAt(post.getUpdatedAt());
         String content = post.getContent() == null ? "" : post.getContent();
         vo.setSummary(content.length() > SUMMARY_LEN ? content.substring(0, SUMMARY_LEN) + "……" : content);
         return vo;
@@ -194,5 +226,28 @@ public class PostServiceImpl implements PostService {
             throw BusinessExceptionHelper.of("正文不能为空，先写点什么再发射。");
         }
         return content.trim();
+    }
+
+    static String optionalContent(String content) {
+        return content == null ? "" : content.trim();
+    }
+
+    private void ensureReadable(Post post) {
+        if (Integer.valueOf(1).equals(post.getStatus())) {
+            return;
+        }
+        ensureEditable(post);
+    }
+
+    private void ensureEditable(Post post) {
+        if (!StpUtil.isLogin()) {
+            throw BusinessExceptionHelper.of(ErrorCode.NOT_FOUND, "这颗星不存在");
+        }
+        Role role = AuthHelper.currentRole();
+        if (role == Role.ADMIN
+                || (role == Role.AUTHOR && AuthHelper.loginId().equals(post.getUserId()))) {
+            return;
+        }
+        throw BusinessExceptionHelper.of(ErrorCode.FORBIDDEN, "没有权限操作这颗星");
     }
 }

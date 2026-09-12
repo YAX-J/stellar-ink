@@ -3,10 +3,12 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { usePostStore } from '@/stores/posts'
 import { fitCanvas } from '@/utils/canvas'
 import { fmt } from '@/utils/format'
+import { useAuthorStore } from '@/stores/authors'
 
 const props = defineProps({ years: { type: Array, required: true } })
 const emit = defineEmits(['open'])
 const postStore = usePostStore()
+const authorStore = useAuthorStore()
 
 const cvs = ref(null)
 const tipData = ref(null)
@@ -109,7 +111,7 @@ onUnmounted(() => cancelAnimationFrame(raf))
     <div class="map-tip" :class="{ show: !!tipData }" :style="tipStyle">
       <template v-if="tipData">
         <h6>{{ tipData.title }}</h6>
-        <p>{{ tipData.date }} · {{ fmt(tipData.words) }} 字<br>#{{ tipData.tags.join(' #') }}</p>
+        <p>{{ authorStore.find(tipData.userId).nickname }} · {{ tipData.date }} · {{ fmt(tipData.words) }} 字<br>#{{ tipData.tags.join(' #') }}</p>
       </template>
     </div>
   </div>

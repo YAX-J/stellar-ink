@@ -11,6 +11,7 @@ import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.mapper.UserMapper;
 import com.stellarink.user.pojo.User;
@@ -26,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -194,6 +196,22 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public List<AuthorVO> listAuthors(List<Long> ids) {
+        List<Long> safeIds = ids == null ? List.of() : ids.stream()
+                .filter(Objects::nonNull)
+                .filter(id -> id > 0)
+                .distinct()
+                .toList();
+        if (safeIds.size() > 100) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "一次最多查询 100 位作者。");
+        }
+        if (safeIds.isEmpty()) {
+            return List.of();
+        }
+        return userMapper.selectBatchIds(safeIds).stream().map(this::toAuthorVO).toList();
+    }
+
+    @Override
     public void changePassword(Long userId, ChangePasswordDTO dto) {
         User user = requireUser(userId);
         if (!passwordEncoder.matches(dto.getOldPassword(), user.getPassword())) {
@@ -251,6 +269,14 @@ public class UserServiceImpl implements UserService {
         vo.setDailyGoal(user.getDailyGoal());
         vo.setRole(roleOf(user));
         vo.setCreatedAt(user.getCreatedAt());
+        return vo;
+    }
+
+    private AuthorVO toAuthorVO(User user) {
+        AuthorVO vo = new AuthorVO();
+        vo.setId(user.getId());
+        vo.setNickname(user.getNickname());
+        vo.setAvatarText(user.getAvatarText());
         return vo;
     }
 }

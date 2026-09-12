@@ -1,6 +1,7 @@
 <script setup>
 import { TAG_CLASS } from '@/api/mock'
 import { kWords } from '@/utils/format'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const props = defineProps({
   post: { type: Object, required: true },
@@ -25,6 +26,7 @@ function onMove(e) {
     <div class="date">{{ props.post.date }}</div>
     <h4>{{ props.post.title }}</h4>
     <p class="ex">{{ props.post.excerpt || '这颗星还没有留下摘要。' }}</p>
+    <AuthorBadge class="author" :user-id="props.post.userId" compact />
     <div class="chips">
       <span v-for="t in props.post.tags" :key="t" class="chip" :class="TAG_CLASS[t] || ''">#{{ t }}</span>
     </div>
@@ -47,6 +49,7 @@ function onMove(e) {
 .dust h4{font-family:var(--font-serif); font-weight:600; font-size:18px; margin:12px 0 10px; line-height:1.5}
 .dust .ex{font-size:13px; color:var(--ink-dim); line-height:1.9;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+.dust .author{margin-top:14px; font-family:var(--font-mono); font-size:10px}
 .dust .wc{position:absolute; right:18px; top:20px; font-family:var(--font-mono);
   font-size:10px; color:var(--ink-faint)}
 </style>

@@ -5,6 +5,7 @@ import { usePostStore } from '@/stores/posts'
 import SectionHead from '@/components/common/SectionHead.vue'
 import StarMapCanvas from '@/components/canvas/StarMapCanvas.vue'
 import { fmt } from '@/utils/format'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
@@ -63,6 +64,7 @@ function openPost(p) {
         >
           <span class="d">{{ p.date }}</span>
           <h4>{{ p.title }}</h4>
+          <AuthorBadge class="river-author" :user-id="p.userId" compact />
           <p>{{ fmt(p.words) }} 字 · #{{ p.tags.join(' #') }}</p>
         </div>
         <p v-if="!postStore.posts.length && !postStore.loading" class="state-text">还没有已发布的星。</p>
@@ -113,6 +115,7 @@ function openPost(p) {
 .river-item.even::after{right:-46px}
 .river-item .d{font-family:var(--font-mono); font-size:11px; color:var(--amber); letter-spacing:.15em}
 .river-item h4{font-family:var(--font-serif); font-size:17px; margin:8px 0 6px}
+.river-author{margin-bottom:8px; font-family:var(--font-mono); font-size:10px}
 .river-item p{font-size:12px; color:var(--ink-faint); font-family:var(--font-mono)}
 
 @media (max-width:720px){

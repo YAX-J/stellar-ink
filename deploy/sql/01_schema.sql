@@ -16,6 +16,7 @@
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `post` (
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`    BIGINT       NOT NULL                COMMENT '作者用户 ID',
     `title`      VARCHAR(200) NOT NULL                COMMENT '标题',
     `content`    TEXT                                  COMMENT '正文',
     `tags`       VARCHAR(200)                          COMMENT '标签，逗号分隔',
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS `post` (
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（即点亮日期）',
     `updated_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    KEY `idx_user_status_id` (`user_id`, `status`, `id`),
     KEY `idx_status_id` (`status`, `id`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '文章';
@@ -34,9 +36,11 @@ CREATE TABLE IF NOT EXISTS `post` (
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `meteor` (
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`    BIGINT       NOT NULL                COMMENT '作者用户 ID',
     `content`    VARCHAR(500) NOT NULL                COMMENT '碎片内容',
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '发射时间',
     PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '流星备忘录';
 

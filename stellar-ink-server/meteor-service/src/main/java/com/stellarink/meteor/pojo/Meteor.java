@@ -17,6 +17,8 @@ public class Meteor {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private Long userId;
+
     private String content;
 
     private LocalDateTime createdAt;

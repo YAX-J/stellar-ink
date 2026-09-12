@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { request } from '@/api/client'
+import { useAuthorStore } from '@/stores/authors'
 
 function normalizePost(post, detail = false) {
   if (!post) return null
@@ -54,6 +55,7 @@ export const usePostStore = defineStore('posts', {
         })
         const records = page?.records || page?.list || []
         this.posts = records.map((post) => normalizePost(post))
+        await useAuthorStore().ensureAuthors(this.posts.map((post) => post.userId)).catch(() => {})
         this.initialized = true
         return this.posts
       } catch (error) {
@@ -71,16 +73,92 @@ export const usePostStore = defineStore('posts', {
       this.error = ''
       try {
         const detail = normalizePost(await request(`/posts/${postId}`), true)
+        await useAuthorStore().ensureAuthors([detail.userId]).catch(() => {})
         this.details[postId] = detail
         const index = this.posts.findIndex((post) => post.id === postId)
-        if (index >= 0) this.posts[index] = { ...this.posts[index], ...detail }
-        else this.posts.push(detail)
+        if (detail.status === 1) {
+          if (index >= 0) this.posts[index] = { ...this.posts[index], ...detail }
+          else this.posts.unshift(detail)
+        } else if (index >= 0) {
+          this.posts.splice(index, 1)
+        }
         return detail
       } catch (error) {
         this.error = error.message
         throw error
       } finally {
         this.detailLoading = false
+      }
+    },
+
+    async fetchDrafts() {
+      this.error = ''
+      try {
+        const page = await request('/posts/mine', { query: { status: 0, page: 1, size: 50 } })
+        const drafts = (page?.records || page?.list || []).map((post) => normalizePost(post))
+        await useAuthorStore().ensureAuthors(drafts.map((post) => post.userId)).catch(() => {})
+        return drafts
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async saveDraft({ id, title, body, tag }) {
+      this.error = ''
+      const payload = {
+        title: title?.trim() || '未命名草稿',
+        content: body || '',
+        tags: tag ? [tag] : [],
+        status: 0,
+      }
+      try {
+        if (id) {
+          await request('/posts/' + Number(id), { method: 'PUT', body: payload })
+          await this.fetchDetail(id)
+          return Number(id)
+        }
+        const data = await request('/posts', { method: 'POST', body: payload })
+        const draftId = Number(data?.id)
+        if (draftId) await this.fetchDetail(draftId)
+        return draftId
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async publishDraft({ id, title, body, tag }) {
+      this.error = ''
+      const payload = {
+        title: title?.trim() || '无题的一夜',
+        content: body?.trim() || '',
+        tags: tag ? [tag] : [],
+        status: 1,
+      }
+      try {
+        if (id) {
+          await request('/posts/' + Number(id), { method: 'PUT', body: payload })
+          await this.fetchDetail(id)
+          return Number(id)
+        }
+        return this.publish({ title, body, tag })
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async deletePost(id) {
+      this.error = ''
+      try {
+        await request('/posts/' + Number(id), { method: 'DELETE' })
+        const postId = Number(id)
+        delete this.details[postId]
+        this.posts = this.posts.filter((post) => post.id !== postId)
+      } catch (error) {
+        this.error = error.message
+        throw error
       }
     },
 

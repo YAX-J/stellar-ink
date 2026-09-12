@@ -57,7 +57,8 @@ stellar-ink-server/
 
 - 登录：user-service `/auth/login` 调 `StpUtil.login(userId)` 签发 JWT，返回 `tokenName(Authorization) + tokenValue`
 - 网关 `SaReactorFilter`：放行 GET/OPTIONS、`/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
-  其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`
+  `GET /posts/mine` 需 AUTHOR，其余对 `/posts|/meteors|/links|/user` 的写请求按角色校验
+- 多作者归属：`post.user_id` 与 `meteor.user_id` 记录创建者；AUTHOR 只能修改/删除自己的内容，ADMIN 可管理全部内容；草稿只允许作者本人读取；公开页通过 user-service 批量作者摘要接口展示署名
 - 无状态模式（`StpLogicJwtForStateless`）：token 自包含签名，网关与各服务用同一 `jwt-secret-key` 独立验签，无需 Redis 共享会话
 - 鉴权失败由网关统一返回 `{"code":401,...}`（HTTP 200，SaResult 约定）
 
@@ -70,7 +71,7 @@ stellar-ink-server/
 ## 数据库策略
 
 共享库模式（一个 `stellar_ink` 库，各服务只读写自己的表），兼容云数据库无建库权限场景。
-初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
+初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`；已有数据库升级多作者归属执行一次 `deploy/sql/03_multi-author.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 ## Docker 部署（deploy/docker）
 

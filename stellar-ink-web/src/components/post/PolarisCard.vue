@@ -1,5 +1,6 @@
 <script setup>
 import { usePostStore } from '@/stores/posts'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const emit = defineEmits(['open'])
 const postStore = usePostStore()
@@ -12,6 +13,7 @@ const postStore = usePostStore()
       <h3>{{ postStore.posts[0].title }}</h3>
       <p>{{ postStore.posts[0].excerpt || '这颗星还没有留下摘要。' }}</p>
       <div class="polaris-meta">
+        <AuthorBadge :user-id="postStore.posts[0].userId" compact />
         <span>{{ postStore.posts[0].date }}</span>
         <span>{{ postStore.posts[0].words.toLocaleString() }} 字</span>
         <span>✦ {{ postStore.posts[0].glow || 0 }}</span>

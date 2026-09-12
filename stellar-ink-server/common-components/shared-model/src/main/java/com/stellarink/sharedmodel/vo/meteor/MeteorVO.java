@@ -9,6 +9,8 @@ public class MeteorVO {
 
     private Long id;
 
+    private Long userId;
+
     private String content;
 
     private LocalDateTime createdAt;

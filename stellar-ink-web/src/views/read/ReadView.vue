@@ -2,12 +2,15 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
+import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { fmt, readMinutes } from '@/utils/format'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
 const postStore = usePostStore()
+const auth = useAuthStore()
 const settings = useSettingsStore()
 
 const post = computed(() => postStore.byId(route.params.id))
@@ -16,6 +19,9 @@ const contentParagraphs = computed(() =>
 )
 const prevPost = computed(() => post.value?.prev || null)
 const nextPost = computed(() => post.value?.next || null)
+const canEdit = computed(() => auth.isAdmin || (
+  auth.isAuthorOrAbove && Number(auth.user?.id) === Number(post.value?.userId)
+))
 
 const glowPulse = ref(false)
 const barWidth = ref(0)
@@ -66,6 +72,7 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
       <div class="kicker reveal">DEEP READING · 深读舱</div>
       <h1 class="read-title reveal" style="--d:.06s">{{ post.title }}</h1>
       <div class="read-meta reveal" style="--d:.12s">
+        <AuthorBadge :user-id="post.userId" />
         <span>{{ post.date }}</span>
         <span>{{ fmt(post.words) }} 字 · 约 {{ post.readMinutes || readMinutes(post.words) }} 分钟</span>
         <span>#{{ post.tags.join(' #') }}</span>
@@ -80,6 +87,9 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
       <div class="read-actions reveal" style="--d:.24s">
         <button class="glow-btn" :style="glowPulse ? 'transform:scale(.94)' : ''" @click="addGlow">
           ✦ 为这颗星补充光芒 <b>{{ post.glow }}</b>
+        </button>
+        <button v-if="canEdit" class="edit-btn" title="编辑文章" @click="router.push({ name: 'write', query: { post: post.id } })">
+          ✎ 编辑
         </button>
       </div>
       <div class="read-nav reveal" style="--d:.3s">
@@ -125,12 +135,16 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 .read-body h3{font-family:var(--font-serif); font-weight:900; font-size:24px; margin:44px 0 18px;
   display:flex; align-items:center; gap:14px}
 .read-body h3::before{content:'✦'; color:var(--amber); font-size:16px}
-.read-actions{text-align:center; margin:56px 0 30px}
+.read-actions{display:flex; justify-content:center; align-items:center; gap:12px; margin:56px 0 30px}
 .glow-btn{border:1px solid var(--amber); background:rgba(255,180,84,.1); color:var(--amber);
   border-radius:99px; padding:14px 34px; font-size:15px; cursor:pointer;
   transition:all .3s var(--ease-spring); font-family:var(--font-body)}
 .glow-btn:hover{transform:scale(1.05); box-shadow:0 0 30px rgba(255,180,84,.25)}
 .glow-btn b{font-family:var(--font-mono); margin-left:6px}
+.edit-btn{width:72px; height:46px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); color:var(--ink-dim); cursor:pointer; font-family:var(--font-body);
+  transition:all .25s var(--ease-spring)}
+.edit-btn:hover{color:var(--primary); border-color:var(--primary); transform:translateY(-2px)}
 .read-nav{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:30px}
 .read-nav-cell{border:1px solid var(--line); border-radius:var(--r-md); padding:18px 20px;
   background:var(--surface); cursor:pointer; transition:all .3s}

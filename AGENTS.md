@@ -72,7 +72,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### 架构与数据流
 - 目录职责固定：`views/<页面>/XxxView.vue`、`components/{canvas,common,post}/`、
-  `stores/`（Pinia）、`api/mock.js`（演示数据唯一来源）、`composables/`、`utils/`、`styles/`。
+  `stores/`（Pinia，业务数据统一从网关取数）、`api/mock.js`（仅保留视觉常量与写作提示）、`composables/`、`utils/`、`styles/`。
 - 组件**不直接请求后端**：数据一律进 store；将来接真实 API 时只改 store 的取数来源，不动视图。
 - 路由在 `router/index.js` 统一注册，页面组件懒加载；新页面必须同时在导航（RailNav）登记。
 
@@ -153,7 +153,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
-- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）。
+- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）；已有库升级多作者归属执行 `03_multi-author.sql`。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 
 ### 日志（slf4j + logback-spring.xml）
@@ -167,13 +167,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ## 6. 当前状态与边界（不要越界开发）
 
-- 已完成：前端 10 页（内容页仍为 mock 数据）+ 鉴权/账号页（登录/注册/账号，已接网关 :8080）；
+- 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
   后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
 - **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、评论系统、文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化——用户明确要求后再动。
-- **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章/流星/友链仍是**全局数据、未按用户隔离**，
-  但写操作已按角色门槛收敛（READER 不可创作/删改，AUTHOR 可写文章流星，ADMIN 兼管友链与角色）；
-  如需多租户数据隔离仍需另行设计（user_id 归属 + 数据权限）。
-- 前端鉴权已接网关：`src/api/client.js`（fetch 封装 + token）+ `src/stores/auth.js`（会话持久化），
-  页面 `/login` `/register` `/account`（改密/登出/ADMIN 角色管理）；内容页（文章/流星/回声/友链）仍是 mock，
-  「前端 store 从 mock 切到网关接口」仍属后续方向（路径不变，CORS 网关已放开，Vite dev 已配代理）。
+- **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
+  AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
+- 前端已接网关：`src/api/client.js`（fetch 封装 + token）+ Pinia stores（会话与业务数据）；
+  页面 `/login` `/register` `/account` 支持改密、登出和 ADMIN 角色管理，文章/流星/回声/友链均读取真实接口；
+  多作者署名通过 `/user/authors` 批量补全，写作页支持草稿自动保存、恢复、删除与发布。

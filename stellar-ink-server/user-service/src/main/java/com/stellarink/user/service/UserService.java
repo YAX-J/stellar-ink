@@ -4,6 +4,7 @@ import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
+import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 
 import java.util.List;
@@ -24,6 +25,9 @@ public interface UserService {
 
     /** 管理员列出全部用户（仅 ADMIN，供角色管理页枚举） */
     List<UserVO> listUsers(Long operatorId);
+
+    /** 批量查询公开作者摘要，供文章和流星署名。 */
+    List<AuthorVO> listAuthors(List<Long> ids);
 
     UserVO profile(Long userId);
 

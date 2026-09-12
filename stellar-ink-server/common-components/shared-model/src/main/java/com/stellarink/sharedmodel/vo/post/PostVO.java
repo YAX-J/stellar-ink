@@ -2,6 +2,7 @@ package com.stellarink.sharedmodel.vo.post;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -11,6 +12,8 @@ import java.util.List;
 public class PostVO {
 
     private Long id;
+
+    private Long userId;
 
     private String title;
 
@@ -29,4 +32,6 @@ public class PostVO {
     private Integer glow;
 
     private Integer status;
+
+    private LocalDateTime updatedAt;
 }

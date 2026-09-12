@@ -12,6 +12,9 @@ public interface PostService {
     /** 分页查询（星图 / 星尘卡片 / 长卷共用） */
     IPage<PostVO> page(PostQueryDTO query);
 
+    /** 当前作者自己的草稿列表 */
+    IPage<PostVO> mine(PostQueryDTO query);
+
     /** 深读舱详情，附前后相邻星 */
     PostDetailVO detail(Long id);
 

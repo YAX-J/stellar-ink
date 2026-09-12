@@ -61,6 +61,12 @@ docker exec -i mysql mysql -uroot -p'密码' --default-character-set=utf8mb4 ste
 docker exec -i mysql mysql -uroot -p'密码' --default-character-set=utf8mb4 stellar_ink < ../sql/02_init-data.sql
 ```
 
+已有数据库从旧版本升级时，再执行一次多作者归属迁移：
+
+```bash
+docker exec -i mysql mysql -uroot -p'密码' --default-character-set=utf8mb4 stellar_ink < ../sql/03_multi-author.sql
+```
+
 若已有 mysql 容器的 root 不接受来自 Docker 网段的连接，先建专用账号（或用面板操作）：
 
 ```sql

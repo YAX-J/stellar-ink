@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { request } from '@/api/client'
+import { useAuthorStore } from '@/stores/authors'
 
 function normalizeMeteor(item) {
   return {
@@ -24,6 +25,7 @@ export const useMeteorStore = defineStore('meteors', {
       try {
         const data = await request('/meteors', { query: { limit: 100 } })
         this.items = (data || []).map(normalizeMeteor)
+        await useAuthorStore().ensureAuthors(this.items.map((item) => item.userId)).catch(() => {})
         this.initialized = true
         return this.items
       } catch (error) {
@@ -47,6 +49,17 @@ export const useMeteorStore = defineStore('meteors', {
           body: { content: text.trim() },
         })
         await this.fetchItems()
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async remove(id) {
+      this.error = ''
+      try {
+        await request(`/meteors/${Number(id)}`, { method: 'DELETE' })
+        this.items = this.items.filter((item) => item.id !== Number(id))
       } catch (error) {
         this.error = error.message
         throw error

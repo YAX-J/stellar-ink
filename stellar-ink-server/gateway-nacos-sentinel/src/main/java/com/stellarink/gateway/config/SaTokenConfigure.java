@@ -50,6 +50,8 @@ public class SaTokenConfigure {
     /** 用户角色调整：/user/{id}/role（需 ADMIN） */
     private static final Pattern USER_ROLE_PATH = Pattern.compile("^/user/\\d+/role$");
 
+    private static final String MY_POSTS_PATH = "/posts/mine";
+
     @Bean
     public SaReactorFilter saReactorFilter() {
         return new SaReactorFilter()
@@ -66,26 +68,27 @@ public class SaTokenConfigure {
                     }
                     // 2) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
                     if ("GET".equalsIgnoreCase(method) && "/user/list".equals(path)) {
-                        StpUtil.checkLogin();
-                        Role adminRole = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
-                        if (!adminRole.atLeast(Role.ADMIN)) {
-                            throw new NotRoleException(Role.ADMIN.name());
-                        }
+                        requireRole(Role.ADMIN);
                         return;
                     }
-                    // 3) 读请求与 CORS 预检放行
+                    // 3) 草稿只允许作者及以上读取，须先于「GET 全放行」判断
+                    if ("GET".equalsIgnoreCase(method) && MY_POSTS_PATH.equals(path)) {
+                        requireRole(Role.AUTHOR);
+                        return;
+                    }
+                    // 4) 读请求与 CORS 预检放行
                     if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                             || "OPTIONS".equalsIgnoreCase(method)) {
                         return;
                     }
-                    // 4) 公开写接口白名单
+                    // 5) 公开写接口白名单
                     if ("POST".equalsIgnoreCase(method) && isPublicWrite(path)) {
                         return;
                     }
-                    // 5) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
+                    // 6) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
                     StpUtil.checkLogin();
 
-                    // 6) 角色门槛（登录后，按写操作细分）
+                    // 7) 角色门槛（登录后，按写操作细分）
                     Role role = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
                     if (requiresAdmin(method, path) && !role.atLeast(Role.ADMIN)) {
                         throw new NotRoleException(Role.ADMIN.name());
@@ -125,6 +128,14 @@ public class SaTokenConfigure {
         }
         return LINK_STATUS_PATH.matcher(path).matches()
                 || USER_ROLE_PATH.matcher(path).matches();
+    }
+
+    private static void requireRole(Role required) {
+        StpUtil.checkLogin();
+        Role current = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
+        if (!current.atLeast(required)) {
+            throw new NotRoleException(required.name());
+        }
     }
 
     /** 需 AUTHOR（含 ADMIN）的写操作：文章/流星的新增与维护 */

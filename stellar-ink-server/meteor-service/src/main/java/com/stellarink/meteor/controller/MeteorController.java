@@ -1,10 +1,12 @@
 package com.stellarink.meteor.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
 import com.stellarink.meteor.mapper.MeteorMapper;
 import com.stellarink.meteor.pojo.Meteor;
 import com.stellarink.sharedmodel.dto.meteor.MeteorCreateDTO;
+import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.meteor.MeteorVO;
 import jakarta.validation.Valid;
@@ -41,13 +43,15 @@ public class MeteorController {
         return Response.success(items.stream().map(this::toVO).toList());
     }
 
-    /** 发射流星（网关鉴权） */
+    /** 发射流星（作者及以上） */
     @PostMapping
     public Response<Void> create(@Valid @RequestBody MeteorCreateDTO dto) {
+        AuthHelper.requireAtLeast(Role.AUTHOR);
         if (!StringUtils.hasText(dto.getContent())) {
             throw BusinessExceptionHelper.of("此刻的念头是空的，写一句再发射。");
         }
         Meteor entity = new Meteor();
+        entity.setUserId(AuthHelper.loginId());
         entity.setContent(dto.getContent().trim());
         entity.setCreatedAt(LocalDateTime.now());
         meteorMapper.insert(entity);
@@ -57,7 +61,16 @@ public class MeteorController {
 
     @DeleteMapping("/{id}")
     public Response<Void> delete(@PathVariable Long id) {
-        meteorMapper.deleteById(id);
+        AuthHelper.requireAtLeast(Role.AUTHOR);
+        Meteor entity = meteorMapper.selectById(id);
+        if (entity == null) {
+            throw BusinessExceptionHelper.of("这颗流星不存在。");
+        }
+        if (AuthHelper.currentRole() != Role.ADMIN
+                && !AuthHelper.loginId().equals(entity.getUserId())) {
+            throw BusinessExceptionHelper.of("不能熄灭别人的流星。");
+        }
+        meteorMapper.deleteById(entity.getId());
         log.info("删除流星 id={}", id);
         return Response.success();
     }
@@ -65,6 +78,7 @@ public class MeteorController {
     private MeteorVO toVO(Meteor entity) {
         MeteorVO vo = new MeteorVO();
         vo.setId(entity.getId());
+        vo.setUserId(entity.getUserId());
         vo.setContent(entity.getContent());
         vo.setCreatedAt(entity.getCreatedAt());
         return vo;

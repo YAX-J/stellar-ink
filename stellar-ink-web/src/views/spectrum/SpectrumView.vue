@@ -5,6 +5,7 @@ import { usePostStore } from '@/stores/posts'
 import { TAGS } from '@/api/mock'
 import SectionHead from '@/components/common/SectionHead.vue'
 import { fmt } from '@/utils/format'
+import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
@@ -70,6 +71,7 @@ function openPost(p) {
       <div v-for="p in rows.list" :key="p.i" class="spec-row" @click="openPost(p)">
         <span class="dot" :style="{ background: rows.color }"></span>
         <h4>{{ p.title }}</h4>
+        <AuthorBadge class="spec-author" :user-id="p.userId" compact />
         <small>{{ p.date }} · {{ fmt(p.words) }} 字</small>
       </div>
       <div v-if="!rows.list.length" class="spec-row">
@@ -101,5 +103,6 @@ function openPost(p) {
 .spec-row:hover{border-color:var(--primary); transform:translateX(6px)}
 .spec-row .dot{width:10px; height:10px; border-radius:50%; flex-shrink:0}
 .spec-row h4{font-family:var(--font-serif); font-size:16px; flex:1; font-weight:600}
+.spec-author{max-width:130px; font-family:var(--font-mono); font-size:10px}
 .spec-row small{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
 </style>

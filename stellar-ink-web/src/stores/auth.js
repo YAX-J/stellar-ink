@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { request, getToken, setToken, ApiError } from '@/api/client'
 import { roleAtLeast } from '@/utils/role'
+import { useAuthorStore } from '@/stores/authors'
 
 const USER_KEY = 'stellar-ink-user'
 const GUEST_KEY = 'stellar-ink-guest'
@@ -45,6 +46,7 @@ export const useAuthStore = defineStore('auth', {
       setToken(data.tokenValue)
       saveUser(data.user)
       saveGuestMode(false)
+      useAuthorStore().upsertAuthor(data.user)
       return data.user
     },
 
@@ -88,6 +90,7 @@ export const useAuthStore = defineStore('auth', {
     async updateProfile(patch) {
       this.user = await request('/user/profile', { method: 'PUT', body: patch })
       saveUser(this.user)
+      useAuthorStore().upsertAuthor(this.user)
       return this.user
     },
 
