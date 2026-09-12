@@ -7,7 +7,7 @@ import RailNav from '@/components/common/RailNav.vue'
 
 const route = useRoute()
 const settings = useSettingsStore()
-const isAuthPage = computed(() => route.name === 'login' || route.name === 'register')
+const isAuthPage = computed(() => route.meta.layout === 'auth')
 
 watchEffect(() => {
   document.body.dataset.theme = settings.theme

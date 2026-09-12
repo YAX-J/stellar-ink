@@ -6,4 +6,8 @@ import './styles/tokens/variables.css'
 import './styles/base.css'
 import './styles/components.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+const app = createApp(App)
+app.use(createPinia()).use(router)
+
+await router.isReady()
+app.mount('#app')
