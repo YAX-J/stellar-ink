@@ -1,18 +1,26 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useEchoStore } from '@/stores/echos'
 import SectionHead from '@/components/common/SectionHead.vue'
 
 const echoStore = useEchoStore()
 const name = ref('')
 const msg = ref('')
+const throwing = ref(false)
 
-function throwBottle() {
+onMounted(() => echoStore.ensureLoaded().catch(() => {}))
+
+async function throwBottle() {
   const m = msg.value.trim()
-  if (!m) return
-  echoStore.throw(name.value.trim() || '匿名旅人', m)
-  msg.value = ''
-  name.value = ''
+  if (!m || throwing.value) return
+  throwing.value = true
+  try {
+    await echoStore.throw(name.value.trim() || '匿名旅人', m)
+    msg.value = ''
+    name.value = ''
+  } finally {
+    throwing.value = false
+  }
 }
 </script>
 
@@ -26,8 +34,14 @@ function throwBottle() {
     <div class="echo-form reveal" style="--d:.08s">
       <input v-model="name" class="in-name" placeholder="署名（可匿名）">
       <input v-model="msg" class="in-msg" placeholder="把话装进瓶子，扔进这片海…" @keydown.enter="throwBottle">
-      <button class="btn btn-primary" @click="throwBottle">🫙 投入海中</button>
+      <button class="btn btn-primary" :disabled="throwing" @click="throwBottle">
+        {{ throwing ? '投递中…' : '🫙 投入海中' }}
+      </button>
     </div>
+    <p v-if="echoStore.loading && !echoStore.bottles.length" class="state-text">正在读取回声…</p>
+    <p v-else-if="echoStore.error" class="state-text error-text">
+      {{ echoStore.error }} <button class="state-action" @click="echoStore.fetchBottles()">重新读取</button>
+    </p>
 
     <div class="echo-sea reveal" style="--d:.14s">
       <div
@@ -54,6 +68,9 @@ function throwBottle() {
   animation:drift var(--fd,7s) ease-in-out infinite alternate;
   box-shadow:0 6px 22px rgba(0,0,0,.18)}
 .bottle b{display:block; color:var(--teal); font-size:12px; margin-bottom:5px; font-family:var(--font-mono)}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.error-text{color:var(--rose)}
 @keyframes drift{from{transform:translateY(0) rotate(var(--rot,-2deg))}
   to{transform:translateY(-14px) rotate(calc(var(--rot,-2deg)*-1))}}
 </style>

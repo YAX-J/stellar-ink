@@ -20,6 +20,7 @@ const savedAt = ref(nowTime())
 const prompt = ref(PROMPTS[0])
 const promptFading = ref(false)
 const focused = ref(false)
+const publishing = ref(false)
 const drafts = [
   { t: '雨夜出租车观察笔记', d: '2h 前' },
   { t: '论“已读不回”的礼仪', d: '昨天' },
@@ -46,10 +47,15 @@ function toggleFocus() {
   focused.value = !focused.value
   document.body.classList.toggle('focus-mode', focused.value)
 }
-function launch() {
+async function launch() {
   if (!body.value.trim()) return
-  postStore.publish({ title: title.value, body: body.value, tag: activeMood.value.tag })
-  router.push('/archive')
+  publishing.value = true
+  try {
+    await postStore.publish({ title: title.value, body: body.value, tag: activeMood.value.tag })
+    router.push('/archive')
+  } finally {
+    publishing.value = false
+  }
 }
 
 onUnmounted(() => {
@@ -78,8 +84,11 @@ onUnmounted(() => {
           <span class="save-dot"><i></i>已自动保存 · {{ savedAt }}</span>
           <span>星尘 <b style="color:var(--amber)">+{{ wordCount }}</b> 字</span>
           <span>约 {{ readTime }} 分钟读完</span>
-          <button class="btn btn-primary grow" style="height:40px" @click="launch">🚀 发射到星图</button>
+          <button class="btn btn-primary grow" style="height:40px" :disabled="publishing" @click="launch">
+            {{ publishing ? '正在发射…' : '🚀 发射到星图' }}
+          </button>
         </div>
+        <p v-if="postStore.error" class="publish-error">{{ postStore.error }}</p>
       </div>
       <aside class="studio-side">
         <button class="focus-toggle" @click="toggleFocus">
@@ -144,6 +153,8 @@ onUnmounted(() => {
 .save-dot i{width:8px; height:8px; border-radius:50%; background:var(--teal);
   animation:pulse 2.2s infinite; box-shadow:0 0 8px var(--teal)}
 .desk-foot .grow{margin-left:auto}
+.desk-foot .grow:disabled{opacity:.6; cursor:wait}
+.publish-error{position:relative; margin-top:12px; color:var(--rose); font-size:12px}
 .studio-side{display:flex; flex-direction:column; gap:18px; transition:opacity .4s, filter .4s}
 /* 专注模式只压暗侧卡；reveal 动画的 fill 会钉住 opacity，需一并关闭动画 */
 body.focus-mode .studio-side{pointer-events:none}

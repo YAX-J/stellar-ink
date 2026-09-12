@@ -1,9 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { roleAtLeast } from '@/utils/role'
 
 const routes = [
   { path: '/', name: 'home', component: () => import('@/views/home/HomeView.vue'), meta: { title: '此刻' } },
-  { path: '/write', name: 'write', component: () => import('@/views/write/WriteView.vue'), meta: { title: '执笔' } },
+  { path: '/write', name: 'write', component: () => import('@/views/write/WriteView.vue'), meta: { title: '执笔', requiresRole: 'AUTHOR' } },
   { path: '/archive', name: 'archive', component: () => import('@/views/archive/ArchiveView.vue'), meta: { title: '星图' } },
   { path: '/meteor', name: 'meteor', component: () => import('@/views/meteor/MeteorView.vue'), meta: { title: '流星' } },
   { path: '/spectrum', name: 'spectrum', component: () => import('@/views/spectrum/SpectrumView.vue'), meta: { title: '光谱' } },
@@ -29,6 +30,9 @@ router.beforeEach((to) => {
   const isAuthPage = to.name === 'login' || to.name === 'register'
   if (!isAuthPage && !auth.isLoggedIn && !auth.isGuest) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requiresRole && !roleAtLeast(auth.role, to.meta.requiresRole)) {
+    return { name: 'home' }
   }
 })
 

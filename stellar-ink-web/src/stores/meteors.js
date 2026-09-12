@@ -1,11 +1,56 @@
 import { defineStore } from 'pinia'
-import { METEORS } from '@/api/mock'
+import { request } from '@/api/client'
+
+function normalizeMeteor(item) {
+  return {
+    ...item,
+    id: Number(item.id),
+    t: item.content || '',
+    d: item.createdAt ? item.createdAt.replace('T', ' ').slice(0, 16) : '',
+  }
+}
 
 export const useMeteorStore = defineStore('meteors', {
-  state: () => ({ items: [...METEORS] }),
+  state: () => ({
+    items: [],
+    loading: false,
+    error: '',
+    initialized: false,
+  }),
   actions: {
-    launch(text) {
-      this.items.unshift({ t: text, d: '刚刚' })
+    async fetchItems() {
+      this.loading = true
+      this.error = ''
+      try {
+        const data = await request('/meteors', { query: { limit: 100 } })
+        this.items = (data || []).map(normalizeMeteor)
+        this.initialized = true
+        return this.items
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async ensureLoaded() {
+      if (this.initialized) return this.items
+      return this.fetchItems()
+    },
+
+    async launch(text) {
+      this.error = ''
+      try {
+        await request('/meteors', {
+          method: 'POST',
+          body: { content: text.trim() },
+        })
+        await this.fetchItems()
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
     },
   },
 })

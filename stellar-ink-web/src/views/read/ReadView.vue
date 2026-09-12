@@ -11,38 +11,40 @@ const postStore = usePostStore()
 const settings = useSettingsStore()
 
 const post = computed(() => postStore.byId(route.params.id))
-const idx = computed(() => postStore.posts.findIndex((p) => p.id === Number(route.params.id)))
-
-/* 正文：演示段落池循环取用 */
-const pa = (n) => postStore.paraPool[(idx.value + n) % postStore.paraPool.length]
-
-const prevPost = computed(() => {
-  const len = postStore.posts.length
-  return postStore.posts[(idx.value - 1 + len) % len]
-})
-const nextPost = computed(() => postStore.posts[(idx.value + 1) % postStore.posts.length])
+const contentParagraphs = computed(() =>
+  (post.value?.content || '').split(/\n/).map((item) => item.trim()).filter(Boolean),
+)
+const prevPost = computed(() => post.value?.prev || null)
+const nextPost = computed(() => post.value?.next || null)
 
 const glowPulse = ref(false)
 const barWidth = ref(0)
 
-function addGlow() {
+async function addGlow() {
   if (!post.value) return
-  postStore.addGlow(post.value.id)
-  glowPulse.value = true
-  setTimeout(() => (glowPulse.value = false), 180)
+  try {
+    await postStore.addGlow(post.value.id)
+    glowPulse.value = true
+    setTimeout(() => (glowPulse.value = false), 180)
+  } catch {}
 }
 function onScroll() {
   const h = document.documentElement
   barWidth.value = (h.scrollTop / (h.scrollHeight - h.clientHeight || 1)) * 100
 }
 function go(id) {
-  router.push(`/read/${id.id ?? id}`)
+  if (id) router.push(`/read/${id.id ?? id}`)
+}
+async function loadPost(id) {
+  try {
+    await postStore.fetchDetail(id)
+  } catch {}
 }
 
 watch(
   () => route.params.id,
-  () => {
-    if (!postStore.byId(route.params.id)) router.replace('/')
+  (id) => {
+    loadPost(id)
     onScroll()
   },
   { immediate: true },
@@ -52,7 +54,12 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 </script>
 
 <template>
-  <section v-if="post" class="page">
+<section class="page read-page">
+  <p v-if="postStore.detailLoading && !post" class="state-text">正在读取这颗星…</p>
+  <p v-else-if="postStore.error && !post" class="state-text error-text">
+    {{ postStore.error }} <button class="state-action" @click="loadPost(route.params.id)">重新读取</button>
+  </p>
+  <article v-if="post">
     <div class="read-progress"><i :style="{ width: barWidth + '%' }"></i></div>
     <article class="read-wrap">
       <button class="read-back" @click="router.push(settings.lastPage)">← 返回星域</button>
@@ -60,20 +67,15 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
       <h1 class="read-title reveal" style="--d:.06s">{{ post.title }}</h1>
       <div class="read-meta reveal" style="--d:.12s">
         <span>{{ post.date }}</span>
-        <span>{{ fmt(post.words) }} 字 · 约 {{ readMinutes(post.words) }} 分钟</span>
+        <span>{{ fmt(post.words) }} 字 · 约 {{ post.readMinutes || readMinutes(post.words) }} 分钟</span>
         <span>#{{ post.tags.join(' #') }}</span>
         <span>☾ 写于深夜</span>
       </div>
       <div class="read-body reveal" style="--d:.18s">
-        <p class="dropcap">{{ pa(0) }}</p>
-        <p>{{ pa(1) }}</p>
-        <blockquote>“犹豫的地方，往往就是光进来的地方。”</blockquote>
-        <p>{{ pa(2) }}</p>
-        <div class="marg-note"><b>✎ 批注</b>这一段写于第三次修改，原稿有八百字，删剩两句。</div>
-        <p>{{ pa(3) }}</p>
-        <h3>夜的第二部分</h3>
-        <p>{{ pa(4) }}</p>
-        <p>{{ pa(5) }}</p>
+        <p v-for="(paragraph, index) in contentParagraphs" :key="index" :class="{ dropcap: index === 0 }">
+          {{ paragraph }}
+        </p>
+        <p v-if="!contentParagraphs.length" class="empty-body">这颗星还没有留下正文。</p>
       </div>
       <div class="read-actions reveal" style="--d:.24s">
         <button class="glow-btn" :style="glowPulse ? 'transform:scale(.94)' : ''" @click="addGlow">
@@ -81,21 +83,26 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
         </button>
       </div>
       <div class="read-nav reveal" style="--d:.3s">
-        <div class="read-nav-cell" @click="go(prevPost)">
+        <div v-if="prevPost" class="read-nav-cell" @click="go(prevPost)">
           <small>← 上一颗星</small>
           <h5>{{ prevPost.title }}</h5>
         </div>
-        <div class="read-nav-cell next" @click="go(nextPost)">
+        <div v-if="nextPost" class="read-nav-cell next" @click="go(nextPost)">
           <small>下一颗星 →</small>
           <h5>{{ nextPost.title }}</h5>
         </div>
       </div>
     </article>
-  </section>
+  </article>
+</section>
 </template>
 
 <style scoped>
 .read-progress{position:fixed; top:0; left:96px; right:0; height:3px; z-index:40}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.error-text{color:var(--rose)}
+.empty-body{color:var(--ink-faint) !important}
 .read-progress i{display:block; height:100%; width:0;
   background:linear-gradient(90deg,var(--primary),var(--rose),var(--amber))}
 .read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);

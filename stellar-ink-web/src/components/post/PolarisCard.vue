@@ -1,5 +1,4 @@
 <script setup>
-import { POLARIS_EXCERPT } from '@/api/mock'
 import { usePostStore } from '@/stores/posts'
 
 const emit = defineEmits(['open'])
@@ -7,13 +6,15 @@ const postStore = usePostStore()
 </script>
 
 <template>
-  <div class="polaris reveal" style="--d:.08s" @click="emit('open', postStore.posts[0])">
+  <div v-if="postStore.posts[0]" class="polaris reveal" style="--d:.08s" @click="emit('open', postStore.posts[0])">
     <div class="polaris-inner">
       <span class="polaris-tag">★ POLARIS · 置顶长文</span>
       <h3>{{ postStore.posts[0].title }}</h3>
-      <p>{{ POLARIS_EXCERPT }}</p>
+      <p>{{ postStore.posts[0].excerpt || '这颗星还没有留下摘要。' }}</p>
       <div class="polaris-meta">
-        <span>2026.08.30</span><span>4,382 字</span><span>阅 12,847</span><span>☾ 写于三个深夜</span>
+        <span>{{ postStore.posts[0].date }}</span>
+        <span>{{ postStore.posts[0].words.toLocaleString() }} 字</span>
+        <span>✦ {{ postStore.posts[0].glow || 0 }}</span>
       </div>
     </div>
   </div>

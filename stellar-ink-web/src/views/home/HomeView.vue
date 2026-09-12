@@ -1,7 +1,9 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
+import { useStatsStore } from '@/stores/stats'
+import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
 import PostCard from '@/components/post/PostCard.vue'
 import PolarisCard from '@/components/post/PolarisCard.vue'
@@ -9,11 +11,24 @@ import MiniStarMap from '@/components/canvas/MiniStarMap.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
+const statsStore = useStatsStore()
+const auth = useAuthStore()
+
+onMounted(() => Promise.all([
+  postStore.ensureLoaded(),
+  statsStore.fetchOverview(),
+]).catch(() => {}))
 
 const tickerPosts = computed(() => postStore.posts.slice(0, 7))
 const recentPosts = computed(() => postStore.posts.slice(1, 5))
 /* 连续写作环：21/30 */
-const streakOffset = (2 * Math.PI * 64) * (1 - 21 / 30)
+const streakDays = computed(() => statsStore.overview?.streakDays ?? 0)
+const streakOffset = computed(() => (2 * Math.PI * 64) * (1 - Math.min(streakDays.value, 30) / 30))
+const todayWords = computed(() => statsStore.overview?.todayWords ?? 0)
+const totalWords = computed(() => statsStore.overview?.totalWords ?? postStore.totalWords)
+const totalPosts = computed(() => statsStore.overview?.totalPosts ?? postStore.posts.length)
+const nightRatio = computed(() => statsStore.overview?.nightRatio ?? 0)
+const canWrite = computed(() => auth.isAuthorOrAbove)
 
 function openPost(post) {
   router.push(`/read/${post.id}`)
@@ -28,10 +43,10 @@ function openPost(post) {
         <h1 class="reveal" style="--d:.12s">把思绪<br>挂成<em>星图</em></h1>
         <p class="hero-sub reveal" style="--d:.2s">
           这里不是又一个博客。每一篇文章都是一颗星，每一次书写都是一次发射。
-          今晚你已经写下 <b>1,204</b> 字 —— 星图上又多了一点微光。
+          今晚你已经写下 <b>{{ todayWords.toLocaleString() }}</b> 字 —— 星图上又多了一点微光。
         </p>
         <div class="hero-actions reveal" style="--d:.28s">
-          <RouterLink class="btn btn-primary" to="/write">✎ 今晚写点什么</RouterLink>
+          <RouterLink v-if="canWrite" class="btn btn-primary" to="/write">✎ 今晚写点什么</RouterLink>
           <RouterLink class="btn btn-ghost" to="/archive">✧ 逛逛星图</RouterLink>
         </div>
       </div>
@@ -48,6 +63,10 @@ function openPost(post) {
     </div>
 
     <SectionHead title="北极星">本周最受回望的一篇 →</SectionHead>
+    <p v-if="postStore.loading && !postStore.posts.length" class="state-text">正在读取星图…</p>
+    <p v-else-if="postStore.error && !postStore.posts.length" class="state-text">
+      {{ postStore.error }} <button class="state-action" @click="postStore.fetchPosts()">重新读取</button>
+    </p>
     <PolarisCard @open="openPost" />
 
     <SectionHead title="最近星尘" more="全部归档 →" @more="router.push('/archive')" />
@@ -72,16 +91,16 @@ function openPost(post) {
             </linearGradient>
           </defs>
         </svg>
-        <div class="ring-txt"><div><b>21</b> 天<small>连续写作</small></div></div>
+        <div class="ring-txt"><div><b>{{ streakDays }}</b> 天<small>连续写作</small></div></div>
       </div>
-      <div class="pulse-card"><div class="num">186<i>K</i></div><div class="lbl">累计星尘 · 总字数</div></div>
-      <div class="pulse-card"><div class="num">142<i>篇</i></div><div class="lbl">已点亮 · 文章数</div></div>
-      <div class="pulse-card"><div class="num" style="color:var(--amber)">☾ 87%</div><div class="lbl">写于夜晚 22 点后</div></div>
+      <div class="pulse-card"><div class="num">{{ Math.round(totalWords / 1000) }}<i>K</i></div><div class="lbl">累计星尘 · 总字数</div></div>
+      <div class="pulse-card"><div class="num">{{ totalPosts }}<i>篇</i></div><div class="lbl">已点亮 · 文章数</div></div>
+      <div class="pulse-card"><div class="num" style="color:var(--amber)">☾ {{ nightRatio }}%</div><div class="lbl">写于夜晚 22 点后</div></div>
     </div>
 
     <div class="foot">
       <span>© 2026 星笺 STELLAR INK</span>
-      <span>由 1,204 个今晚的字驱动</span>
+      <span>由 {{ todayWords.toLocaleString() }} 个今晚的字驱动</span>
       <span>RSS · 星链 · 关于</span>
     </div>
   </section>
@@ -124,6 +143,8 @@ function openPost(post) {
 
 /* 星尘卡片流 */
 .stardust{display:grid; grid-template-columns:repeat(auto-fill,minmax(258px,1fr)); gap:18px}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 
 /* 写作脉搏 */
 .pulse-grid{display:grid; grid-template-columns:280px 1fr 1fr 1fr; gap:18px}

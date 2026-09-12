@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
-import { roleLabel } from '@/utils/role'
+import { roleAtLeast, roleLabel } from '@/utils/role'
 
 const route = useRoute()
 const settings = useSettingsStore()
@@ -11,7 +11,7 @@ const auth = useAuthStore()
 
 const items = [
   { key: 'home', to: '/', glyph: '◉', label: '此刻' },
-  { key: 'write', to: '/write', glyph: '✎', label: '执笔' },
+  { key: 'write', to: '/write', glyph: '✎', label: '执笔', requiresRole: 'AUTHOR' },
   { key: 'archive', to: '/archive', glyph: '✧', label: '星图' },
   { key: 'meteor', to: '/meteor', glyph: '☄', label: '流星' },
   { key: 'spectrum', to: '/spectrum', glyph: '❖', label: '光谱' },
@@ -23,6 +23,9 @@ const items = [
 
 /* 深读页不属于导航，高亮保持为进入前的页面 */
 const activeKey = computed(() => (route.name === 'read' ? settings.lastPageName : route.name))
+const visibleItems = computed(() => items.filter((item) =>
+  !item.requiresRole || (auth.isLoggedIn && roleAtLeast(auth.role, item.requiresRole)),
+))
 
 const avatarChar = computed(() => {
   if (auth.isGuest) return '游'
@@ -54,7 +57,7 @@ const userTip = computed(() =>
       <span class="ru-label">{{ userLabel }}</span>
     </RouterLink>
     <RouterLink
-      v-for="it in items" :key="it.key" :to="it.to"
+      v-for="it in visibleItems" :key="it.key" :to="it.to"
       class="nav-item" :class="{ active: activeKey === it.key }"
     >
       <span class="glyph">{{ it.glyph }}</span>{{ it.label }}

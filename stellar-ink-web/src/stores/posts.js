@@ -1,35 +1,122 @@
 import { defineStore } from 'pinia'
-import { POSTS, PARA_POOL } from '@/api/mock'
+import { request } from '@/api/client'
 
-let nextId = POSTS.length + 1
+function normalizePost(post, detail = false) {
+  if (!post) return null
+  return {
+    ...post,
+    id: Number(post.id),
+    words: Number(post.wordCount ?? post.words ?? 0),
+    tags: Array.isArray(post.tags) ? post.tags : [],
+    year: Number(post.year || String(post.date || '').slice(0, 4)),
+    excerpt: post.summary || post.excerpt || '',
+    ...(detail ? { content: post.content || '', readMinutes: post.readMinutes } : {}),
+  }
+}
 
 export const usePostStore = defineStore('posts', {
   state: () => ({
-    posts: POSTS.map((p, i) => ({ ...p, id: i + 1, glow: 120 + i * 7 })),
-    paraPool: PARA_POOL,
+    posts: [],
+    tags: [],
+    details: {},
+    loading: false,
+    detailLoading: false,
+    error: '',
+    initialized: false,
   }),
   getters: {
-    byId: (s) => (id) => s.posts.find((p) => p.id === Number(id)),
-    totalWords: (s) => s.posts.reduce((a, p) => a + p.words, 0),
+    byId: (state) => (id) => state.details[Number(id)] ||
+      state.posts.find((post) => post.id === Number(id)),
+    totalWords: (state) => state.posts.reduce((total, post) => total + post.words, 0),
   },
   actions: {
-    /* 执笔舱发射：新文章排在星图最前面 */
-    publish({ title, body, tag }) {
-      const now = new Date()
-      const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-      this.posts.unshift({
-        id: nextId++,
-        title: title.trim() || '无题的一夜',
-        date,
-        words: Math.max(1, body.replace(/\s/g, '').length),
-        tags: tag ? [tag] : [],
-        year: now.getFullYear(),
-      })
-      return this.posts[0].id
+    async ensureLoaded() {
+      if (this.initialized) return this.posts
+      return this.fetchPosts()
     },
-    addGlow(id) {
-      const p = this.byId(id)
-      if (p) p.glow += 1
+
+    async fetchTags() {
+      try {
+        this.tags = await request('/tags')
+        return this.tags
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async fetchPosts(query = {}) {
+      this.loading = true
+      this.error = ''
+      try {
+        const page = await request('/posts', {
+          query: { page: 1, size: 100, ...query },
+        })
+        const records = page?.records || page?.list || []
+        this.posts = records.map((post) => normalizePost(post))
+        this.initialized = true
+        return this.posts
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async fetchDetail(id) {
+      const postId = Number(id)
+      if (!postId) return null
+      this.detailLoading = true
+      this.error = ''
+      try {
+        const detail = normalizePost(await request(`/posts/${postId}`), true)
+        this.details[postId] = detail
+        const index = this.posts.findIndex((post) => post.id === postId)
+        if (index >= 0) this.posts[index] = { ...this.posts[index], ...detail }
+        else this.posts.push(detail)
+        return detail
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.detailLoading = false
+      }
+    },
+
+    async publish({ title, body, tag }) {
+      this.error = ''
+      try {
+        const data = await request('/posts', {
+          method: 'POST',
+          body: {
+            title: title?.trim() || '无题的一夜',
+            content: body?.trim() || '',
+            tags: tag ? [tag] : [],
+            status: 1,
+          },
+        })
+        const id = Number(data?.id)
+        if (id) await this.fetchDetail(id)
+        else await this.fetchPosts()
+        return id
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
+    },
+
+    async addGlow(id) {
+      this.error = ''
+      try {
+        const data = await request(`/posts/${Number(id)}/glow`, { method: 'POST' })
+        const post = this.byId(id)
+        if (post && data?.glow !== undefined) post.glow = data.glow
+        return data?.glow
+      } catch (error) {
+        this.error = error.message
+        throw error
+      }
     },
   },
 })

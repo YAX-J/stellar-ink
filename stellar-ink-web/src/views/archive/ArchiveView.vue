@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -12,6 +12,8 @@ const postStore = usePostStore()
 const yearAll = [2024, 2025, 2026]
 const activeYears = ref([2025, 2026])
 const view = ref('map')
+
+onMounted(() => postStore.ensureLoaded().catch(() => {}))
 
 function toggleYear(y) {
   const i = activeYears.value.indexOf(y)
@@ -41,6 +43,10 @@ function openPost(p) {
         <button :class="{ on: view === 'river' }" @click="view = 'river'">☰ 长卷</button>
       </div>
     </div>
+    <p v-if="postStore.loading && !postStore.posts.length" class="state-text">正在读取星图…</p>
+    <p v-else-if="postStore.error && !postStore.posts.length" class="state-text error-text">
+      {{ postStore.error }} <button class="state-action" @click="postStore.fetchPosts()">重新读取</button>
+    </p>
 
     <div class="map-stage reveal" style="--d:.14s" :class="{ river: view === 'river' }">
       <StarMapCanvas v-show="view === 'map'" :years="activeYears" @open="openPost" />
@@ -59,6 +65,7 @@ function openPost(p) {
           <h4>{{ p.title }}</h4>
           <p>{{ fmt(p.words) }} 字 · #{{ p.tags.join(' #') }}</p>
         </div>
+        <p v-if="!postStore.posts.length && !postStore.loading" class="state-text">还没有已发布的星。</p>
       </div>
     </div>
   </section>
@@ -66,6 +73,9 @@ function openPost(p) {
 
 <style scoped>
 .map-controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:22px}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.error-text{color:var(--rose)}
 .year-chip{
   border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
   border-radius:99px; padding:8px 18px; font-family:var(--font-mono); font-size:13px;

@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useLinkStore } from '@/stores/links'
 import SectionHead from '@/components/common/SectionHead.vue'
 import LinkSky from '@/components/canvas/LinkSky.vue'
@@ -8,6 +8,9 @@ const linkStore = useLinkStore()
 const name = ref('')
 const url = ref('')
 const flashId = ref(null)
+const applying = ref(false)
+
+onMounted(() => linkStore.ensureLoaded().catch(() => {}))
 
 function flash(i) {
   flashId.value = i
@@ -20,15 +23,17 @@ function onSelect(i) {
   flash(i)
 }
 
-function apply() {
+async function apply() {
   const n = name.value.trim()
-  if (!n) return
-  const i = linkStore.apply(n, url.value.trim())
-  name.value = ''
-  url.value = ''
-  const el = document.getElementById(`link-card-${i}`)
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  flash(i)
+  if (!n || applying.value) return
+  applying.value = true
+  try {
+    await linkStore.apply(n, url.value.trim())
+    name.value = ''
+    url.value = ''
+  } finally {
+    applying.value = false
+  }
 }
 </script>
 
@@ -40,6 +45,10 @@ function apply() {
     <div class="link-stage reveal" style="--d:.08s">
       <LinkSky @select="onSelect" />
     </div>
+    <p v-if="linkStore.loading && !linkStore.friends.length" class="state-text">正在读取星链…</p>
+    <p v-else-if="linkStore.error" class="state-text error-text">
+      {{ linkStore.error }} <button class="state-action" @click="linkStore.fetchFriends()">重新读取</button>
+    </p>
 
     <div class="link-grid reveal" style="--d:.14s">
       <div
@@ -57,7 +66,9 @@ function apply() {
       <div class="echo-form" style="margin-bottom:0">
         <input v-model="name" class="in-name" placeholder="你的站点名">
         <input v-model="url" class="in-msg" placeholder="站点地址，如 myblog.com" @keydown.enter="apply">
-        <button class="btn btn-ghost" @click="apply">⬡ 发送信号</button>
+        <button class="btn btn-ghost" :disabled="applying" @click="apply">
+          {{ applying ? '发送中…' : '⬡ 发送信号' }}
+        </button>
       </div>
     </div>
   </section>
@@ -74,4 +85,7 @@ function apply() {
 .link-card b{font-size:15px; font-weight:500}
 .link-card .u{font-family:var(--font-mono); font-size:11px; color:var(--teal); margin:6px 0 8px; display:block}
 .link-card p{font-size:12px; color:var(--ink-faint); line-height:1.8}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.error-text{color:var(--rose)}
 </style>

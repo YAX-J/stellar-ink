@@ -1,5 +1,5 @@
 <script setup>
-import { EXCERPT, TAG_CLASS } from '@/api/mock'
+import { TAG_CLASS } from '@/api/mock'
 import { kWords } from '@/utils/format'
 
 const props = defineProps({
@@ -24,7 +24,7 @@ function onMove(e) {
     <span class="wc">{{ kWords(props.post.words) }}</span>
     <div class="date">{{ props.post.date }}</div>
     <h4>{{ props.post.title }}</h4>
-    <p class="ex">{{ EXCERPT }}</p>
+    <p class="ex">{{ props.post.excerpt || '这颗星还没有留下摘要。' }}</p>
     <div class="chips">
       <span v-for="t in props.post.tags" :key="t" class="chip" :class="TAG_CLASS[t] || ''">#{{ t }}</span>
     </div>

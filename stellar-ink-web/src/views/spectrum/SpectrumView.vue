@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { TAGS } from '@/api/mock'
@@ -10,12 +10,15 @@ const router = useRouter()
 const postStore = usePostStore()
 const filter = ref('沉思')
 
-/* 与原型一致：真实计数 + 固定扰动，让光谱更饱满 */
+onMounted(() => {
+  Promise.all([postStore.ensureLoaded(), postStore.fetchTags()]).catch(() => {})
+})
+
 const counts = computed(() => {
   const m = {}
   for (const t of TAGS) {
-    m[t.n] = postStore.posts.filter((p) => p.tags.includes(t.n)).length +
-      ((t.n.charCodeAt(0) + t.n.length) % 5) + 1
+    m[t.n] = postStore.tags.find((item) => item.name === t.n)?.count ??
+      postStore.posts.filter((p) => p.tags.includes(t.n)).length
   }
   return m
 })
@@ -39,6 +42,10 @@ function openPost(p) {
   <section class="page">
     <div class="kicker reveal">TAG SPECTRUM · 标签不是云，是一条光谱</div>
     <SectionHead title="光谱" more="点击任意波段，收听那个频率" />
+    <p v-if="postStore.loading && !postStore.posts.length" class="state-text">正在读取光谱…</p>
+    <p v-else-if="postStore.error && !postStore.posts.length" class="state-text error-text">
+      {{ postStore.error }} <button class="state-action" @click="postStore.fetchPosts()">重新读取</button>
+    </p>
 
     <div class="spectrum-bar reveal" style="--d:.08s">
       <i
@@ -75,6 +82,9 @@ function openPost(p) {
 <style scoped>
 .spectrum-bar{display:flex; height:14px; border-radius:99px; overflow:hidden;
   margin-bottom:34px; border:1px solid var(--line)}
+.state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.error-text{color:var(--rose)}
 .spectrum-bar i{height:100%; cursor:pointer; transition:filter .2s}
 .spectrum-bar i:hover{filter:brightness(1.35)}
 .spec-tags{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:30px}

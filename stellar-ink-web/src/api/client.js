@@ -29,18 +29,38 @@ export class ApiError extends Error {
 /**
  * 发送请求并解包统一响应。
  * @param {string} path 以 / 开头的接口路径，如 /auth/login
- * @param {{ method?: string, body?: object }} [opts]
+ * @param {{ method?: string, body?: object, query?: object, timeout?: number }} [opts]
  */
-export async function request(path, { method = 'GET', body } = {}) {
+export async function request(path, { method = 'GET', body, query, timeout = 15000 } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers.Authorization = token
 
-  const res = await fetch(BASE + path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  const url = new URL(BASE + path, window.location.origin)
+  if (query) {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        url.searchParams.set(key, value)
+      }
+    })
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeout)
+  let res
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error.name === 'AbortError') throw new ApiError(408, '请求超时，请稍后重试', 408)
+    throw new ApiError(0, '网络连接失败，请检查服务是否正常', 0)
+  } finally {
+    clearTimeout(timer)
+  }
 
   const text = await res.text()
   let json = null
