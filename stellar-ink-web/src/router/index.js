@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   { path: '/', name: 'home', component: () => import('@/views/home/HomeView.vue'), meta: { title: '此刻' } },
@@ -21,6 +22,14 @@ const router = createRouter({
   history: createWebHistory(),
   routes,
   scrollBehavior: () => ({ top: 0 }),
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  const isAuthPage = to.name === 'login' || to.name === 'register'
+  if (!isAuthPage && !auth.isLoggedIn && !auth.isGuest) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
 })
 
 router.afterEach((to) => {

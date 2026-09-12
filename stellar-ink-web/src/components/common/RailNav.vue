@@ -25,14 +25,20 @@ const items = [
 const activeKey = computed(() => (route.name === 'read' ? settings.lastPageName : route.name))
 
 const avatarChar = computed(() => {
+  if (auth.isGuest) return '游'
   if (!auth.isLoggedIn) return '✦'
   const n = auth.user.nickname || auth.user.username || '星'
   return n.trim().charAt(0)
 })
-/* 未登录显示「登录」，已登录显示角色（读者 / 作者 / 站长） */
-const userLabel = computed(() => (auth.isLoggedIn ? roleLabel(auth.role) : '登录'))
+/* 身份标签区分游客、未登录与已登录角色 */
+const userLabel = computed(() => {
+  if (auth.isLoggedIn) return roleLabel(auth.role)
+  return auth.isGuest ? '游客' : '登录'
+})
 const userTip = computed(() =>
-  auth.isLoggedIn ? `${auth.user.nickname || auth.user.username} · ${roleLabel(auth.role)}` : '登录 / 注册',
+  auth.isLoggedIn
+    ? `${auth.user.nickname || auth.user.username} · ${roleLabel(auth.role)}`
+    : auth.isGuest ? '游客浏览 · 登录 / 注册' : '登录 / 注册',
 )
 </script>
 
@@ -41,10 +47,10 @@ const userTip = computed(() =>
     <RouterLink class="logo" to="/" title="星笺">✦</RouterLink>
     <!-- 身份入口：紧跟 logo 下方，导航栏底部只留状态灯 -->
     <RouterLink
-      class="rail-user" :class="{ on: auth.isLoggedIn }"
+      class="rail-user" :class="{ on: auth.isLoggedIn || auth.isGuest }"
       :to="auth.isLoggedIn ? '/account' : '/login'" :title="userTip"
     >
-      <span class="ru-avatar" :class="{ on: auth.isLoggedIn }">{{ avatarChar }}</span>
+      <span class="ru-avatar" :class="{ on: auth.isLoggedIn, guest: auth.isGuest }">{{ avatarChar }}</span>
       <span class="ru-label">{{ userLabel }}</span>
     </RouterLink>
     <RouterLink
@@ -91,6 +97,8 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
 .ru-avatar.on{border-style:solid; border-color:transparent; color:#fff;
   background:linear-gradient(135deg,var(--primary),var(--rose));
   box-shadow:0 4px 16px var(--primary-soft)}
+.ru-avatar.guest{border-style:solid; border-color:var(--primary); color:var(--primary);
+  background:var(--primary-soft); box-shadow:none}
 .ru-label{font-size:11px; letter-spacing:.08em}
 .rail-user.on .ru-label{color:var(--ink-dim)}
 .nav-item{

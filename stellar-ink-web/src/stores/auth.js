@@ -3,6 +3,7 @@ import { request, getToken, setToken, ApiError } from '@/api/client'
 import { roleAtLeast } from '@/utils/role'
 
 const USER_KEY = 'stellar-ink-user'
+const GUEST_KEY = 'stellar-ink-guest'
 
 function loadUser() {
   try {
@@ -17,13 +18,20 @@ function saveUser(user) {
   else localStorage.removeItem(USER_KEY)
 }
 
+function saveGuestMode(enabled) {
+  if (enabled) sessionStorage.setItem(GUEST_KEY, 'true')
+  else sessionStorage.removeItem(GUEST_KEY)
+}
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: getToken() || '',
     user: loadUser(),
+    guestMode: !getToken() && sessionStorage.getItem(GUEST_KEY) === 'true',
   }),
   getters: {
     isLoggedIn: (s) => !!s.token,
+    isGuest: (s) => !s.token && s.guestMode,
     role: (s) => (s.user && s.user.role) || 'READER',
     isAdmin: (s) => s.user && s.user.role === 'ADMIN',
     isAuthorOrAbove: (s) => s.user && roleAtLeast(s.user.role, 'AUTHOR'),
@@ -33,9 +41,17 @@ export const useAuthStore = defineStore('auth', {
     _applySession(data) {
       this.token = data.tokenValue
       this.user = data.user
+      this.guestMode = false
       setToken(data.tokenValue)
       saveUser(data.user)
+      saveGuestMode(false)
       return data.user
+    },
+
+    enterAsGuest() {
+      if (this.token) return
+      this.guestMode = true
+      saveGuestMode(true)
     },
 
     async login({ username, password }) {
@@ -56,8 +72,10 @@ export const useAuthStore = defineStore('auth', {
       } finally {
         this.token = ''
         this.user = null
+        this.guestMode = false
         setToken('')
         saveUser(null)
+        saveGuestMode(false)
       }
     },
 
@@ -96,8 +114,10 @@ export const useAuthStore = defineStore('auth', {
     clearSession() {
       this.token = ''
       this.user = null
+      this.guestMode = false
       setToken('')
       saveUser(null)
+      saveGuestMode(false)
     },
   },
 })

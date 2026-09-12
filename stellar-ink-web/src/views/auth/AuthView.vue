@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps({ mode: { type: String, default: 'login' } })
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
@@ -47,6 +48,12 @@ async function submit() {
   } finally {
     loading.value = false
   }
+}
+
+function enterAsGuest() {
+  auth.enterAsGuest()
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+  router.replace(redirect)
 }
 </script>
 
@@ -92,6 +99,12 @@ async function submit() {
         </button>
       </form>
 
+      <div class="auth-divider"><span>或</span></div>
+      <button class="btn btn-ghost auth-guest" type="button" @click="enterAsGuest">
+        <span aria-hidden="true">✦</span>
+        以游客身份进入
+      </button>
+
       <p v-if="!isLogin" class="auth-note">
         注册后默认为<b>读者</b>：可阅读、点赞、投瓶与申请友链；创作权限需站长提升为作者。
       </p>
@@ -133,6 +146,11 @@ async function submit() {
 .auth-error{font-size:12px; color:var(--rose); margin-bottom:12px; line-height:1.6}
 .auth-submit{width:100%; justify-content:center}
 .auth-submit:disabled{opacity:.6; cursor:not-allowed; transform:none}
+.auth-divider{display:flex; align-items:center; gap:12px; margin:20px 0; color:var(--ink-faint);
+  font-family:var(--font-mono); font-size:10px}
+.auth-divider::before,.auth-divider::after{content:''; flex:1; height:1px; background:var(--line)}
+.auth-guest{width:100%; justify-content:center}
+.auth-guest span{color:var(--primary); font-family:var(--font-mono)}
 .auth-note{margin-top:20px; font-size:11px; line-height:1.8; color:var(--ink-faint);
   text-align:center; letter-spacing:.02em}
 .auth-note b{color:var(--ink-dim); font-weight:500}

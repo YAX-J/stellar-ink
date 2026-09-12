@@ -1,5 +1,5 @@
 <script setup>
-import { watch, watchEffect } from 'vue'
+import { computed, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import Starfield from '@/components/canvas/Starfield.vue'
@@ -7,6 +7,7 @@ import RailNav from '@/components/common/RailNav.vue'
 
 const route = useRoute()
 const settings = useSettingsStore()
+const isAuthPage = computed(() => route.name === 'login' || route.name === 'register')
 
 watchEffect(() => {
   document.body.dataset.theme = settings.theme
@@ -24,8 +25,12 @@ watch(
 
 <template>
   <Starfield />
-  <RailNav />
-  <main class="main">
+  <RailNav v-if="!isAuthPage" />
+  <main class="main" :class="{ 'auth-main': isAuthPage }">
     <RouterView />
   </main>
 </template>
+
+<style scoped>
+.main.auth-main{margin-left:0; margin-bottom:0}
+</style>
