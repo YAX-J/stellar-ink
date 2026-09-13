@@ -1,6 +1,6 @@
 # 星笺 STELLAR INK Docker 部署手册
 
-Docker Compose 一键编排：**网关 + 6 个微服务 + 前端 Nginx**，复用宿主机已有 Nacos。
+Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，复用宿主机已有 Nacos。
 所有 Java 服务走 `prod` profile，敏感配置统一放同目录 `.env`。
 
 ## 一、与服务器已有容器的关系
@@ -19,12 +19,12 @@ Docker Compose 一键编排：**网关 + 6 个微服务 + 前端 Nginx**，复�
 | 服务 | 容器端口 | 对外暴露 | 说明 |
 |---|---|---|---|
 | gateway | 8080 | **仅宿主机 `127.0.0.1`**（`GATEWAY_PORT`，默认 8080） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
-| user/post/meteor/echo/link/stats | 8101-8106 | 不暴露 | 内部网络经 Nacos 服务发现互相调用 |
+| user/content | 8101-8102 | 不暴露 | 网关经 Nacos 服务发现路由；content 内按领域分包 |
 | web（nginx） | 80 | `WEB_PORT`（默认 80） | 前端静态资源 + `/posts` 等 API 前缀反代到网关 |
 
 ```
 浏览器 ──▶ web(:80)──静态 SPA；/auth|/posts|/meteors|/echos|/links|/stats… ──▶ gateway(:8080)
-                                                                     gateway ──▶ 各业务服务(8101-8106)
+                                                                     gateway ──▶ 两个业务服务(8101-8102)
 全部 Java 服务 ──▶ 宿主机 Nacos(:8848/9848)    业务服务 ──▶ 宿主机 3306（已有 mysql 容器）
 ```
 
@@ -88,7 +88,7 @@ docker compose up -d --build
 ### 4. 验证
 
 ```bash
-docker compose ps                             # 网关、6 个业务服务与 web 全部 Up (healthy)
+docker compose ps                             # 网关、2 个业务服务与 web 全部 Up (healthy)
 curl http://127.0.0.1:8080/actuator/health    # 网关 {"status":"UP"}
 curl -I http://127.0.0.1/                     # 前端 200
 ```
@@ -104,7 +104,7 @@ docker compose up -d --build     # Maven/NPM 缓存加速，只重建变化部�
 docker image prune -f            # 清理悬空旧镜像（可选）
 ```
 
-只改前端：`docker compose up -d --build web`；只改某个后端服务：`docker compose up -d --build user-service`。
+只改前端：`docker compose up -d --build web`；只改业务后端：`docker compose up -d --build user-service` 或 `content-service`。
 
 ## 四、常用运维命令
 
@@ -126,22 +126,22 @@ docker compose down                     # 停止并移除本项目容器，不�
 
 | 项 | 现状 | 说明 |
 |---|---|---|
-| 网关自动路由 | **已关闭** | `spring.cloud.gateway.discovery.locator.enabled: false`。开启后会生成 `/{serviceId}/**` 自动路由（如 `/post-service/**`），该前缀不在鉴权白名单内，**可绕过网关鉴权直接读写下游**（含 `/internal/**`）。路由一律在 `routes` 中显式声明 |
+| 网关自动路由 | **已关闭** | `spring.cloud.gateway.discovery.locator.enabled: false`。开启后会生成 `/{serviceId}/**` 自动路由（如 `/content-service/**`），该前缀不在鉴权白名单内，**可绕过网关鉴权直接读写下游**（含 `/internal/**`）。路由一律在 `routes` 中显式声明 |
 | 网关鉴权策略 | **默认拒绝 + 显式白名单** | 除登录、读请求、公开写接口外一律要求有效 token。新增路由默认受保护，不会因漏配置而裸奔 |
 | Actuator | 已收敛 | 仅 `health,info,metrics,loggers`；`heapdump`/`env`/`configprops`/`beans`/`threaddump`/`shutdown` 已单独 `enabled: false`。**heapdump 可导出堆内存明文（含 JWT 密钥），脱敏无效，绝不可暴露** |
 | 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠 |
 | 登录防爆破 | 已启用 | user-service 按用户名计数，连续失败 5 次锁定 15 分钟（进程内实现，**多实例部署需换 Redis**） |
-| 容器权限 | 已加固 | 7 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
+| 容器权限 | 已加固 | 3 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
 | 网关端口 | 仅宿主机回环 | `127.0.0.1:${GATEWAY_PORT}:8080`。前端走容器内网 `gateway:8080`，无需对外发布端口 |
-| JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。校验范围＝配置了 `sa-token.jwt-secret-key` 的服务；本编排对 7 个服务统一注入 `SA_TOKEN_JWT_SECRET`，因此 7 个都会校验（密钥弱则整体拒绝启动，属预期的 fail-closed） |
+| JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。本编排对 3 个 Java 服务统一注入 `SA_TOKEN_JWT_SECRET`，密钥弱时整体拒绝启动（fail-closed） |
 
 ## 六、内存预算（默认 mem_limit）
 
 | 服务 | 上限 | | 服务 | 上限 |
 |---|---|---|---|---|
-| gateway | 256m | | 五个业务服务 | 各 256m |
-| stats | 256m | | web | 64m |
-| **本编排合计** | ≈ 1.86G | | 宿主机 Nacos | 独立预算 |
+| gateway | 256m | | user-service | 256m |
+| content-service | 256m | | web | 64m |
+| **本编排合计** | ≈ 832m | | 宿主机 Nacos | 独立预算 |
 
 Java 服务统一使用 `-Xms32m -Xmx128m` 和 `SerialGC`，适合低并发个人博客；`256m` 上限包含 JVM 堆外内存，不建议继续盲目下调。
 加上已有的 mysql/redis/qdrant，建议服务器至少 2G 内存；如果出现容器 `OOMKilled` 或 `OutOfMemoryError`，再把相关服务上限调到 320m。

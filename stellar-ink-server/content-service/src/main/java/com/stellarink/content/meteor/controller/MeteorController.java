@@ -1,0 +1,86 @@
+package com.stellarink.content.meteor.controller;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.meteor.mapper.MeteorMapper;
+import com.stellarink.content.meteor.pojo.Meteor;
+import com.stellarink.sharedmodel.dto.meteor.MeteorCreateDTO;
+import com.stellarink.sharedmodel.enums.Role;
+import com.stellarink.sharedmodel.response.Response;
+import com.stellarink.sharedmodel.vo.meteor.MeteorVO;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Slf4j
+@RestController
+@RequestMapping("/meteors")
+@RequiredArgsConstructor
+public class MeteorController {
+
+    private final MeteorMapper meteorMapper;
+
+    @GetMapping
+    public Response<List<MeteorVO>> list(@RequestParam(required = false, defaultValue = "50") Integer limit) {
+        // limit 为 Integer，不存在注入；但过大的值会拖垮查询，这里夹紧到 1~200
+        int safeLimit = Math.min(Math.max(limit == null ? 50 : limit, 1), 200);
+        List<Meteor> items = meteorMapper.selectList(new LambdaQueryWrapper<Meteor>()
+                .orderByDesc(Meteor::getId)
+                .last("LIMIT " + safeLimit));
+        return Response.success(items.stream().map(this::toVO).toList());
+    }
+
+    /** 发射流星（作者及以上） */
+    @PostMapping
+    public Response<Void> create(@Valid @RequestBody MeteorCreateDTO dto) {
+        AuthHelper.requireAtLeast(Role.AUTHOR);
+        if (!StringUtils.hasText(dto.getContent())) {
+            throw BusinessExceptionHelper.of("此刻的念头是空的，写一句再发射。");
+        }
+        Meteor entity = new Meteor();
+        entity.setUserId(AuthHelper.loginId());
+        entity.setContent(dto.getContent().trim());
+        entity.setCreatedAt(LocalDateTime.now());
+        meteorMapper.insert(entity);
+        log.info("发射流星 id={}", entity.getId());
+        return Response.success();
+    }
+
+    @DeleteMapping("/{id}")
+    public Response<Void> delete(@PathVariable Long id) {
+        AuthHelper.requireAtLeast(Role.AUTHOR);
+        Meteor entity = meteorMapper.selectById(id);
+        if (entity == null) {
+            throw BusinessExceptionHelper.of("这颗流星不存在。");
+        }
+        if (AuthHelper.currentRole() != Role.ADMIN
+                && !AuthHelper.loginId().equals(entity.getUserId())) {
+            throw BusinessExceptionHelper.of("不能熄灭别人的流星。");
+        }
+        meteorMapper.deleteById(entity.getId());
+        log.info("删除流星 id={}", id);
+        return Response.success();
+    }
+
+    private MeteorVO toVO(Meteor entity) {
+        MeteorVO vo = new MeteorVO();
+        vo.setId(entity.getId());
+        vo.setUserId(entity.getUserId());
+        vo.setContent(entity.getContent());
+        vo.setCreatedAt(entity.getCreatedAt());
+        return vo;
+    }
+}

@@ -1,7 +1,7 @@
 # =============================================================================
 # 星笺 STELLAR INK 生产部署编排（Docker Compose v2，需 Docker 20.10+ 支持 host-gateway）
 #
-# 拓扑：web(nginx:80，唯一对公网入口) → gateway(:8080，仅容器内网) → 业务服务(8101-8106，仅内部网络)
+# 拓扑：web(nginx:80，唯一对公网入口) → gateway(:8080，仅容器内网) → 业务服务(8101-8102，仅内部网络)
 #       全部 Java 服务经 host-gateway 注册/读配置到宿主机 Nacos(:8848)
 #
 # 服务器上已有的 Nacos(:8848/9848) 进程及 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器由宿主机维护，
@@ -124,127 +124,22 @@ services:
     mem_limit: 256m
     logging: *default-logging
 
-  post-service:
+  content-service:
     build:
       <<: *server-build
       args:
-        JAR_PATH: post-service/target/post-service.jar
-    image: stellar-ink/post-service:latest
-    container_name: stellar-ink-post-service
+        JAR_PATH: content-service/target/content-service.jar
+    image: stellar-ink/content-service:latest
+    container_name: stellar-ink-content-service
     restart: unless-stopped
     environment:
       <<: *db-env
     extra_hosts: *extra-hosts
     volumes:
-      - ./logs/post-service:/app/logs
+      - ./logs/content-service:/app/logs
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8102/actuator/health || exit 1"]
-    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
-    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
-    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    mem_limit: 256m
-    logging: *default-logging
-
-  meteor-service:
-    build:
-      <<: *server-build
-      args:
-        JAR_PATH: meteor-service/target/meteor-service.jar
-    image: stellar-ink/meteor-service:latest
-    container_name: stellar-ink-meteor-service
-    restart: unless-stopped
-    environment:
-      <<: *db-env
-    extra_hosts: *extra-hosts
-    volumes:
-      - ./logs/meteor-service:/app/logs
-    healthcheck:
-      <<: *health-defaults
-      test: ["CMD-SHELL", "curl -fs http://localhost:8103/actuator/health || exit 1"]
-    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
-    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
-    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    mem_limit: 256m
-    logging: *default-logging
-
-  echo-service:
-    build:
-      <<: *server-build
-      args:
-        JAR_PATH: echo-service/target/echo-service.jar
-    image: stellar-ink/echo-service:latest
-    container_name: stellar-ink-echo-service
-    restart: unless-stopped
-    environment:
-      <<: *db-env
-    extra_hosts: *extra-hosts
-    volumes:
-      - ./logs/echo-service:/app/logs
-    healthcheck:
-      <<: *health-defaults
-      test: ["CMD-SHELL", "curl -fs http://localhost:8104/actuator/health || exit 1"]
-    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
-    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
-    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    mem_limit: 256m
-    logging: *default-logging
-
-  link-service:
-    build:
-      <<: *server-build
-      args:
-        JAR_PATH: link-service/target/link-service.jar
-    image: stellar-ink/link-service:latest
-    container_name: stellar-ink-link-service
-    restart: unless-stopped
-    environment:
-      <<: *db-env
-    extra_hosts: *extra-hosts
-    volumes:
-      - ./logs/link-service:/app/logs
-    healthcheck:
-      <<: *health-defaults
-      test: ["CMD-SHELL", "curl -fs http://localhost:8105/actuator/health || exit 1"]
-    # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
-    # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
-    # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    mem_limit: 256m
-    logging: *default-logging
-
-  # 无库服务（OpenFeign 聚合），不需要 MySQL/JWT 之外的配置
-  stats-service:
-    build:
-      <<: *server-build
-      args:
-        JAR_PATH: stats-service/target/stats-service.jar
-    image: stellar-ink/stats-service:latest
-    container_name: stellar-ink-stats-service
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-    extra_hosts: *extra-hosts
-    volumes:
-      - ./logs/stats-service:/app/logs
-    healthcheck:
-      <<: *health-defaults
-      test: ["CMD-SHELL", "curl -fs http://localhost:8106/actuator/health || exit 1"]
     # 安全加固：JVM 只需监听 >1024 的端口，不需要任何 Linux capability；
     # 禁止权限提升，可降低容器逃逸/提权的影响面。日志目录是 bind mount，
     # 容器仍以 root 运行（bind mount 会覆盖镜像内的属主设置），不受影响。

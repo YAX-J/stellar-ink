@@ -2,7 +2,7 @@
 # =============================================================================
 # 星笺 STELLAR INK 后端统一镜像
 # - 第一阶段：Maven 全 reactor 构建（BuildKit cache mount 复用 ~/.m2，
-#   7 个服务共用本文件构建时编译只执行一次，之后各阶段仅按 JAR_PATH 拷贝各自 fat jar）
+#   3 个服务共用本文件构建时编译只执行一次，之后各阶段仅按 JAR_PATH 拷贝各自 fat jar）
 # - 第二阶段：JRE 运行时，通过 build arg JAR_PATH 区分服务
 #   （jar 名由各模块 pom 的 <finalName> 决定，如 user-service/target/user-service.jar）
 # =============================================================================
@@ -15,14 +15,9 @@ COPY stellar-ink-server/pom.xml ./
 COPY stellar-ink-server/common-components/pom.xml common-components/
 COPY stellar-ink-server/common-components/shared-model/pom.xml common-components/shared-model/
 COPY stellar-ink-server/common-components/common-core/pom.xml common-components/common-core/
-COPY stellar-ink-server/common-components/service-api/pom.xml common-components/service-api/
 COPY stellar-ink-server/gateway-nacos-sentinel/pom.xml gateway-nacos-sentinel/
 COPY stellar-ink-server/user-service/pom.xml user-service/
-COPY stellar-ink-server/post-service/pom.xml post-service/
-COPY stellar-ink-server/meteor-service/pom.xml meteor-service/
-COPY stellar-ink-server/echo-service/pom.xml echo-service/
-COPY stellar-ink-server/link-service/pom.xml link-service/
-COPY stellar-ink-server/stats-service/pom.xml stats-service/
+COPY stellar-ink-server/content-service/pom.xml content-service/
 # 尽力预热依赖（go-offline 无法解析全部插件，失败不影响后续构建）
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -ntp -DskipTests dependency:go-offline || true

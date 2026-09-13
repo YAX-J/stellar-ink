@@ -18,13 +18,9 @@
     <modules>
         <module>common-components</module>
         <module>gateway-nacos-sentinel</module>
-        <!-- 第一阶段业务微服务 -->
+        <!-- 两个业务服务：身份与内容 -->
         <module>user-service</module>
-        <module>post-service</module>
-        <module>meteor-service</module>
-        <module>echo-service</module>
-        <module>link-service</module>
-        <module>stats-service</module>
+        <module>content-service</module>
         <!-- AI 能力暂不开发，stellar-ink-ai-client 目录预留，后续接入时在此登记 -->
     </modules>
 
@@ -45,7 +41,6 @@
         <hutool.version>5.8.25</hutool.version>
         <junit.version>5.10.2</junit.version>
         <sa-token.version>1.44.0</sa-token.version>
-        <resilience4j.version>2.3.0</resilience4j.version>
         <org.springdoc.version>2.3.0</org.springdoc.version>
         <knife4j.version>4.5.0</knife4j.version>
         <jjwt.version>0.12.6</jjwt.version>
@@ -136,12 +131,6 @@
                 <artifactId>common-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
-            <dependency>
-                <groupId>com.stellarink</groupId>
-                <artifactId>service-api</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-
             <!-- 常用工具类和测试依赖 -->
             <dependency>
                 <groupId>org.projectlombok</groupId>

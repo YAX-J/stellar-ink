@@ -36,7 +36,7 @@ spring:
             allowed-headers: "*"
             max-age: 3600 # 预检请求缓存时间（秒）
       # 服务发现路由：必须保持关闭！
-      # 开启后会为每个注册服务自动生成 /{serviceId}/** 路由（如 /post-service/**），
+      # 开启后会为每个注册服务自动生成 /{serviceId}/** 路由（如 /content-service/**），
       # 该前缀不在任何显式路由与鉴权白名单内，会绕过网关鉴权直接访问下游（含 /internal/**）。
       # 路由一律在下方 routes 中显式声明。
       discovery:
@@ -49,26 +49,10 @@ spring:
           uri: lb://user-service
           predicates:
             - Path=/auth/**,/user/**
-        - id: post-service
-          uri: lb://post-service
+        - id: content-service
+          uri: lb://content-service
           predicates:
-            - Path=/posts/**,/tags/**,/search/**
-        - id: meteor-service
-          uri: lb://meteor-service
-          predicates:
-            - Path=/meteors/**
-        - id: echo-service
-          uri: lb://echo-service
-          predicates:
-            - Path=/echos/**
-        - id: link-service
-          uri: lb://link-service
-          predicates:
-            - Path=/links/**
-        - id: stats-service
-          uri: lb://stats-service
-          predicates:
-            - Path=/stats/**
+            - Path=/posts/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
 
     # Sentinel 限流熔断（规则可在 Nacos 配置中心动态下发）
     sentinel:
@@ -88,7 +72,7 @@ sa-token:
   # 本地开发关闭操作日志
   is-log: false
   # JWT 密钥（必须与各业务服务一致）
-  # 安全：此默认值仅供本地联调，7 个服务共用所以不能各自乱改；
+  # 安全：此默认值仅供本地联调，3 个服务共用所以不能各自乱改；
   #       生产由环境变量 SA_TOKEN_JWT_SECRET 注入（prod 配置无默认值，缺失即启动失败），
   #       且 common-core 的 SecretGuard 会在 prod 下检测到该默认值直接拒绝启动。
   #       想让本地也走环境变量，可在 deploy/scripts/start-all.bat 或 IDEA 运行配置里设置（两者均已 gitignore）。

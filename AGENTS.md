@@ -19,14 +19,9 @@ stellar-ink/
 │   ├── common-components/          公共组件聚合（非独立运行）
 │   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO
 │   │   ├── common-core/            基础设施：全局异常(Servlet+Reactive)/TraceId/MP配置/健康检查
-│   │   └── service-api/            跨服务 Feign 契约 + FallbackFactory
 │   ├── gateway-nacos-sentinel/     网关 :8080（WebFlux：路由/CORS/Sa-Token 鉴权/Sentinel）
 │   ├── user-service/   :8101       登录认证、站长资料（表 user）
-│   ├── post-service/   :8102       文章/标签/搜索（表 post）
-│   ├── meteor-service/ :8103       流星备忘录（表 meteor）
-│   ├── echo-service/   :8104       回声漂流瓶（表 echo）
-│   ├── link-service/   :8105       星链友链（表 link）
-│   ├── stats-service/  :8106       写作脉搏（OpenFeign 聚合，无库）
+│   ├── content-service/:8102       文章/流星/回声/星链/写作统计（按领域分包）
 │   └── stellar-ink-ai-client/      Java → Python AI 客户端契约（按 AI 实施任务逐步建设）
 ├── stellar-ink-ai/                 Python AI 编排服务（按 AI 实施任务逐步建设）
 ├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
@@ -34,7 +29,7 @@ stellar-ink/
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
 ├── docs/ai/README.md               AI 技术路线、原理对比与分阶段学习方案
 ├── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
-└── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/6 服务/前端 Nginx，详见其 README）
+└── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/2 服务/前端 Nginx，详见其 README）
 ```
 
 ## 2. 常用命令与端口
@@ -44,7 +39,7 @@ stellar-ink/
 cd stellar-ink-web && npm install && npm run dev      # 开发
 npm run build                                          # 构建验证
 
-# 后端（网关 8080 对外；Nacos 8848；服务 8101-8106）
+# 后端（网关 8080 对外；Nacos 8848；服务 8101-8102）
 cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos
 cd stellar-ink-server && mvn -DskipTests package       # 2. 构建
 deploy\scripts\start-all.bat                           # 3. 一键起全部（或按模块手动 java -jar）
@@ -108,9 +103,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### 架构与边界
 - 拓扑/端口/调用关系见 `docs/architecture/README.md`；对外唯一入口是网关 :8080，API 路径与前端约定保持稳定。
-- 服务按业务域拆分，**表归属严格划分**：user→`user`、post→`post`、meteor→`meteor`、echo→`echo`、
-  link→`link`；stats 无库（OpenFeign 聚合 post-service 的 `/internal/posts/summary`）。
-- 共享库模式：一个 `stellar_ink` 库，各服务**只读写自己的表**；拆库时改各服务 `MYSQL_DB` 环境变量。
+- 服务按变更与运行边界拆分：user-service 负责 `user`；content-service 内按
+  `post/meteor/echo/link/stats` 领域分包，负责 `post`、`meteor`、`echo`、`link`，统计直接查询文章数据。
+- 共享库模式：一个 `stellar_ink` 库；user-service 与 content-service 只读写各自负责的表。
 - **鉴权在网关**（Sa-Token，JWT 无状态模式 `StpLogicJwtForStateless`）：放行 GET/OPTIONS、
   `POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
   其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
@@ -122,12 +117,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /user/list` 是管理端读接口，
   须在网关「GET 全放行」之前单独拦下做 ADMIN 校验），角色不足返回 403；服务内用
   `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。注册固定 READER，种子账号 stellar 为 ADMIN。
-- 服务间调用：Feign 契约统一放 `service-api`（@FeignClient + FallbackFactory，resilience4j 断路器，
-  调用方配 `feign.circuitbreaker.enabled: true`）；`/internal/**` 为服务间接口，网关不配路由。
+- 当前两个业务服务之间没有同步调用；将来确需跨服务调用时再建立独立契约模块，
+  使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
 
 ### 工程约定（对齐参考工程）
-- 包结构：`com.stellarink.<service>/{controller,service,service.impl,mapper,pojo,config}`——
+- 包结构：user-service 使用 `com.stellarink.user/{controller,service,service.impl,mapper,pojo,config}`；
+  content-service 使用 `com.stellarink.content.<domain>/{controller,service,service.impl,mapper,pojo}`。
   实体包叫 **pojo**（不是 entity），服务接口在 service、实现放 `service/impl`。
 - 启动类模板：`@SpringBootApplication @ComponentScan(basePackages={"com.stellarink.<svc>","com.stellarink.common"})
   @EnableDiscoveryClient @MapperScan("com.stellarink.<svc>.**.mapper")`；需要 Feign 的加
@@ -137,7 +133,6 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   MybatisPlusConfig/SimpleHealthController/AuthHelper/BusinessExceptionHelper）。
 - 所有接口统一返回 `Response<T>`（code/msg/data/traceId）；业务校验失败抛 `BusinessException`
   （用 `BusinessExceptionHelper.of(...)`），全局处理器带 traceId 并写 MDC。
-- 无数据库的服务（stats）：启动类 `exclude = {DataSourceAutoConfiguration.class, MybatisPlusAutoConfiguration.class}`。
 
 ### 配置文件风格（照参考工程，每个服务统一 5 件）
 | 文件 | 内容 |
@@ -149,7 +144,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 | `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天+200MB 滚动，30 天） |
 
 - Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
-  （默认 public，config 与 discovery 必须同空间，7 个服务要一起设）；
+  （默认 public，config 与 discovery 必须同空间，3 个服务要一起设）；
   MySQL 用 `MYSQL_HOST/PORT/DB/USER/PASSWORD`；JWT 密钥用 `SA_TOKEN_JWT_SECRET`。
 
 ### 数据库
@@ -169,7 +164,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ## 6. 当前状态与边界（不要越界开发）
 
 - 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
-  后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
+  后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
 - **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
   `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。评论系统、文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。

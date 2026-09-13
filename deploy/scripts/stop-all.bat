@@ -7,14 +7,10 @@ REM  ASCII-only file (no Chinese) to avoid codepage issues.
 REM =========================================================
 
 setlocal
-echo Stopping services on ports 8080 / 8101-8106, and local nacos 8848/9848 if any ...
+echo Stopping services on ports 8080 / 8101 / 8102, and local nacos 8848/9848 if any ...
 call :kill_port 8080
 call :kill_port 8101
 call :kill_port 8102
-call :kill_port 8103
-call :kill_port 8104
-call :kill_port 8105
-call :kill_port 8106
 call :kill_port 8848
 call :kill_port 9848
 echo Done.

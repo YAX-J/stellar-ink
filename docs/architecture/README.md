@@ -1,97 +1,91 @@
-# 星笺后端架构（Spring Cloud Alibaba 微服务，对齐企业级参考架构）
+# 星笺后端架构（Spring Cloud Alibaba 微服务）
 
 > 版本矩阵：Spring Boot 3.2.12 / Spring Cloud 2023.0.6 / Spring Cloud Alibaba 2023.0.3.4 / Java 17 / MyBatis-Plus 3.5.15。
-> 对外 API 路径与单体时期一致，前端无感。
+> 对外 API 路径保持不变，前端无感。
 
 ## 拓扑
 
-```
-                      ┌──────────────────────────────┐
-  前端 / curl ────────▶│ gateway-nacos-sentinel :8080 │ WebFlux 网关
-                      │  SaReactorFilter 登录校验     │ Nacos 配置中心导入
-                      │  Sentinel 网关限流            │ discovery locator 自动路由
-                      └───────┬──────────────────────┘
-                              │ 按前缀路由（lb:// 负载均衡）
-        ┌──────────┬──────────┼──────────┬──────────┬──────────┐
-        ▼          ▼          ▼          ▼          ▼          ▼
-   user-service post-service meteor-svc echo-svc  link-svc  stats-service
-      :8101       :8102       :8103      :8104      :8105      :8106
-        │           │                                 │          │
-        │      MySQL（共享 stellar_ink 库，表归属严格划分）     │ 无库
-        └───────────┴──────────────────────────────────┴──────────┘
-                              ▲
-                              │ OpenFeign（service-api 契约 + fallback）
-                       stats ─┘
-        全部服务注册到 ──▶ Nacos :8848（standalone；注册中心 + 配置中心）
+```text
+                       ┌──────────────────────────────┐
+  前端 / curl ─────────▶│ gateway-nacos-sentinel :8080 │
+                       │ Sa-Token 鉴权 / CORS / 限流   │
+                       └──────────────┬───────────────┘
+                                      │ 显式路由（lb://）
+                         ┌────────────┴────────────┐
+                         ▼                         ▼
+                  user-service :8101       content-service :8102
+                  用户、认证、角色          post / meteor / echo
+                         │                  link / stats
+                         └────────────┬────────────┘
+                                      ▼
+                         MySQL（共享 stellar_ink 库）
+
+  三个 Java 服务均注册到 Nacos :8848（注册中心 + 配置中心）
 ```
 
-## 模块结构（对齐参考工程）
+## 模块结构
 
-```
+```text
 stellar-ink-server/
-├── pom.xml                    父 POM：统一版本管理
-├── common-components/         公共组件（被所有服务依赖，非独立运行）
-│   ├── shared-model/          共享模型：Response/ErrorCode/异常/DTO/VO
-│   ├── common-core/           核心基础设施：全局异常(Servlet+Reactive)/TraceId/MyBatis-Plus 配置/健康检查
-│   └── service-api/           跨服务 Feign 契约：PostServiceClient + FallbackFactory
-├── gateway-nacos-sentinel/    API 网关（8080，WebFlux）
-├── user-service/              用户服务（8101）
-├── post-service/              文章服务（8102）
-├── meteor-service/            流星服务（8103）
-├── echo-service/              回声服务（8104）
-├── link-service/              星链服务（8105）
-└── stats-service/             统计服务（8106，无库）
+├── pom.xml
+├── common-components/
+│   ├── shared-model/          Response、异常、跨模块 DTO/VO
+│   └── common-core/           异常处理、TraceId、MyBatis-Plus、鉴权辅助
+├── gateway-nacos-sentinel/    API 网关（8080）
+├── user-service/              用户与认证（8101）
+└── content-service/           内容聚合服务（8102）
+    └── com.stellarink.content/
+        ├── post/              文章、标签、搜索
+        ├── meteor/            流星备忘录
+        ├── echo/              回声漂流瓶
+        ├── link/              星链友链
+        └── stats/             写作脉搏
 ```
 
 AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)。当前 AI 目录仍处于方案阶段，未纳入后端 Maven 模块和 Docker 编排。
 
-## 配置文件风格（每个服务统一）
+## 为什么收敛为两个业务服务
 
-| 文件 | 作用 |
+- 流星、回声、友链原服务都只有一个控制器、一个 Mapper 和一个实体，独立 JVM 与连接池的成本远高于隔离收益。
+- 写作统计只消费文章数据，原先通过 Feign 获取摘要会增加一次网络调用、熔断配置和故障点。
+- 项目使用同一个 MySQL 数据库，现阶段没有独立扩缩容、独立发布或独立数据源的实际需求。
+- 合并只改变运行单元，不改变领域边界。content-service 内仍按领域分包，后续达到独立扩缩容或团队所有权门槛时可重新拆分。
+
+## 路由
+
+| 服务 | 路由前缀 |
 |---|---|
-| `application.yml` | 极简：port + 应用名 + `profiles.active: dev` |
-| `application-dev.yml` | dev 全量配置：`spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator |
-| `application-prod.yml` | 生产：敏感项全部走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
-| `nacos-application-dev.yml` | 上传到 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`） |
-| `logback-spring.xml` | 控制台 + 文件异步日志（`./logs/<app>.log`，按天+200MB 滚动，30 天） |
+| user-service | `/auth/**`、`/user/**` |
+| content-service | `/posts/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
 
-## 鉴权（Sa-Token，JWT 无状态模式）
+网关关闭 discovery locator，只允许显式路由，防止通过 `/{serviceId}/**` 绕过鉴权。`/internal/**` 不对外路由。
 
-- 登录：user-service `/auth/login` 调 `StpUtil.login(userId)` 签发 JWT，返回 `tokenName(Authorization) + tokenValue`
-- 网关 `SaReactorFilter`：放行 GET/OPTIONS、`/auth/**`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
-  `GET /posts/mine` 需 AUTHOR，其余对 `/posts|/meteors|/links|/user` 的写请求按角色校验
-- 多作者归属：`post.user_id` 与 `meteor.user_id` 记录创建者；AUTHOR 只能修改/删除自己的内容，ADMIN 可管理全部内容；草稿只允许作者本人读取；公开页通过 user-service 批量作者摘要接口展示署名
-- 无状态模式（`StpLogicJwtForStateless`）：token 自包含签名，网关与各服务用同一 `jwt-secret-key` 独立验签，无需 Redis 共享会话
-- 鉴权失败由网关统一返回 `{"code":401,...}`（HTTP 200，SaResult 约定）
+## 鉴权
 
-## 服务间调用
+- user-service 负责登录、注册和 JWT 签发。
+- 网关按路径和角色进行第一层校验；业务服务使用 `AuthHelper` 复核登录身份与角色。
+- `READER` 可读和公开互动，`AUTHOR` 可维护自己的文章与流星，`ADMIN` 可管理全部内容、友链状态和用户角色。
+- JWT 无状态验签，网关与两个业务服务必须使用同一 `SA_TOKEN_JWT_SECRET`。
 
-- 契约集中在 `service-api`：`@FeignClient(name="post-service", fallbackFactory=...)` + resilience4j 断路器（调用方配 `feign.circuitbreaker.enabled: true`）
-- `/internal/**` 为服务间接口，网关不配路由，外部不可达
-- `FeignTraceInterceptor` 透传 `X-Trace-Id` 与用户身份头
+## 数据边界
 
-## 数据库策略
+| 服务 | 负责的数据 |
+|---|---|
+| user-service | `user` 表 |
+| content-service | `post`、`meteor`、`echo`、`link` 表，以及基于 `post` 的实时统计 |
 
-共享库模式（一个 `stellar_ink` 库，各服务只读写自己的表），兼容云数据库无建库权限场景。
-初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`；已有数据库升级多作者归属执行一次 `deploy/sql/03_multi-author.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
+当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 
-## Docker 部署（deploy/docker）
+## 配置与部署
 
-生产环境一键编排：`deploy/docker/docker-compose.yml`（Nacos + 网关 + 6 服务 + 前端 Nginx，内部网络互通）。
+每个运行服务保留 `application.yml`、`application-dev.yml`、`application-prod.yml`、`nacos-application-dev.yml` 和 `logback-spring.xml`。Nacos Data ID 分别为：
 
-- 服务器已有的 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器不归编排管；业务服务经
-  `host.docker.internal`（host-gateway）访问宿主机 3306 上的 MySQL，Redis/Qdrant 暂未使用仅预留
-- 敏感配置统一放 `deploy/docker/.env`（从 `.env.example` 复制，不入库）；各 Java 服务配 `mem_limit`
-  并按 `MaxRAMPercentage=70` 控堆
-- 后端统一镜像 `stellar-ink-server/Dockerfile`：Maven 多阶段构建全 reactor，各服务仅 build arg
-  `JAR_PATH` 不同（jar 名对应各模块 `<finalName>`）
-- 前端镜像 `stellar-ink-web/Dockerfile`：Vite 构建 → Nginx 托管 SPA（history 路由回退），
-  `/posts` 等 API 前缀同源反代网关
-- 首次部署 / 日常更新 / 运维命令见 `deploy/docker/README.md`
+- `gateway-nacos-sentinel-dev.yaml`
+- `user-service-dev.yaml`
+- `content-service-dev.yaml`
 
-## 演进路线（按需，暂不实施）
+生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、两个业务服务和前端 Nginx。MySQL 与 Nacos 继续复用宿主机现有实例。
 
-- Sentinel 规则持久化到 Nacos（sentinel-datasource-nacos 已引入）
-- Redis 分布式令牌桶限流（网关 RequestRateLimiter）
-- stats 改事件驱动（RocketMQ）或物化视图
-- 共享库拆分为 per-service 数据库
+## 再拆分门槛
+
+只有某个领域出现以下情况之一时再拆成独立服务：需要独立扩缩容；需要独立数据库或事务边界；需要不同发布节奏；存在明确团队所有权；故障隔离收益显著高于远程调用成本。不要只因表不同就拆服务。

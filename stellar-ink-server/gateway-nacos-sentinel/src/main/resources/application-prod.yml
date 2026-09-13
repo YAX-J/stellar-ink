@@ -40,26 +40,10 @@ spring:
           uri: lb://user-service
           predicates:
             - Path=/auth/**,/user/**
-        - id: post-service
-          uri: lb://post-service
+        - id: content-service
+          uri: lb://content-service
           predicates:
-            - Path=/posts/**,/tags/**,/search/**
-        - id: meteor-service
-          uri: lb://meteor-service
-          predicates:
-            - Path=/meteors/**
-        - id: echo-service
-          uri: lb://echo-service
-          predicates:
-            - Path=/echos/**
-        - id: link-service
-          uri: lb://link-service
-          predicates:
-            - Path=/links/**
-        - id: stats-service
-          uri: lb://stats-service
-          predicates:
-            - Path=/stats/**
+            - Path=/posts/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
 
     sentinel:
       eager: true

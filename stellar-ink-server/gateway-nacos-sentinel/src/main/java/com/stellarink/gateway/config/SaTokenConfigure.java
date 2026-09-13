@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
  *
  * <p><b>策略：默认拒绝 + 显式白名单。</b>除下列放行项外，一切请求都要求有效 token。
  * 不要反向写成「默认放行、按前缀挑着拦」——那种写法只要出现一个未列举的路径前缀
- * （例如服务发现自动路由生成的 {@code /post-service/**}）就会静默失去保护。
+ * （例如服务发现自动路由生成的 {@code /content-service/**}）就会静默失去保护。
  *
  * <p>放行项：
  * <ul>
@@ -113,7 +113,7 @@ public class SaTokenConfigure {
     /**
      * 公开写接口白名单。
      * <p>必须精确匹配路径——安全判断一律不用 {@code startsWith}/{@code contains}，
-     * 否则 {@code /post-service/posts} 这类路径会误判为公开。
+     * 否则 {@code /content-service/posts} 这类路径会误判为公开。
      */
     private static boolean isPublicWrite(String path) {
         return "/echos".equals(path)

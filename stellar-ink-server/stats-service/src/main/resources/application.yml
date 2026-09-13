@@ -1,8 +1,0 @@
-server:
-  port: 8106
-
-spring:
-  application:
-    name: stats-service
-  profiles:
-    active: dev

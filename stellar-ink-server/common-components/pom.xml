@@ -16,6 +16,5 @@
     <modules>
         <module>shared-model</module>
         <module>common-core</module>
-        <module>service-api</module>
     </modules>
 </project>

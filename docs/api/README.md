@@ -8,7 +8,7 @@
 
 ```bash
 cd stellar-ink-server && mvn -DskipTests package
-deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
+deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 + 网关
 ```
 
 环境变量：`NACOS_ADDR`（默认 127.0.0.1:8848）、`MYSQL_HOST/PORT/DB/USER/PASSWORD`、`SA_TOKEN_JWT_SECRET`。
@@ -20,11 +20,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 |---|---|---|---|
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` | user |
-| post-service | 8102 | `/posts/**` `/tags/**` `/search/**` | post |
-| meteor-service | 8103 | `/meteors/**` | meteor |
-| echo-service | 8104 | `/echos/**` | echo |
-| link-service | 8105 | `/links/**` | link |
-| stats-service | 8106 | `/stats/**` | -（Feign 聚合） |
+| content-service | 8102 | `/posts/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / meteor / echo / link |
 
 ## 鉴权（Sa-Token，网关统一）
 
@@ -60,7 +56,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user | ADMIN |
 | GET | `/user/list` | 用户列表（供角色管理页枚举） | ADMIN |
 
-### post-service :8102
+### content-service :8102 - 文章
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -72,9 +68,8 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | POST | `/posts/{id}/glow` | 补充光芒，返回 `{glow}` | 公开 |
 | GET | `/tags` | 标签计数（光谱） | 公开 |
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
-| GET | `/internal/posts/summary` | 服务间内部汇总（网关不路由，仅 stats 调用） | 内部 |
 
-### meteor-service :8103
+### content-service :8102 - 流星
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -82,14 +77,14 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | POST | `/meteors` | 发射 `{content}` | AUTHOR |
 | DELETE | `/meteors/{id}` | 删除；AUTHOR 仅自己的流星，ADMIN 可操作全部 | AUTHOR |
 
-### echo-service :8104
+### content-service :8102 - 回声
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/echos` | 全部漂流瓶 | 公开 |
 | POST | `/echos` | 投瓶 `{nickname?, content}` | 公开 |
 
-### link-service :8105
+### content-service :8102 - 星链
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -97,7 +92,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 | POST | `/links` | 申请接入 `{name, url, description?}` | 公开 |
 | PUT | `/links/{id}/status?status=1` | 站长确认/驳回 | ADMIN |
 
-### stats-service :8106
+### content-service :8102 - 写作统计
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -112,7 +107,7 @@ deploy\scripts\start-all.bat        # 一键：Nacos + 6 服务 + 网关
 
 ## 数据库
 
-共享库模式：一个 `stellar_ink` 库，各服务只读写自己的表（Druid 连接池，dev 直连本机 MySQL）。
+共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域四张表（Druid 连接池，dev 直连本机 MySQL）。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。已有数据库升级多作者归属时执行一次 `deploy/sql/03_multi-author.sql`。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 ## 日志

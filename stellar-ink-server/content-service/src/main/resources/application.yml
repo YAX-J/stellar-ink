@@ -1,0 +1,8 @@
+server:
+  port: 8102
+
+spring:
+  application:
+    name: content-service
+  profiles:
+    active: dev

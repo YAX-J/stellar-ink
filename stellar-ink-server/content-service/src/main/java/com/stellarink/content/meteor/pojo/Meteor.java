@@ -1,0 +1,25 @@
+package com.stellarink.content.meteor.pojo;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 流星备忘录（碎片）
+ */
+@Data
+@TableName("meteor")
+public class Meteor {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+
+    private Long userId;
+
+    private String content;
+
+    private LocalDateTime createdAt;
+}

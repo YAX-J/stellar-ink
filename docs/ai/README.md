@@ -31,7 +31,7 @@
 当前项目已经具备：
 
 - Vue 3 + Vite + Pinia 前端，组件不直接访问后端。
-- Spring Cloud Alibaba 网关和六个业务服务。
+- Spring Cloud Alibaba 网关、user-service 与 content-service 两个业务服务。
 - 网关统一使用 Sa-Token JWT 做认证，角色为 `READER`、`AUTHOR`、`ADMIN`。
 - `stellar-ink-ai/` 已预留 Python 服务目录。
 - `stellar-ink-server/stellar-ink-ai-client/` 已预留 Java 客户端目录。

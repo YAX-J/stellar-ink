@@ -39,7 +39,7 @@ gateway-nacos-sentinel :8080
 ai-service :8107                         Java，安全与业务边界
   ├─ Sa-Token JWT 防御性复核
   ├─ READER / AUTHOR / ADMIN 权限
-  ├─ 调用 post-service 的内部 Feign 契约
+  ├─ 调用 content-service 的内部文章 Feign 契约
   ├─ 请求限额、审计、统一 Response
   └─ stellar-ink-ai-client               Java → Python 客户端库
            │ HMAC 内网签名 + traceId
@@ -57,7 +57,7 @@ stellar-ink-ai :8200                     Python，AI 领域服务
 - Python 不解析 Sa-Token，也不读取 `user`、`post` 等现有业务表。
 - Java 将 `userId`、`role`、`traceId` 通过带时间戳的 HMAC 内部请求传给 Python。
 - Python 只写自己拥有的 `ai_*` 表和 Qdrant collection。
-- 文章数据由 `post-service` 通过内部 DTO 提供；草稿只随当前作者请求临时传输，不进入公共索引。
+- 文章数据由 `content-service` 的内部契约提供；草稿只随当前作者请求临时传输，不进入公共索引。
 - 第一版 Agent 工具全部只读；文章写入继续使用现有 `/posts/**` 接口并由用户确认。
 
 ### 2.1 为什么不让网关直接路由 Python
@@ -247,8 +247,8 @@ app/providers/
 
 ### 代码步骤
 
-1. 在 `post-service` 增加仅供 AI 使用的内部只读契约：按 ID/更新时间分页读取已发布文章。
-2. 在 `service-api` 放 Java 服务间 DTO 和 Feign 契约；草稿不进入这个接口。
+1. 在 `content-service` 的文章领域增加仅供 AI 使用的内部只读契约：按 ID/更新时间分页读取已发布文章。
+2. 在 AI 实施阶段新增专用的文章查询契约模块和 Feign 客户端；`stellar-ink-ai-client` 仍只负责 Java → Python。
 3. `ai-service` 拉取文章并转发给 Python Index API，Python 不直连 `post` 表。
 4. Python 实现规范化和父子切块：
    - 保留标题、标签、作者、发布时间和段落序号。
@@ -290,7 +290,7 @@ MVP 先提供 ADMIN 全量重建和按文章重建。不要在这一阶段直接
 3. 增加 Reranker，限制候选数和超时预算。
 4. 增加 Query Rewrite 和 Multi-Query，但必须保留原始问题并限制扩写数量。
 5. 增加 Contextual Retrieval：为 child chunk 补标题和父级摘要。
-6. 在 `post-service` 使用 Outbox Pattern 记录发布、更新、删除事件。
+6. 在 `content-service` 的文章领域使用 Outbox Pattern 记录发布、更新、删除事件。
 7. Index Worker 消费事件，按内容哈希幂等更新索引；失败进入可重试状态。
 8. 增加 Semantic Cache，但缓存键必须包含权限范围、索引版本和模型版本。
 9. 建立离线评测 CLI，输出 Dense、Hybrid、Hybrid+Rerank 对比报告。
@@ -555,7 +555,7 @@ npm run build
 ## 17. 数据库和索引迁移顺序
 
 1. `04_ai-schema.sql`：仅创建 `ai_*` 表。
-2. `05_post-outbox.sql`：由 `post-service` 拥有的索引事件表。
+2. `05_post-outbox.sql`：由 `content-service` 文章领域拥有的索引事件表。
 3. Qdrant collection 使用版本后缀，如 `stellar_post_chunks_v1`。
 4. 新索引先全量构建并评测，完成后通过 alias 原子切换。
 5. 回滚只切回旧 alias，不在失败部署中删除旧 collection。
