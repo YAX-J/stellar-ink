@@ -27,11 +27,12 @@ stellar-ink/
 │   ├── echo-service/   :8104       回声漂流瓶（表 echo）
 │   ├── link-service/   :8105       星链友链（表 link）
 │   ├── stats-service/  :8106       写作脉搏（OpenFeign 聚合，无库）
-│   └── stellar-ink-ai-client/      预留目录，AI 功能暂不开发，未经用户明确要求不得动它
-├── stellar-ink-ai/                 Python AI 服务占位，暂不开发
+│   └── stellar-ink-ai-client/      Java → Python AI 客户端契约（按 AI 实施任务逐步建设）
+├── stellar-ink-ai/                 Python AI 编排服务（按 AI 实施任务逐步建设）
 ├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
 ├── docs/architecture/              微服务架构说明
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
+├── docs/ai/README.md               AI 技术路线、原理对比与分阶段学习方案
 ├── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
 └── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/6 服务/前端 Nginx，详见其 README）
 ```
@@ -169,8 +170,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 - 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
   后端微服务化（网关 + 6 服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token，全链路已实测）。
-- **暂不做**：AI 相关一切（ai-client、stellar-ink-ai）、评论系统、文件上传、
-  全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化——用户明确要求后再动。
+- **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
+  `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。评论系统、文件上传、
+  全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
   AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
 - 前端已接网关：`src/api/client.js`（fetch 封装 + token）+ Pinia stores（会话与业务数据）；

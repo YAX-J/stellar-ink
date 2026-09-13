@@ -30,4 +30,12 @@ deploy/scripts/start-all.bat
 # 安全审查报告等本地文档不入库
 # 注意：docs/api、docs/architecture 下的文件已被 git 跟踪，不受影响；
 # 但将来在 docs/ 下新增的文件会被静默忽略，如需入库用 git add -f 或收窄此规则
-docs/
+docs/*
+
+# 已纳入版本控制的架构、接口和 AI 方案文档
+!docs/api/
+!docs/api/**
+!docs/architecture/
+!docs/architecture/**
+!docs/ai/
+!docs/ai/**

@@ -43,6 +43,8 @@ stellar-ink-server/
 └── stats-service/             统计服务（8106，无库）
 ```
 
+AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)。当前 AI 目录仍处于方案阶段，未纳入后端 Maven 模块和 Docker 编排。
+
 ## 配置文件风格（每个服务统一）
 
 | 文件 | 作用 |
