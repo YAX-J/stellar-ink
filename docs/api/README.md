@@ -20,12 +20,12 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 |---|---|---|---|
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` | user |
-| content-service | 8102 | `/posts/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / meteor / echo / link |
+| content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / note / meteor / echo / link |
 
 ## 鉴权（Sa-Token，网关统一）
 
 - 登录返回 `tokenName: Authorization` 与 `tokenValue`；后续请求带 `Authorization: <tokenValue>`（无 Bearer 前缀）
-- 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`、`POST /posts/{id}/viewed`）
+- 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`、`POST /posts/{id}/viewed`、`POST /notes/{id}/viewed`）
 - 其余写请求需有效 token，失败返回 `{"code":401,...}`（网关同时设置真实 HTTP 状态 401/403）
 - **鉴权失败返回形态不一致，前端必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；而 GET 请求在网关是放行的，token 失效时由服务端 `NotLoginException` 兜底，返回的是 **HTTP 200 + `code:401`**
 
@@ -34,12 +34,14 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | 角色 | 中文 | 能力 |
 |---|---|---|
 | READER | 读者 | 读 + 公开互动（点赞/投瓶/申请友链），不可创作 |
-| AUTHOR | 作者 | READER 全部 + 写/改/删文章、发射/删除流星 |
+| AUTHOR | 作者 | READER 全部 + 写/改/删文章、技术笔记、发射/删除流星 |
 | ADMIN | 站长 | AUTHOR 全部 + 友链审核 + 调整用户角色 |
 
 - 角色在登录/注册时写入 JWT；注册固定 `READER`，种子账号 `stellar` 为 `ADMIN`
-- 网关按角色做门槛：文章/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role`、`GET /user/list` 需 `ADMIN`
+- 网关按角色做门槛：文章/笔记/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role`、`GET /user/list` 需 `ADMIN`
 - 角色不足返回 `{"code":403,...}`；文章与流星按 `user_id` 记录作者归属，AUTHOR 只能维护自己的内容，ADMIN 可管理全部内容
+- **技术笔记归属更严格**：只有作者本人能改/删自己的笔记，**ADMIN 也不能操作他人笔记**（`笔记比文章严格`）
+- ⚠️ **角色变更需要重新登录才生效**：`PUT /user/{id}/role` 只更新数据库，不会重签 JWT；网关读的是 token 里的 `role` extra，所以被调整的用户必须重新登录，新角色才会生效
 
 ## 接口一览（经网关调用）
 
@@ -76,6 +78,28 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 - 分页 `size` 服务端硬上限 100（超过会被静默夹到 100），公开列表总条数从 `IPage.total` 取
 - 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数
 - 点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id, user_id)`，重复点击 `applied=false` 且不重复计数）；未登录访客一次点击一次计数，`liked` 恒为 `false`
+
+### content-service :8102 - 技术笔记
+
+与文章（`post`）是**两张独立表**：文章重文笔、天然公开；笔记结构化、**可私有**、会过期。
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/notes` | 公开笔记分页列表；`page/size/tag/noteType/keyword/orderBy`。**服务端强制「已发布 + 公开」，不接受可见性参数** | 公开 |
+| GET | `/notes/mine` | 我的笔记（含私有与草稿）；`status/visibility/noteType/keyword` | AUTHOR |
+| GET | `/notes/{id}` | 详情；**私有笔记仅作者本人可读，其他人一律 404** | 按可见性 |
+| POST | `/notes` | 新建 `{title, content, tags[], noteType, visibility, status}`；**缺省 `visibility=PRIVATE`、`status=0` 草稿** | AUTHOR |
+| PUT / DELETE | `/notes/{id}` | 更新 / 删除；**只有作者本人**（ADMIN 也不行） | AUTHOR |
+| PUT | `/notes/{id}/verify` | 标记「结论仍然有效」，返回 `{verifiedAt}` | AUTHOR |
+| POST | `/notes/{id}/viewed` | 记录一次浏览，返回 `{counted}` | 公开 |
+
+- `noteType` 取值：`FIX` 问题解决 ❖ / `PITFALL` 踩坑记录 ⚠ / `TIL` 学习笔记 ✦ / `SCRAP` 碎片 ☄
+- `visibility` 取值：`PUBLIC` 公开 / `PRIVATE` 私有；`orderBy` 取值：`latest` / `hottest`（按 `viewCount`）/ `longest`
+- **结构约定**：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，前端据此自动生成目录，不额外占用数据库列；列表 `summary` 优先截取「结论」章节
+- **私有隔离（硬性约束）**：`PRIVATE` 笔记不得出现在公开列表、标签聚合与搜索里；详情对非作者返回 404（不是 403，避免枚举存在性）；**ADMIN 也读不到他人私有笔记**
+- 浏览量口径：仅公开且已发布的笔记计数；按天去重与文章共用 `post_view` 闸门（该表只记「某用户某天已计一次」，与内容类型无关）；作者本人浏览不计
+- `verifiedAt` 是笔记区别于文章的核心字段：用于提示「这个结论是否还新鲜」（前端超过 180 天会标为待复核）
+- 笔记一期**不做点赞**
 
 ### content-service :8102 - 流星
 
@@ -117,7 +141,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。
-已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）。拆库：改各服务 `MYSQL_DB` 环境变量。
+已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 > `04_post_views_glow.sql` 最后一段会用 `post_glow` 明细重算 `post.glow`，升级前的历史点赞没有 user_id 明细，重算后会计数归零——需要保留旧计数时跳过该段。
 
@@ -132,5 +156,7 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - 未启用 Redis 令牌桶限流（需 Redis）；生产已有 Nginx 边缘限流（详见 `deploy/docker/nginx/default.conf`，注意 `^/(echos|links)$` 不分方法限流，`GET` 也在限流区内、超限 429）
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
 - 未做评论/文件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
+- 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（光谱页目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
+- 角色变更需重新登录才生效（见上「角色模型」）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102

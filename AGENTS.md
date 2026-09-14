@@ -126,23 +126,26 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ### 架构与边界
 - 拓扑/端口/调用关系见 `docs/architecture/README.md`；对外唯一入口是网关 :8080，API 路径与前端约定保持稳定。
 - 服务按变更与运行边界拆分：user-service 负责 `user`；content-service 内按
-  `post/meteor/echo/link/stats` 领域分包，负责 `post`、`meteor`、`echo`、`link`，统计直接查询文章数据。
+  `post/note/meteor/echo/link/stats` 领域分包，负责 `post`、`note`、`meteor`、`echo`、`link`，统计直接查询文章数据。
 - 共享库模式：一个 `stellar_ink` 库；user-service 与 content-service 只读写各自负责的表。
 - **鉴权在网关**（Sa-Token，JWT 无状态模式 `StpLogicJwtForStateless`）：放行 GET/OPTIONS、
   `POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、
-  `POST /posts/{id}/glow`、`POST /posts/{id}/viewed`）；
-  其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
+  `POST /posts/{id}/glow`、`POST /posts/{id}/viewed`、`POST /notes/{id}/viewed`）；
+  其余对 `/posts|/notes|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
   下游服务用 `AuthHelper.loginId()`（StpUtil 验签）取用户 id，不校验路由级权限。
 - **鉴权失败的返回形态不统一，前后端都必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；
   但 GET 在网关是放行的，token 失效时读接口由服务端 `NotLoginException` 兜底，
   返回 **HTTP 200 + body code=401**。
 - **角色门槛（三档，权限累积，仅做操作开关、不做数据隔离）**：`READER 读者` ⊃ 基础读与公开互动；
-  `AUTHOR 作者` = READER + 写/改/删文章、发射/删除流星；`ADMIN 站长` = AUTHOR + 友链审核 + 调整用户角色。
+  `AUTHOR 作者` = READER + 写/改/删文章、技术笔记、发射/删除流星；`ADMIN 站长` = AUTHOR + 友链审核 + 调整用户角色。
   角色在登录/注册时写入 JWT 的 `role` extra（`Role` 枚举见 shared-model，键 `Role.JWT_KEY`）；
-  网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做门槛（文章/流星写需 AUTHOR，`PUT /links/{id}/status`、
-  `PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /user/list` 是管理端读接口，
-  须在网关「GET 全放行」之前单独拦下做 ADMIN 校验），角色不足返回 403；服务内用
-  `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。注册固定 READER，种子账号 stellar 为 ADMIN。
+  网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做门槛（文章/笔记/流星写需 AUTHOR，`PUT /links/{id}/status`、
+  `PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /user/list`、`GET /posts/mine`、
+  `GET /notes/mine` 都是「读」但需更高角色，**必须在网关「GET 全放行」之前单独拦下**），
+  角色不足返回 403；服务内用 `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。
+  注册固定 READER，种子账号 stellar 为 ADMIN。
+- ⚠️ **角色变更需重新登录才生效**：`PUT /user/{id}/role` 只改库、不重签 JWT，而网关读的是 token 里的
+  `role` extra。调整角色后必须让该用户重新登录，新角色才会生效（后续可考虑实现「重新签发 token」）。
 - 当前两个业务服务之间没有同步调用；将来确需跨服务调用时再建立独立契约模块，
   使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
@@ -178,10 +181,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）；
   已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
   `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
-  `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）。
+  `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
+  `06_note.sql`（技术笔记 `note` 表）。
 - 浏览量口径：登录用户在 `post_view` 闸门表按天去重（每人每天只计一次），未登录访客每次计数。
+  **该表与内容类型无关，文章与笔记共用**（只记「某用户某天已计一次」）。
   点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id,user_id)`），未登录访客计次不记态。
   `post.glow` 是计数冗余，判断「我是否已赞」一律以 `post_glow` 为准。
+- 技术笔记口径：`note.visibility` 为 `PRIVATE` 时**只有作者本人可读**，其他人（含 ADMIN）读详情一律 404，
+  且不得出现在公开列表、标签聚合与搜索里；`note` 的归属判定 `ensureOwned` **比文章更严格**
+  —— 只有作者本人能改/删，ADMIN 也不能操作他人笔记。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 
 ### 日志（slf4j + logback-spring.xml）
@@ -209,8 +217,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   全局 toast + traceId 排障、深读页 Markdown 渲染 + 目录 + 阅读设置 + 阅读位置记忆、
   文章浏览量（登录用户按天去重）与点赞去重（一人一赞 + 已赞态）；`orderBy` 支持
   `latest / hottest / longest` 三种排序。
+- 技术笔记一期已完成：独立 `note` 表与 `/notes` 接口（列表 / 我的 / 详情 / 增删改 / 标记已验证 / 浏览计数）、
+  公开与私有两档可见性、正文用 `## 现象/环境/排查/结论/参考` 章节表达并由前端自动生成目录、
+  列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、
+  `/note/:id`、`/note/edit`，导航符号 ❖（光谱改用 ▤）。
+  正文渲染抽到 `components/common/MarkdownBody.vue`（文章与笔记共用，含代码块复制按钮）。
 - 尚未做（待明确要求）：搜索页（后端 `/search` 已就绪但前端未接）、友链审核页
   （`PUT /links/{id}/status` 已就绪但前端未接）、个人资料写回后端
   （`PUT /user/profile` 已就绪但前端仍用 localStorage）、真正的分页/无限滚动
   （当前固定 `page=1&size=100`，超过 100 篇会看不到更早文章；同时 `/user/authors`
   一次最多 100 个 id 且超限是报错不是截断，做分页时必须分批）。
+- 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
+  笔记间反向链接、`verified_at` 的到期提醒；AI 自动打标签/关联推荐需先明确解锁。

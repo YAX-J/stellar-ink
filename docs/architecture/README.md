@@ -14,8 +14,8 @@
                          ┌────────────┴────────────┐
                          ▼                         ▼
                   user-service :8101       content-service :8102
-                  用户、认证、角色          post / meteor / echo
-                         │                  link / stats
+                  用户、认证、角色          post / note / meteor
+                         │                  echo / link / stats
                          └────────────┬────────────┘
                                       ▼
                          MySQL（共享 stellar_ink 库）
@@ -36,11 +36,15 @@ stellar-ink-server/
 └── content-service/           内容聚合服务（8102）
     └── com.stellarink.content/
         ├── post/              文章、标签、搜索
+        ├── note/              技术笔记（结构化 / 可私有 / 可验证）
         ├── meteor/            流星备忘录
         ├── echo/              回声漂流瓶
         ├── link/              星链友链
         └── stats/             写作脉搏
 ```
+
+> `post`（星/文章）与 `note`（标本/技术笔记）是两张独立表：文章重文笔、天然公开；
+> 笔记结构化、**可私有**（`visibility`）、会过期（`verified_at`）。两者边界不同，因此不合并为一张表。
 
 AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)。当前 AI 目录仍处于方案阶段，未纳入后端 Maven 模块和 Docker 编排。
 
@@ -56,7 +60,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 | 服务 | 路由前缀 |
 |---|---|
 | user-service | `/auth/**`、`/user/**` |
-| content-service | `/posts/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
+| content-service | `/posts/**`、`/notes/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
 
 网关关闭 discovery locator，只允许显式路由，防止通过 `/{serviceId}/**` 绕过鉴权。`/internal/**` 不对外路由。
 
@@ -66,13 +70,17 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 - 网关按路径和角色进行第一层校验；业务服务使用 `AuthHelper` 复核登录身份与角色。
 - `READER` 可读和公开互动，`AUTHOR` 可维护自己的文章与流星，`ADMIN` 可管理全部内容、友链状态和用户角色。
 - JWT 无状态验签，网关与两个业务服务必须使用同一 `SA_TOKEN_JWT_SECRET`。
+- **笔记的私有隔离不在网关**：网关对所有 GET 放行，`PRIVATE` 笔记的可读性由 content-service 的
+  `NoteServiceImpl#ensureReadable` 判定（非作者一律 404，ADMIN 也不能读他人私有笔记）；
+  归属判定 `ensureOwned` 比文章更严格，只有作者本人能改删。
 
 ## 数据边界
 
 | 服务 | 负责的数据 |
 |---|---|
 | user-service | `user` 表 |
-| content-service | `post`、`meteor`、`echo`、`link` 表，以及基于 `post` 的实时统计 |
+| content-service | `post`、`post_glow`、`note` 表，`meteor`、`echo`、`link`，以及基于 `post` 的实时统计 |
+| 跨内容类型共用 | `post_view`（浏览计数闸门：只记「某用户某天已计一次」，与内容类型无关，文章与笔记共用） |
 
 当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 
