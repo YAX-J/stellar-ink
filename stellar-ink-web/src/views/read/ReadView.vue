@@ -8,6 +8,7 @@ import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
+import MarkdownBody from '@/components/common/MarkdownBody.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,15 +23,10 @@ const canEdit = computed(() => auth.isAdmin || (
   auth.isAuthorOrAbove && Number(auth.user?.id) === Number(post.value?.userId)
 ))
 
-/* ---- 正文：Markdown 解析为块级结构（首段下沉、代码块、引用、提示卡…） ---- */
+/* 正文：Markdown 解析为块级结构交给 MarkdownBody 渲染（首段下沉由该组件判定） */
 const rendered = computed(() => parseMarkdown(post.value?.content || ''))
-const blocks = computed(() => rendered.value.blocks.map((block, index) => ({
-  ...block,
-  /* 仅第一段做下沉首字，且仅当它是真正的段落 */
-  dropcap: index === 0 && block.type === 'paragraph',
-})))
+const blocks = computed(() => rendered.value.blocks)
 const toc = computed(() => rendered.value.toc)
-const hasBody = computed(() => blocks.value.length > 0)
 
 /* ---- 阅读进度 + 位置记忆 ---- */
 const glowPulse = ref(false)
@@ -232,31 +228,7 @@ onUnmounted(() => {
         </div>
 
         <div ref="readBody" class="read-body reveal" style="--d:.18s">
-          <template v-for="(block, index) in blocks" :key="index">
-            <p v-if="block.type === 'paragraph'" :class="{ dropcap: block.dropcap }" v-html="block.html"></p>
-
-            <h3 v-else-if="block.type === 'heading'" :id="block.id" v-html="block.html"></h3>
-
-            <blockquote v-else-if="block.type === 'quote'" v-html="block.html"></blockquote>
-
-            <div v-else-if="block.type === 'note'" class="marg-note" v-html="block.html"></div>
-
-            <div v-else-if="block.type === 'code'" class="code-block">
-              <div class="code-head"><span>{{ block.lang || 'code' }}</span></div>
-              <pre><code>{{ block.text }}</code></pre>
-            </div>
-
-            <ol v-else-if="block.type === 'list' && block.ordered" class="read-list">
-              <li v-for="(item, li) in block.items" :key="li" v-html="item"></li>
-            </ol>
-            <ul v-else-if="block.type === 'list'" class="read-list">
-              <li v-for="(item, li) in block.items" :key="li" v-html="item"></li>
-            </ul>
-
-            <hr v-else-if="block.type === 'hr'">
-          </template>
-
-          <p v-if="!hasBody" class="empty-body">这颗星还没有留下正文。</p>
+          <MarkdownBody :blocks="blocks" empty-text="这颗星还没有留下正文。" />
         </div>
 
         <div class="read-actions reveal" style="--d:.24s">
@@ -352,40 +324,9 @@ onUnmounted(() => {
 .read-meta{display:flex; gap:20px; flex-wrap:wrap; font-family:var(--font-mono); font-size:12px;
   color:var(--ink-faint); padding-bottom:26px; border-bottom:1px solid var(--line); margin-bottom:38px}
 
-/* 正文排版：字号/行距/宽度由阅读设置驱动的 CSS 变量控制 */
+/* 正文排版已抽到 components/common/MarkdownBody.vue（与笔记详情共用），
+ * 这里只保留正文容器的宽度约束：字号/行距/宽度由阅读设置经 CSS 变量下发 */
 .read-body{max-width:var(--read-w,46ch)}
-.read-body p{font-size:var(--read-fs,17px); line-height:var(--read-lh,2.3); color:var(--ink-dim);
-  margin-bottom:30px; text-align:justify; text-justify:inter-ideograph;
-  hanging-punctuation:allow-end; line-break:strict}
-.read-body p.dropcap::first-letter{font-family:var(--font-serif); font-weight:900; font-size:56px;
-  float:left; line-height:1; margin:6px 12px 0 0; color:var(--primary)}
-.read-body blockquote{font-family:var(--font-serif); font-size:clamp(20px,2.6vw,27px); font-weight:600;
-  line-height:1.8; color:var(--ink); border-left:3px solid var(--amber); padding:6px 0 6px 24px; margin:40px 0}
-.marg-note{background:var(--primary-soft); border:1px dashed var(--primary); border-radius:var(--r-sm);
-  padding:14px 18px; font-size:13px; line-height:1.9; color:var(--ink-dim); margin:-8px 0 30px;
-  max-width:var(--read-w,46ch)}
-.marg-note b{color:var(--primary); margin-right:8px; font-size:12px}
-.read-body h3{font-family:var(--font-serif); font-weight:900;
-  font-size:calc(var(--read-fs,17px) * 1.4); margin:44px 0 18px;
-  display:flex; align-items:center; gap:14px; scroll-margin-top:80px}
-.read-body h3::before{content:'✦'; color:var(--amber); font-size:16px}
-.read-body a{color:var(--primary); text-decoration:underline; text-underline-offset:3px;
-  text-decoration-color:var(--primary-soft)}
-.read-body a:hover{text-decoration-color:var(--primary)}
-.read-body strong{color:var(--ink); font-weight:600}
-.read-body code{font-family:var(--font-mono); font-size:.86em; padding:2px 6px; border-radius:4px;
-  background:var(--surface-2); color:var(--primary)}
-.read-body hr{border:0; height:1px; background:var(--line); margin:44px 0}
-.read-list{margin:0 0 30px; padding-left:22px; color:var(--ink-dim)}
-.read-list li{font-size:var(--read-fs,17px); line-height:var(--read-lh,2.3); margin-bottom:8px}
-.read-list li::marker{color:var(--primary)}
-.code-block{margin:0 0 30px; border:1px solid var(--line); border-radius:var(--r-md);
-  background:var(--bg-2); overflow:hidden; max-width:min(100%,760px)}
-.code-head{padding:8px 14px; border-bottom:1px solid var(--line);
-  font-family:var(--font-mono); font-size:10px; letter-spacing:.2em; color:var(--ink-faint);
-  text-transform:uppercase}
-.code-block pre{margin:0; padding:16px; overflow-x:auto}
-.code-block code{background:transparent; color:var(--ink-dim); padding:0; font-size:12.5px; line-height:1.9}
 
 .read-actions{display:flex; justify-content:center; align-items:center; gap:12px; margin:56px 0 30px; flex-wrap:wrap}
 .glow-btn{border:1px solid var(--amber); background:rgba(255,180,84,.1); color:var(--amber);
