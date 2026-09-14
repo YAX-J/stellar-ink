@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { request } from '@/api/client'
 
-const UNKNOWN_AUTHOR = Object.freeze({ nickname: '未知星客', avatarText: '星' })
+const UNKNOWN_AUTHOR = Object.freeze({ nickname: '未知星客', avatarText: '星', avatarUrl: '' })
 
 export const useAuthorStore = defineStore('authors', {
   state: () => ({
@@ -19,6 +19,7 @@ export const useAuthorStore = defineStore('authors', {
         id,
         nickname: author.nickname || '未知星客',
         avatarText: author.avatarText || '',
+        avatarUrl: author.avatarUrl || '',
       }
       if (!this.loadedIds.includes(id)) this.loadedIds.push(id)
     },
@@ -36,6 +37,16 @@ export const useAuthorStore = defineStore('authors', {
         foundIds.add(Number(author.id))
       }
       this.loadedIds.push(...missing.filter((id) => !foundIds.has(id)))
+    },
+
+    /** 作者自己换了头像/笔名后，让缓存里的这条摘要失效并立刻重取。
+     * 否则「我的头像变了，但文章署名还是旧图」——缓存命中时 ensureAuthors 根本不会发请求。 */
+    async refreshAuthor(id) {
+      const numId = Number(id)
+      if (!numId) return
+      this.loadedIds = this.loadedIds.filter((item) => Number(item) !== numId)
+      delete this.byId[numId]
+      await this.ensureAuthors([numId])
     },
   },
 })

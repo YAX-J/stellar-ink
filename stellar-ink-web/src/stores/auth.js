@@ -93,12 +93,33 @@ export const useAuthStore = defineStore('auth', {
     async updateProfile(patch) {
       this.user = await request('/user/profile', { method: 'PUT', body: patch })
       saveUser(this.user)
-      useAuthorStore().upsertAuthor(this.user)
+      /* 笔名/底字改了，文章署名缓存里的摘要也得跟着刷新（否则列表上还是旧笔名） */
+      await useAuthorStore().refreshAuthor(this.user.id)
       return this.user
     },
 
     async changePassword({ oldPassword, newPassword }) {
       await request('/user/password', { method: 'PUT', body: { oldPassword, newPassword } })
+    },
+
+    /* ---- 头像图片 ---- */
+    /** 上传/替换头像：走 multipart（不能套 JSON 封装，Content-Type 必须交给浏览器生成） */
+    async uploadAvatar(file) {
+      const form = new FormData()
+      form.append('file', file)
+      // 图片上传比普通接口慢，超时放宽到 30s
+      this.user = await request('/user/avatar', { method: 'POST', form, timeout: 30000 })
+      saveUser(this.user)
+      await useAuthorStore().refreshAuthor(this.user.id)
+      return this.user
+    },
+
+    /** 删除头像，回落为 avatarText 底字头像 */
+    async deleteAvatar() {
+      this.user = await request('/user/avatar', { method: 'DELETE' })
+      saveUser(this.user)
+      await useAuthorStore().refreshAuthor(this.user.id)
+      return this.user
     },
 
     /* ---- 读者申请成为作者 ---- */

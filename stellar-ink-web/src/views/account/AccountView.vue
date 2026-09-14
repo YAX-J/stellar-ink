@@ -5,21 +5,137 @@ import { useAuthStore } from '@/stores/auth'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const user = computed(() => auth.user)
-const avatarChar = computed(() => {
-  const name = (user.value && (user.value.nickname || user.value.username)) || '星'
-  return name.trim().charAt(0)
-})
 const roleClass = computed(() => `role-${(user.value && user.value.role) || 'READER'}`.toLowerCase())
 const createdAt = computed(() => {
   const t = user.value && user.value.createdAt
   if (!t) return '—'
   return String(t).replace('T', ' ').slice(0, 16)
 })
+
+/* ---- 头像：上传图片 / 恢复底字 ---- */
+const AVATAR_MAX_BYTES = 1024 * 1024
+const AVATAR_MAX_EDGE = 512
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const fileInput = ref(null)
+const avatarLoading = ref(false)
+const avatarMsg = ref('')
+const avatarError = ref('')
+const avatarText = ref('')
+const avatarTextLoading = ref(false)
+const avatarTextMsg = ref('')
+
+/** 从 FileReader 读成 dataURL，交给 <img> 解码（避免依赖 createImageBitmap 的浏览器差异） */
+function readImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+/** 上传前压到最长边 512 的 JPEG：手机原图动辄 3-8MB，直传必然撞上限被拒 */
+function compressImage(dataUrl, maxEdge) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
+      const width = Math.max(1, Math.round(img.width * scale))
+      const height = Math.max(1, Math.round(img.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      /* 透明 PNG 转 JPEG 会变黑底，先铺一层深色底（站点是夜间基调） */
+      ctx.fillStyle = getComputedStyle(document.body).backgroundColor || '#0b0b12'
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.9), width, height })
+    }
+    img.onerror = () => reject(new Error('这个文件不是有效的图片'))
+    img.src = dataUrl
+  })
+}
+
+function pickAvatar() {
+  avatarError.value = ''
+  avatarMsg.value = ''
+  if (fileInput.value) fileInput.value.click()
+}
+
+async function onAvatarPicked(event) {
+  const file = event.target.files && event.target.files[0]
+  /* 同一个文件连续选两次也要触发 change，所以先清空 input */
+  event.target.value = ''
+  if (!file) return
+  avatarError.value = ''
+  avatarMsg.value = ''
+  if (!AVATAR_TYPES.includes(file.type)) {
+    avatarError.value = '只支持 JPG / PNG / WebP 图片。'
+    return
+  }
+  avatarLoading.value = true
+  try {
+    const raw = await readImage(file)
+    const { dataUrl, width, height } = await compressImage(raw, AVATAR_MAX_EDGE)
+    const blob = await (await fetch(dataUrl)).blob()
+    if (blob.size > AVATAR_MAX_BYTES) {
+      avatarError.value = '图片压缩后仍超过 1MB，换一张尺寸小一些的试试。'
+      return
+    }
+    const optimized = new File([blob], 'avatar.jpg', { type: 'image/jpeg' })
+    await auth.uploadAvatar(optimized)
+    avatarMsg.value = `头像已更新（${width}×${height}，${Math.round(blob.size / 1024)}KB）。`
+    emit(TOAST, { type: 'success', message: '头像已更新' })
+  } catch (e) {
+    avatarError.value = e.message || '头像上传失败，请稍后再试'
+  } finally {
+    avatarLoading.value = false
+  }
+}
+
+async function removeAvatar() {
+  avatarError.value = ''
+  avatarMsg.value = ''
+  avatarLoading.value = true
+  try {
+    await auth.deleteAvatar()
+    avatarMsg.value = '已恢复为底字头像。'
+  } catch (e) {
+    avatarError.value = e.message || '操作失败，请稍后再试'
+  } finally {
+    avatarLoading.value = false
+  }
+}
+
+/** 底字只有一个字：输入框里直接截断，避免用户敲了三个字提交后「只剩一个」的困惑 */
+function onAvatarTextInput(event) {
+  avatarText.value = [...(event.target.value || '').trim()].slice(0, 1).join('')
+}
+
+async function saveAvatarText() {
+  avatarTextMsg.value = ''
+  const value = avatarText.value.trim()
+  if (!value) {
+    avatarTextMsg.value = '请先填一个字符。'
+    return
+  }
+  avatarTextLoading.value = true
+  try {
+    await auth.updateProfile({ avatarText: value })
+    avatarTextMsg.value = '底字已保存。'
+  } catch (e) {
+    avatarTextMsg.value = e.message || '保存失败'
+  } finally {
+    avatarTextLoading.value = false
+  }
+}
 
 /* ---- 修改密码 ---- */
 const oldPassword = ref('')
@@ -187,6 +303,8 @@ onMounted(async () => {
     /* 会话失效已由全局兜底处理 */
     return
   }
+  /* 底字输入框在拿到真实资料后才填值（localStorage 里的旧缓存可能没有该字段） */
+  avatarText.value = auth.user?.avatarText || ''
   if (auth.isAdmin) await loadUsers()
 })
 </script>
@@ -196,10 +314,11 @@ onMounted(async () => {
     <div class="kicker reveal">ACCOUNT · 账号与星籍</div>
     <SectionHead title="账号" more="你的身份与权限" />
 
-    <!-- 未登录 -->
-    <div v-if="!auth.isLoggedIn" class="empty reveal">
+    <!-- 未登录：也覆盖「有 token 但没有用户资料」的残缺会话（localStorage 被清一半），
+         否则下面的模板会读 user.nickname 直接抛异常、整页白屏 -->
+    <div v-if="!auth.isLoggedIn || !user" class="empty reveal">
       <div class="empty-star">✦</div>
-      <p>还没有登录，无法查看账号。</p>
+      <p>{{ auth.isLoggedIn ? '登录信息不完整，请重新登录。' : '还没有登录，无法查看账号。' }}</p>
       <RouterLink class="btn btn-primary" to="/login">去登录</RouterLink>
     </div>
 
@@ -209,12 +328,46 @@ onMounted(async () => {
         <div class="panel reveal" style="--d:.06s">
           <h3>我的星籍</h3>
           <div class="id-row">
-            <div class="avatar">{{ avatarChar }}</div>
+            <UserAvatar
+              :url="user.avatarUrl" :text="user.avatarText"
+              :nickname="user.nickname || user.username" :size="64" shape="square"
+            />
             <div>
               <b class="id-name">{{ user.nickname || user.username }}</b>
               <div class="mono">@{{ user.username }}</div>
               <span class="role-badge" :class="roleClass">{{ roleLabel(user.role) }}</span>
             </div>
+          </div>
+
+          <!-- 头像：可上传图片，也可只用底字（未上传时所有头像位都显示底字） -->
+          <div class="avatar-edit">
+            <div class="avatar-actions">
+              <button class="apply-btn" :disabled="avatarLoading" @click="pickAvatar">
+                {{ avatarLoading ? '处理中…' : (user.avatarUrl ? '更换头像' : '上传头像') }}
+              </button>
+              <button
+                v-if="user.avatarUrl" class="apply-btn ghost"
+                :disabled="avatarLoading" @click="removeAvatar"
+              >恢复底字</button>
+              <input
+                ref="fileInput" class="avatar-file" type="file"
+                accept="image/jpeg,image/png,image/webp" @change="onAvatarPicked"
+              />
+            </div>
+            <p class="avatar-hint">支持 JPG / PNG / WebP，会自动压到 512px、1MB 以内。</p>
+            <div class="avatar-text-row">
+              <input
+                :value="avatarText" class="avatar-text-input" maxlength="1"
+                placeholder="星" @input="onAvatarTextInput"
+              />
+              <button class="apply-btn ghost" :disabled="avatarTextLoading" @click="saveAvatarText">
+                {{ avatarTextLoading ? '保存中…' : '保存底字' }}
+              </button>
+              <span class="avatar-hint">底字：未上传图片时显示这一个字。</span>
+            </div>
+            <p v-if="avatarError" class="apply-err">{{ avatarError }}</p>
+            <p v-if="avatarMsg" class="avatar-ok">{{ avatarMsg }}</p>
+            <p v-if="avatarTextMsg" class="avatar-ok">{{ avatarTextMsg }}</p>
           </div>
           <div class="pp-rows">
             <div><span>星籍编号</span><b>NO.{{ user.id }}</b></div>
@@ -385,6 +538,20 @@ onMounted(async () => {
 .apply-input:focus{border-color:var(--primary)}
 .apply-actions{display:flex; gap:8px}
 .apply-err{font-size:12px; color:var(--rose); line-height:1.6}
+
+/* 头像编辑区 */
+.avatar-edit{margin:-6px 0 20px; padding:14px 16px; border:1px dashed var(--line);
+  border-radius:var(--r-sm); background:var(--bg-3); display:flex; flex-direction:column; gap:10px}
+.avatar-actions{display:flex; gap:8px; flex-wrap:wrap}
+/* 原生 file input 无法用主题变量美化，统一隐藏、由按钮触发 */
+.avatar-file{display:none}
+.avatar-hint{font-size:11px; color:var(--ink-faint); line-height:1.7}
+.avatar-text-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.avatar-text-input{width:52px; height:34px; text-align:center; border:1px solid var(--line);
+  border-radius:var(--r-sm); background:var(--bg-2); color:var(--ink);
+  font-family:var(--font-serif); font-size:16px; outline:none; transition:border-color .2s}
+.avatar-text-input:focus{border-color:var(--primary)}
+.avatar-ok{font-size:12px; color:var(--teal); line-height:1.6}
 
 /* 审核队列 */
 .pending-badge{margin-left:8px; font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;

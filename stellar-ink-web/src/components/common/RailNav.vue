@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import { roleAtLeast, roleLabel } from '@/utils/role'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const route = useRoute()
 const settings = useSettingsStore()
@@ -30,20 +31,23 @@ const visibleItems = computed(() => items.filter((item) =>
   !item.requiresRole || (auth.isLoggedIn && roleAtLeast(auth.role, item.requiresRole)),
 ))
 
-const avatarChar = computed(() => {
-  if (auth.isLoggedIn) {
-    const n = auth.user.nickname || auth.user.username || '星'
-    return n.trim().charAt(0)
-  }
-  return auth.isGuest ? '游' : '✦'
-})
 /* 身份标签：已登录显角色，游客显「游客·去登录」，未登录显「登录/注册」 */
 const userLabel = computed(() => {
   if (auth.isLoggedIn) return roleLabel(auth.role)
   return auth.isGuest ? '游客 · 去登录' : '登录 / 注册'
 })
+/* auth.isLoggedIn 只看 token；localStorage 里的 user 可能缺失或被清掉（换浏览器标签、
+   手工清缓存），此时读 auth.user.nickname 会让整个 RailNav 渲染抛异常、整页白屏，
+   所以这里与模板里的头像取值一样必须先判空。 */
+const userDisplayName = computed(() => {
+  const u = auth.user
+  return (u && (u.nickname || u.username)) || ''
+})
 const userTip = computed(() => {
-  if (auth.isLoggedIn) return `${auth.user.nickname || auth.user.username} · ${roleLabel(auth.role)} · 进入账号`
+  if (auth.isLoggedIn) {
+    const name = userDisplayName.value || '星客'
+    return `${name} · ${roleLabel(auth.role)} · 进入账号`
+  }
   if (auth.isGuest) return '当前以游客身份浏览 · 登录后可同步你的身份'
   return '登录 / 注册'
 })
@@ -66,7 +70,14 @@ const userTo = computed(() => {
       :class="{ on: auth.isLoggedIn, guest: auth.isGuest, anon: !auth.isLoggedIn }"
       :to="userTo" :title="userTip"
     >
-      <span class="ru-avatar" :class="{ on: auth.isLoggedIn, guest: auth.isGuest, anon: !auth.isLoggedIn }">{{ avatarChar }}</span>
+      <UserAvatar
+        class="ru-avatar"
+        :class="{ on: auth.isLoggedIn, guest: auth.isGuest, anon: !auth.isLoggedIn }"
+        :url="(auth.user && auth.user.avatarUrl) || ''"
+        :text="auth.isLoggedIn ? ((auth.user && auth.user.avatarText) || '') : (auth.isGuest ? '游' : '✦')"
+        :nickname="userDisplayName"
+        :size="44"
+      />
       <span class="ru-label">{{ userLabel }}</span>
     </RouterLink>
     <RouterLink
@@ -106,9 +117,10 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
 .rail-user{display:flex; flex-direction:column; align-items:center; gap:7px; margin-bottom:28px;
   width:76px; text-align:center; text-decoration:none; color:var(--ink-faint);
   transition:color .3s var(--ease-spring)}
-.ru-avatar{width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
-  border:1px dashed var(--line); color:var(--ink-faint);
-  font-family:var(--font-mono); font-size:16px; transition:all .3s var(--ease-spring)}
+/* 头像本体（圆形、居中、底字取字）由 UserAvatar 提供，这里只覆写三种身份态的配色。
+   注意：不要在这里再写 border-radius —— UserAvatar 的 shape 是行内样式，会压过它。 */
+.ru-avatar{border:1px dashed var(--line); color:var(--ink-faint);
+  font-family:var(--font-mono); transition:all .3s var(--ease-spring)}
 .rail-user:hover{color:var(--ink-dim)}
 .rail-user:hover .ru-avatar{border-color:var(--primary); color:var(--primary)}
 .ru-avatar.on{border-style:solid; border-color:transparent; color:#fff;
@@ -120,6 +132,8 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
 .ru-avatar.anon{border-style:solid; border-color:transparent; color:#fff;
   background:linear-gradient(135deg,var(--primary),var(--rose));
   box-shadow:0 4px 16px var(--primary-soft)}
+/* 已登录且用了图片头像：别让身份态渐变盖住照片（图片自带底色，透明边框即可） */
+.ru-avatar.img{background:none; box-shadow:none; border-color:var(--line)}
 .rail-user.anon .ru-label{color:var(--ink-dim)}
 .ru-label{font-size:10px; letter-spacing:.06em; line-height:1.5; max-width:76px}
 .nav-item{

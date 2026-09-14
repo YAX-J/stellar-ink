@@ -1,8 +1,29 @@
 <script setup>
+import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const settings = useSettingsStore()
+const auth = useAuthStore()
+
+/* 星籍页原本写死「星」与 settings.penName。已登录时改用真实资料 —— 这是站长自己的档案页，
+   显示登录用户的头像才算真的交付了头像功能；未登录保持原样（游客不该看到别人的资料）。 */
+const loggedIn = computed(() => auth.isLoggedIn)
+const penName = computed(() => (loggedIn.value ? auth.user.nickname || auth.user.username : settings.penName))
+const avatarUrl = computed(() => (loggedIn.value ? auth.user.avatarUrl || '' : ''))
+const avatarText = computed(() => (loggedIn.value ? auth.user.avatarText || '' : ''))
+const avatarName = computed(() => (loggedIn.value ? auth.user.nickname || auth.user.username : settings.penName))
+/* 编号与星历用真实值，避免「登录后头像变了、编号还是写死的 ST-2024-0307」的割裂感 */
+const passportNo = computed(() => (loggedIn.value ? `NO.ST-${String(auth.user.id).padStart(4, '0')}` : 'NO.ST-2024-0307'))
+const registeredAt = computed(() => {
+  if (!loggedIn.value || !auth.user.createdAt) return '2024.03.07 · 第 1 夜'
+  const d = new Date(auth.user.createdAt)
+  if (Number.isNaN(d.getTime())) return '2024.03.07 · 第 1 夜'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`
+})
 
 async function copyRss() {
   try {
@@ -25,15 +46,18 @@ async function copyRss() {
           <div class="stamp g">连续<br>21 夜</div>
         </div>
         <div class="pp-head">
-          <div class="avatar">星</div>
+          <UserAvatar
+            class="pp-avatar" :url="avatarUrl" :text="avatarText"
+            :nickname="avatarName" :size="64" shape="square"
+          />
           <div>
-            <b style="font-size:20px">{{ settings.penName }}</b>
+            <b style="font-size:20px">{{ penName }}</b>
             <div style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);margin-top:5px">STELLAR PASSPORT</div>
           </div>
         </div>
         <div class="pp-rows">
-          <div><span>星籍编号</span><b>NO.ST-2024-0307</b></div>
-          <div><span>注册星历</span><b>2024.03.07 · 第 1 夜</b></div>
+          <div><span>星籍编号</span><b>{{ passportNo }}</b></div>
+          <div><span>注册星历</span><b>{{ registeredAt }} · 第 1 夜</b></div>
           <div><span>当前坐标</span><b>中国 · 某座有便利店的城市</b></div>
           <div><span>职业轨道</span><b>白天 HR · 深夜写作者</b></div>
           <div><span>信仰</span><b>缓慢、诚实、长句子</b></div>
