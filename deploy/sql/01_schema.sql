@@ -55,6 +55,32 @@ CREATE TABLE IF NOT EXISTS `post_view` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '浏览计数闸门';
 
 -- -------------------------------------------------------------
+-- 技术笔记（标本）：与文章同为内容，但结构化、可检索、可私有、会过期
+-- 结构约定：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，
+--          读取端据此自动生成目录，不额外占用数据库列
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `note` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT       NOT NULL                COMMENT '作者用户 ID',
+    `title`       VARCHAR(200) NOT NULL                COMMENT '标题（建议写报错原文或一句话症状）',
+    `content`     TEXT                                  COMMENT '正文（Markdown）',
+    `tags`        VARCHAR(200)                          COMMENT '技术栈标签，逗号分隔',
+    `note_type`   VARCHAR(20)  NOT NULL DEFAULT 'FIX'  COMMENT 'FIX 问题解决 / PITFALL 踩坑 / TIL 学习笔记 / SCRAP 碎片',
+    `visibility`  VARCHAR(20)  NOT NULL DEFAULT 'PRIVATE' COMMENT 'PUBLIC 公开 / PRIVATE 私有（仅作者可见）',
+    `status`      TINYINT      NOT NULL DEFAULT 0      COMMENT '0 草稿 / 1 已发布',
+    `word_count`  INT          DEFAULT 0               COMMENT '字数（正文去空白字符）',
+    `view_count`  INT          NOT NULL DEFAULT 0      COMMENT '浏览量（仅公开笔记计数）',
+    `verified_at` DATETIME                              COMMENT '上次验证结论仍有效的时间',
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_vis_status_id` (`user_id`, `visibility`, `status`, `id`),
+    KEY `idx_vis_status_id` (`visibility`, `status`, `id`),
+    KEY `idx_note_type` (`note_type`),
+    KEY `idx_created_at` (`created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '技术笔记';
+
+-- -------------------------------------------------------------
 -- 流星备忘录（碎片）
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `meteor` (
