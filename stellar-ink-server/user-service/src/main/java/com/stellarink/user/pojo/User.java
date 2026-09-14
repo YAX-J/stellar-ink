@@ -37,5 +37,11 @@ public class User {
     /** 角色：READER 读者 / AUTHOR 作者 / ADMIN 站长 */
     private String role;
 
+    /** 申请成为作者的时间；非空即「有一条待审核申请」，审批或撤回后清空 */
+    private LocalDateTime roleAppliedAt;
+
+    /** 申请理由（供站长审核参考） */
+    private String roleApplyNote;
+
     private LocalDateTime createdAt;
 }

@@ -7,6 +7,7 @@ import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
+import com.stellarink.sharedmodel.dto.user.RoleApplyDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
@@ -181,8 +182,43 @@ public class UserServiceImpl implements UserService {
         }
         User user = requireUser(targetUserId);
         user.setRole(target.name());
+        /* 同一处收口：只要角色被主动调整过（通过或驳回），待审申请就应当消失。
+         * 这样「点通过」与「直接在成员列表里改角色」两条路径不会留下自相矛盾的待审状态。 */
+        user.setRoleAppliedAt(null);
+        user.setRoleApplyNote(null);
         userMapper.updateById(user);
-        log.info("调整角色 operatorId={} targetUserId={} role={}", operatorId, targetUserId, target.name());
+        log.info("调整角色 operatorId={} targetUserId={} role={}（同时清空待审申请）",
+                operatorId, targetUserId, target.name());
+        return toVO(user);
+    }
+
+    @Override
+    public UserVO applyRole(Long userId, RoleApplyDTO dto) {
+        User user = requireUser(userId);
+        Role current = Role.parseOrDefault(user.getRole());
+        if (current.atLeast(Role.AUTHOR)) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "你已经是" + current.getLabel() + "，不需要再申请。");
+        }
+        /* 允许覆盖式重新提交：重复申请不报错，顺手把理由和时间更新为最新 */
+        String note = dto == null ? null : dto.getNote();
+        user.setRoleAppliedAt(LocalDateTime.now());
+        user.setRoleApplyNote(StringUtils.hasText(note) ? note.trim() : null);
+        userMapper.updateById(user);
+        log.info("收到作者申请 userId={} note长度={}", userId,
+                user.getRoleApplyNote() == null ? 0 : user.getRoleApplyNote().length());
+        return toVO(user);
+    }
+
+    @Override
+    public UserVO cancelRoleApply(Long userId) {
+        User user = requireUser(userId);
+        if (user.getRoleAppliedAt() == null) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "当前没有待审核的申请。");
+        }
+        user.setRoleAppliedAt(null);
+        user.setRoleApplyNote(null);
+        userMapper.updateById(user);
+        log.info("撤回作者申请 userId={}", userId);
         return toVO(user);
     }
 
@@ -268,6 +304,8 @@ public class UserServiceImpl implements UserService {
         vo.setAvatarText(user.getAvatarText());
         vo.setDailyGoal(user.getDailyGoal());
         vo.setRole(roleOf(user));
+        vo.setRoleAppliedAt(user.getRoleAppliedAt());
+        vo.setRoleApplyNote(user.getRoleApplyNote());
         vo.setCreatedAt(user.getCreatedAt());
         return vo;
     }

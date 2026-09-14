@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.ChangeRoleDTO;
+import com.stellarink.sharedmodel.dto.user.RoleApplyDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.user.AuthorVO;
@@ -56,9 +57,22 @@ public class UserController {
         return Response.success();
     }
 
-    /** 调整用户角色（仅站长，网关已做 ADMIN 门槛 + 服务内防御性校验） */
+    /** 调整用户角色（仅站长，网关已做 ADMIN 门槛 + 服务内防御性校验）；
+     *  通过/驳回作者申请都走这里：传 AUTHOR 为通过、传 READER 为驳回，都会清空待审申请 */
     @PutMapping("/{id}/role")
     public Response<UserVO> changeRole(@PathVariable Long id, @Valid @RequestBody ChangeRoleDTO dto) {
         return Response.success(userService.changeRole(AuthHelper.loginId(), id, dto.getRole()));
+    }
+
+    /** 读者申请成为作者（需登录，读者即可；网关对写请求默认要求登录） */
+    @PutMapping("/role-apply")
+    public Response<UserVO> applyRole(@Valid @RequestBody(required = false) RoleApplyDTO dto) {
+        return Response.success(userService.applyRole(AuthHelper.loginId(), dto));
+    }
+
+    /** 撤回自己的作者申请（仅作者本人） */
+    @PutMapping("/role-apply/cancel")
+    public Response<UserVO> cancelRoleApply() {
+        return Response.success(userService.cancelRoleApply(AuthHelper.loginId()));
     }
 }

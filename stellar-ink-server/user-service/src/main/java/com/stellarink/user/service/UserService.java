@@ -3,6 +3,7 @@ package com.stellarink.user.service;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
+import com.stellarink.sharedmodel.dto.user.RoleApplyDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
@@ -20,8 +21,14 @@ public interface UserService {
     /** 修改当前用户密码（校验旧密码） */
     void changePassword(Long userId, ChangePasswordDTO dto);
 
-    /** 管理员调整用户角色（仅 ADMIN，服务内再做防御性校验） */
+    /** 管理员调整用户角色（仅 ADMIN，服务内再做防御性校验）；同时清空待审申请 */
     UserVO changeRole(Long operatorId, Long targetUserId, String role);
+
+    /** 读者申请成为作者（需登录，读者即可）；已提交过则覆盖为最新理由与时间 */
+    UserVO applyRole(Long userId, RoleApplyDTO dto);
+
+    /** 撤回自己的申请（仅作者本人） */
+    UserVO cancelRoleApply(Long userId);
 
     /** 管理员列出全部用户（仅 ADMIN，供角色管理页枚举） */
     List<UserVO> listUsers(Long operatorId);
