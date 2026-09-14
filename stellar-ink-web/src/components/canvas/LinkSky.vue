@@ -92,15 +92,19 @@ onUnmounted(() => cancelAnimationFrame(raf))
 </script>
 
 <template>
-  <canvas ref="cvs" class="link-map" @mousemove="onMove" @mouseleave="onLeave" @click="onClick"></canvas>
-  <div class="map-tip" :class="{ show: !!tipData }" :style="tipStyle">
-    <template v-if="tipData">
-      <h6>{{ tipData.n }}</h6>
-      <p>{{ tipData.u }}<br>{{ tipData.d }}</p>
-    </template>
+  <!-- 单根节点：多根组件上的 class/style/v-show 会静默失效（见 AGENTS.md） -->
+  <div class="link-sky">
+    <canvas ref="cvs" class="link-map" @mousemove="onMove" @mouseleave="onLeave" @click="onClick"></canvas>
+    <div class="map-tip" :class="{ show: !!tipData }" :style="tipStyle">
+      <template v-if="tipData">
+        <h6>{{ tipData.n }}</h6>
+        <p>{{ tipData.u }}<br>{{ tipData.d }}</p>
+      </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.link-sky{position:relative}
 .link-map{width:100%; height:340px; display:block; cursor:pointer}
 </style>

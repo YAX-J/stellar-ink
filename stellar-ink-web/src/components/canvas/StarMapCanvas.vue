@@ -19,6 +19,11 @@ let pts = []
 /* 过滤带坐标的 pts（而非原始 posts），否则 x/y/r 为 undefined 会导致绘制静默失败 */
 const visible = () => pts.filter((p) => props.years.includes(p.year))
 
+/* 命中判定在「位图坐标」下做（位图 = CSS × 2）。星星视觉半径只有 3~5px，
+   原先外扩 13px 时整张星图仅约 2% 面积可点，用户点在空白处毫无反馈 →
+   放宽到视觉半径外再扩 30px（相邻星间距约 113px，不会互相抢命中）。 */
+const HIT_PAD = 60
+
 function frame() {
   const c = cvs.value
   const ctx = fitCanvas(c)
@@ -61,6 +66,15 @@ function frame() {
     ctx.strokeStyle = hot ? 'rgba(255,180,84,.35)' : 'rgba(139,124,255,.3)'
     ctx.lineWidth = 1
     ctx.stroke()
+    /* 悬停高亮：明确告诉用户「这颗星可以点进去」，避免点了空白以为整张图是死的 */
+    if (tipData.value && tipData.value.id === p.id) {
+      const halo = ((Math.sin(t * 2.4) + 1) / 2) * 3 + 9
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.r * tw + halo, 0, 7)
+      ctx.strokeStyle = hot ? 'rgba(255,180,84,.9)' : 'rgba(196,188,255,.9)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
   })
   raf = requestAnimationFrame(frame)
 }
@@ -75,11 +89,12 @@ function pick(e) {
     const d = Math.hypot(p.x - mx, p.y - my)
     if (d < bd) { bd = d; best = p }
   }
-  return best && bd < best.r * 2 + 26 ? { best, r } : null
+  return best && bd < best.r * 2 + HIT_PAD ? { best, r } : null
 }
 
 function onMove(e) {
   const hit = pick(e)
+  cvs.value.style.cursor = hit ? 'pointer' : 'crosshair'
   if (hit) {
     const { best, r } = hit
     tipData.value = best
@@ -94,6 +109,7 @@ function onMove(e) {
 
 function onLeave() {
   tipData.value = null
+  cvs.value.style.cursor = 'crosshair'
 }
 
 function onClick(e) {

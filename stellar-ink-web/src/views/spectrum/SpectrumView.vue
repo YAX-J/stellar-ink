@@ -74,7 +74,7 @@ function openPost(p) {
         <AuthorBadge class="spec-author" :user-id="p.userId" compact />
         <small>{{ p.date }} · {{ fmt(p.words) }} 字</small>
       </div>
-      <div v-if="!rows.list.length" class="spec-row">
+      <div v-if="!rows.list.length" class="spec-row" @click="router.push('/write')">
         <h4 style="color:var(--ink-faint)">这个波段还没有星，去写一篇吧 →</h4>
       </div>
     </div>

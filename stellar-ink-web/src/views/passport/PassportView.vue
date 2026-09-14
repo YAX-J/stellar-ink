@@ -65,7 +65,7 @@ async function copyRss() {
       <a class="beacon" href="mailto:hi@stellar.ink">📮 hi@stellar.ink</a>
       <button class="beacon" @click="copyRss">✦ RSS 订阅</button>
       <a class="beacon" href="https://github.com" target="_blank" rel="noreferrer">⬡ GitHub</a>
-      <button class="beacon">☄ 即刻 @拾星人</button>
+      <a class="beacon" href="https://web.okjike.com" target="_blank" rel="noreferrer">☄ 即刻 @拾星人</a>
     </div>
   </section>
 </template>

@@ -143,6 +143,32 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
   animation:pulse 2.4s infinite; box-shadow:0 0 10px var(--teal)}
 .rail-ver{font-family:var(--font-mono); font-size:9px; color:var(--ink-faint); writing-mode:vertical-rl}
 
+/* 矮窗口自适应：默认布局需要约 890px 高，而 1366×768 笔记本的实际视口只有 ~650px，
+   底部入口（星籍/舰桥）会被裁掉，且滚动条被隐藏、用户无从察觉 → 按高度逐级收紧间距。 */
+@media (max-height:900px){
+  .rail{padding:18px 0}
+  .logo{width:40px; height:40px; font-size:16px; margin-bottom:20px}
+  .nav-item{margin:3px 0; padding:9px 0 8px}
+  .nav-item .glyph{font-size:17px}
+  .rail-foot{gap:10px}
+  .rail-ver{font-size:8px}
+}
+@media (max-height:780px){
+  .rail{padding:12px 0}
+  .logo{width:34px; height:34px; font-size:14px; border-radius:11px; margin-bottom:12px}
+  .nav-item{margin:1px 0; padding:7px 0 6px; width:60px}
+  .nav-item .glyph{font-size:15px}
+  /* 版本号是纯装饰，矮屏下让位给导航入口 */
+  .rail-foot{gap:0}
+  .rail-ver{display:none}
+}
+@media (max-height:620px){
+  .rail{padding:10px 0}
+  .logo{width:30px; height:30px; font-size:13px; margin-bottom:8px}
+  .nav-item{margin:0; padding:5px 0 4px; font-size:10px}
+  .nav-item .glyph{font-size:14px}
+}
+
 @media (max-width:720px){
   .rail{top:auto; bottom:0; left:0; right:0; width:auto; height:72px; flex-direction:row;
     justify-content:center; gap:4px; border-right:none; border-top:1px solid var(--line); padding:0 8px}
