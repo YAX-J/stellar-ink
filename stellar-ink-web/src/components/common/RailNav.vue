@@ -12,16 +12,20 @@ const items = [
   { key: 'home', to: '/', glyph: '◉', label: '此刻' },
   { key: 'write', to: '/write', glyph: '✎', label: '执笔', requiresRole: 'AUTHOR' },
   { key: 'archive', to: '/archive', glyph: '✧', label: '星图' },
+  /* 技术笔记用 ❖（原光谱符号，笔记更需要「标本」感）；光谱改用 ▤ 以免同符号 */
+  { key: 'notes', to: '/notes', glyph: '❖', label: '笔记' },
   { key: 'meteor', to: '/meteor', glyph: '☄', label: '流星' },
-  { key: 'spectrum', to: '/spectrum', glyph: '❖', label: '光谱' },
+  { key: 'spectrum', to: '/spectrum', glyph: '▤', label: '光谱' },
   { key: 'echo', to: '/echo', glyph: '❞', label: '回声' },
   { key: 'links', to: '/links', glyph: '⬡', label: '星链' },
   { key: 'passport', to: '/passport', glyph: '✪', label: '星籍' },
   { key: 'bridge', to: '/bridge', glyph: '⚙', label: '舰桥' },
 ]
 
-/* 深读页不属于导航，高亮保持为进入前的页面 */
-const activeKey = computed(() => (route.name === 'read' ? settings.lastPageName : route.name))
+/* 深读页与技术笔记详情不属于导航，高亮保持为进入前的页面 */
+const activeKey = computed(() => (
+  route.name === 'read' || route.name === 'note' ? settings.lastPageName : route.name
+))
 const visibleItems = computed(() => items.filter((item) =>
   !item.requiresRole || (auth.isLoggedIn && roleAtLeast(auth.role, item.requiresRole)),
 ))
