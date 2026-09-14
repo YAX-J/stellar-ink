@@ -61,6 +61,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **代码一律由用户自行提交，AI 不执行 `git commit` / `push`**；AI 只按主题拆分改动并给出 commit message 供用户参考，实际提交由用户完成。
 - **禁止入库**：`node_modules/`、`dist/`、`target/`、`.vite/`、`.idea/`、`tools/`、`logs/`（见根 .gitignore）。
 - 新增依赖要克制：前端不加 UI 组件库；后端版本必须整体联动（见下），先在父 pom `dependencyManagement` 登记。
+  **唯一例外**：技术笔记编辑器用 CodeMirror 6（`@codemirror/*` + `@lezer/*`，共 7 个包），
+  因为 Obsidian 式「行内渲染 Live Preview」无法用 textarea 实现，而这些包是编辑器内核而非 UI 组件库。
+  **硬性约束**：该依赖只允许被 `views/notes/NoteEditView.vue` 通过 `defineAsyncComponent` 懒加载，
+  绝不可在其它页面 import —— 否则 520KB（gzip 180KB）会进入首屏包。新增依赖前先确认没有更轻的替代。
 - 所有文本文件 UTF-8（Windows 下注意别让 IDE 存成 GBK）。
 - 文档同步：改了接口/启动方式/目录结构，必须同步更新 `docs/api/README.md`、`docs/architecture/README.md` 和本文档。
 
@@ -98,6 +102,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ### 正文渲染与阅读体验
 - 正文 Markdown 由 `utils/markdown.js` 解析成块级结构，视图按白名单标签渲染（**不引依赖**）。
   该文件先 `escapeHtml` 再插入自己的标签，链接有协议白名单，因此 `v-html` 处是安全的。
+- **编辑区**（仅技术笔记）由 `components/editor/MarkdownEditor.vue` 提供，基于 CodeMirror 6：
+  Live Preview 用 `ViewPlugin` 从语法树算装饰 —— 光标所在行显示源码，其余行折叠标记并渲染。
+  折叠用 `Decoration.replace()` 实现，产出的是「双层 widgetBuffer + 隐藏 span」，
+  **它在像素上与未折叠状态难以区分，判断折叠是否生效必须看 DOM 或计算样式，不要靠截图**。
+  笔记编辑页另有 `applyExternalContent`：编辑器已有内容时拒绝被空字符串覆盖
+  （父组件 modelValue 在保存/切换时会短暂变空，照单全收会清空正文）。
 - 新增 Markdown 语法：先在 `parseMarkdown` 加块类型 → 视图加 `v-else-if` 分支 →
   在 `ReadView.vue` 的 `<style scoped>` 补样式（不要用全局样式）。
 - 阅读偏好（字号/行距/正文宽度）存 `stores/settings.js` 的 `read`，通过 CSS 变量
@@ -236,5 +246,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   （当前固定 `page=1&size=100`，超过 100 篇会看不到更早文章；同时 `/user/authors`
   一次最多 100 个 id 且超限是报错不是截断，做分页时必须分批）。
 - 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
+- 技术笔记编辑器已完成：笔记编辑区换成 CodeMirror 6 的 Live Preview（`components/editor/MarkdownEditor.vue`）——
+  光标行显示源码、其余行渲染；支持 `Ctrl+B/I/K/S`、Tab 缩进、撤销重做、Markdown 语法着色，
+  列表渲染成圆点；工具栏含「标准章节 / 提示卡（`> [!NOTE]`）/ 代码块 / 列表」四个插入按钮。
+  **只改笔记编辑器**，文章的「留白写作舱」保持原样。
 - 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
   笔记间反向链接、`verified_at` 的到期提醒；AI 自动打标签/关联推荐需先明确解锁。
