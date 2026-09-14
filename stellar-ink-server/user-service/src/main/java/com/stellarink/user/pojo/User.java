@@ -28,8 +28,11 @@ public class User {
     /** 星图签名 */
     private String signature;
 
-    /** 头像底字 */
+    /** 头像底字（未上传图片时使用） */
     private String avatarText;
+
+    /** 头像图片相对路径（如 /uploads/avatars/1_ab12cd34.png）；空则用底字 */
+    private String avatarUrl;
 
     /** 每日星尘目标（字） */
     private Integer dailyGoal;

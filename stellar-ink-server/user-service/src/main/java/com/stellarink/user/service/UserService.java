@@ -7,6 +7,7 @@ import com.stellarink.sharedmodel.dto.user.RoleApplyDTO;
 import com.stellarink.sharedmodel.dto.user.UserUpdateDTO;
 import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -39,4 +40,10 @@ public interface UserService {
     UserVO profile(Long userId);
 
     UserVO updateProfile(Long userId, UserUpdateDTO dto);
+
+    /** 上传（或替换）自己的头像图片，返回更新后的用户资料 */
+    UserVO uploadAvatar(Long userId, MultipartFile file);
+
+    /** 删除自己的头像图片，回落为 avatarText 底字头像 */
+    UserVO deleteAvatar(Long userId);
 }

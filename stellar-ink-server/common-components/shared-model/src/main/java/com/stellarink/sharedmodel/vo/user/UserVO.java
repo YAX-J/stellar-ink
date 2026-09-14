@@ -17,8 +17,11 @@ public class UserVO {
     /** 星图签名 */
     private String signature;
 
-    /** 头像底字（如「星」） */
+    /** 头像底字（如「星」）；未上传图片时前端用它渲染文字头像 */
     private String avatarText;
+
+    /** 头像图片相对路径（/uploads/avatars/x.png）；为空表示使用底字头像 */
+    private String avatarUrl;
 
     /** 每日星尘目标（字） */
     private Integer dailyGoal;

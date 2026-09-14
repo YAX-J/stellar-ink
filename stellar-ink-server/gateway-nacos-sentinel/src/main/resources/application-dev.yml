@@ -49,6 +49,12 @@ spring:
           uri: lb://user-service
           predicates:
             - Path=/auth/**,/user/**
+        # 用户头像等上传文件的公开读路径（由 user-service 静态资源映射提供）。
+        # 只读：写请求走 /user/avatar，这里不做鉴权 —— 头像图片必须能匿名加载
+        - id: user-uploads
+          uri: lb://user-service
+          predicates:
+            - Path=/uploads/**
         - id: content-service
           uri: lb://content-service
           predicates:

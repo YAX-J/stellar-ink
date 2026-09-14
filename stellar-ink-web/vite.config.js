@@ -24,6 +24,8 @@ export default defineConfig({
       '/stats': 'http://localhost:8080',
       '/tags': 'http://localhost:8080',
       '/search': 'http://localhost:8080',
+      // 用户头像等上传文件由 user-service 静态映射提供，经网关同源读取
+      '/uploads': 'http://localhost:8080',
     },
   },
 })

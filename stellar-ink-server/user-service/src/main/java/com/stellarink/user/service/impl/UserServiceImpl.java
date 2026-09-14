@@ -3,6 +3,7 @@ package com.stellarink.user.service.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
@@ -15,6 +16,7 @@ import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.mapper.UserMapper;
+import com.stellarink.user.component.AvatarStorage;
 import com.stellarink.user.pojo.User;
 import com.stellarink.user.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -45,6 +48,7 @@ public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final AvatarStorage avatarStorage;
 
     /**
      * 登录失败计数器（进程内，单实例部署足够）。
@@ -282,6 +286,44 @@ public class UserServiceImpl implements UserService {
         return toVO(user);
     }
 
+    @Override
+    public UserVO uploadAvatar(Long userId, MultipartFile file) {
+        User user = requireUser(userId);
+        String oldUrl = user.getAvatarUrl();
+        String newUrl = avatarStorage.store(userId, file);
+        user.setAvatarUrl(newUrl);
+        try {
+            userMapper.updateById(user);
+        } catch (RuntimeException e) {
+            /* 写库失败就把刚落盘的新文件删掉，避免留下一个谁也引用不到的孤儿文件 */
+            avatarStorage.delete(newUrl);
+            throw e;
+        }
+        // 换头像成功后再删旧文件：先删后写会在一失败时既丢新图又丢旧图
+        avatarStorage.delete(oldUrl);
+        log.info("更新头像 userId={} url={}", userId, newUrl);
+        return toVO(user);
+    }
+
+    @Override
+    public UserVO deleteAvatar(Long userId) {
+        User user = requireUser(userId);
+        String oldUrl = user.getAvatarUrl();
+        if (!StringUtils.hasText(oldUrl)) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "当前没有上传过头像。");
+        }
+        /* 必须用 UpdateWrapper 显式 set null：MyBatis-Plus 的 updateById 默认忽略 null 字段
+         * （FieldStrategy.NOT_NULL），直接 setAvatarUrl(null) 会生成一条不含 avatar_url 的 UPDATE，
+         * 接口返回「成功」但库里旧路径仍在 —— 刷新页面头像又回来了。 */
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getId, userId)
+                .set(User::getAvatarUrl, null));
+        user.setAvatarUrl(null);
+        avatarStorage.delete(oldUrl);
+        log.info("删除头像 userId={} 已回落为底字头像", userId);
+        return toVO(user);
+    }
+
     private User requireUser(Long userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
@@ -302,6 +344,7 @@ public class UserServiceImpl implements UserService {
         vo.setNickname(user.getNickname());
         vo.setSignature(user.getSignature());
         vo.setAvatarText(user.getAvatarText());
+        vo.setAvatarUrl(user.getAvatarUrl());
         vo.setDailyGoal(user.getDailyGoal());
         vo.setRole(roleOf(user));
         vo.setRoleAppliedAt(user.getRoleAppliedAt());
@@ -315,6 +358,7 @@ public class UserServiceImpl implements UserService {
         vo.setId(user.getId());
         vo.setNickname(user.getNickname());
         vo.setAvatarText(user.getAvatarText());
+        vo.setAvatarUrl(user.getAvatarUrl());
         return vo;
     }
 }

@@ -16,6 +16,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -86,6 +87,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public Response<?> handleNotFound(NoResourceFoundException e) {
         return Response.error(ErrorCode.NOT_FOUND).withTraceId(generateTraceId());
+    }
+
+    /**
+     * 上传文件超过 spring.servlet.multipart 上限。
+     * <p>不单独处理会落到兜底，返回「系统繁忙」——用户看到的是服务故障，
+     * 实际原因只是图片太大，属于可自行纠正的输入问题。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public Response<?> handleMaxUploadSize(MaxUploadSizeExceededException e, HttpServletRequest request) {
+        String traceId = generateTraceId();
+        log.warn("上传文件超限[{}]: {}, 请求路径: {}", traceId, e.getMessage(), request.getRequestURI());
+        return Response.error(ErrorCode.PARAM_ERROR, "文件太大了，请压缩后再上传。").withTraceId(traceId);
     }
 
     /** 数据完整性冲突 */

@@ -67,11 +67,13 @@ function httpMessage(status, fallback) {
 /**
  * 发送请求并解包统一响应。
  * @param {string} path 以 / 开头的接口路径，如 /auth/login
- * @param {{ method?: string, body?: object, query?: object, timeout?: number, silent?: boolean }} [opts]
+ * @param {{ method?: string, body?: object, form?: FormData, query?: object, timeout?: number, silent?: boolean }} [opts]
+ *   body 走 JSON；form 走 multipart（上传文件用，两者互斥，form 优先）。
  *   silent=true 时不弹全局 toast（由调用方自行展示局部错误）
  */
-export async function request(path, { method = 'GET', body, query, timeout = 15000, silent = false } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+export async function request(path, { method = 'GET', body, form, query, timeout = 15000, silent = false } = {}) {
+  /* multipart 的 Content-Type 必须由浏览器自己生成（带 boundary），手写会导致后端解析失败 */
+  const headers = form ? {} : { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers.Authorization = token
 
@@ -91,7 +93,7 @@ export async function request(path, { method = 'GET', body, query, timeout = 150
     res = await fetch(url, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: form || (body === undefined ? undefined : JSON.stringify(body)),
       signal: controller.signal,
     })
   } catch (error) {

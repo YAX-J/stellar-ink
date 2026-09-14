@@ -13,4 +13,7 @@ public class AuthorVO {
     private String nickname;
 
     private String avatarText;
+
+    /** 头像图片相对路径；为空时前端用 avatarText 渲染文字头像 */
+    private String avatarUrl;
 }
