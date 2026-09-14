@@ -1,9 +1,12 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNoteStore, NOTE_TYPES, VISIBILITY_OPTIONS, NOTE_TEMPLATE } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
 import { emit, TOAST } from '@/utils/bus'
+
+/* 编辑器懒加载：CodeMirror 6 只在本页下载，首屏与其它页面完全不受影响 */
+const MarkdownEditor = defineAsyncComponent(() => import('@/components/editor/MarkdownEditor.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +27,9 @@ const saving = ref(false)
 const publishing = ref(false)
 const loading = ref(false)
 const typeHintVisible = ref(false)
+/* 每次切换/载入笔记都自增：作为编辑器的 key，强制重建实例，避免残留旧光标与撤销栈 */
+const editorKey = ref(0)
+const editorRef = ref(null)
 let saveTimer = null
 
 const tags = computed(() => tagInput.value
@@ -45,8 +51,41 @@ function nowTime() {
   return new Date().toTimeString().slice(0, 8)
 }
 
+/* 编辑器内容变化 → 触发自动保存；命名沿用 onInput 便于模板复用 */
 function onInput() {
   scheduleSave()
+}
+
+/* ---- 快捷插入：把片段放到光标处，前后各留一个空行，避免粘在上一段后面 ---- */
+function insertFragment(text) {
+  const editor = editorRef.value
+  if (!editor) return
+  const needsLeadingBreak = body.value.length > 0 && !body.value.endsWith('\n')
+  editor.insert(`${needsLeadingBreak ? '\n\n' : ''}${text}`)
+}
+
+function insertCallout() {
+  insertFragment('> [!NOTE]\n> \n')
+}
+
+function insertCodeBlock() {
+  insertFragment('```bash\n\n```')
+}
+
+function insertList() {
+  insertFragment('- ')
+}
+
+/** Ctrl+S：立即保存一次，并给一句明确回执（Obsidian 用户的肌肉记忆） */
+async function saveNow() {
+  if (saveTimer) clearTimeout(saveTimer)
+  if (published.value) {
+    emit(TOAST, { type: 'info', message: '已发布的笔记需要点「重新发布」才会更新' })
+    return
+  }
+  if (!title.value.trim() && !body.value.trim()) return
+  await saveDraft()
+  emit(TOAST, { type: 'success', message: `已保存 · ${savedAt.value}` })
 }
 
 function scheduleSave() {
@@ -99,6 +138,8 @@ async function loadNote(id) {
     visibility.value = detail.visibility || 'PRIVATE'
     published.value = detail.status === 1
     savedAt.value = nowTime()
+    /* 换一篇笔记就重建编辑器实例：比往旧文档里灌内容更稳，不会留下错误的光标/撤销栈 */
+    editorKey.value += 1
   } catch {
     /* 读不到（不存在或不是自己的）就退回新建，避免停在空白页 */
     emit(TOAST, { type: 'warn', message: '这条笔记读不到，已切换为新建' })
@@ -108,12 +149,13 @@ async function loadNote(id) {
   }
 }
 
-/** 插入标准章节模板：只在正文为空时整体填充，否则追加到光标处 */
+/** 插入标准章节模板：正文为空时整体填充，否则放到光标处 */
 function insertTemplate() {
   if (!body.value.trim()) {
-    body.value = NOTE_TEMPLATE
+    /* 走编辑器选区插入，才能保住撤销栈与光标位置 */
+    editorRef.value?.insert(NOTE_TEMPLATE)
   } else {
-    body.value = `${body.value.replace(/\s+$/, '')}\n\n${NOTE_TEMPLATE}`
+    insertFragment(NOTE_TEMPLATE)
   }
   emit(TOAST, { type: 'info', message: '已插入标准章节，读者端会自动生成目录' })
   scheduleSave()
@@ -128,6 +170,7 @@ function newNote() {
   noteType.value = 'FIX'
   visibility.value = 'PRIVATE'
   published.value = false
+  editorKey.value += 1
 }
 
 async function openNote(note) {
@@ -242,13 +285,26 @@ onUnmounted(() => {
           <span class="tag-hint">{{ tags.length }}/10</span>
         </div>
 
-        <textarea
-          v-model="body" class="body-input" @input="onInput"
-          placeholder="从这里开始。用「插入标准章节」把 现象/环境/排查/结论 固定下来，读者端会自动生成目录。"
-        ></textarea>
+        <!-- 编辑工具栏：Obsidian 式编辑的几个常用入口 -->
+        <div class="edit-tools">
+          <button class="tool" title="插入标准章节（现象/环境/排查/结论/参考）" @click="insertTemplate">✧ 标准章节</button>
+          <button class="tool" title="插入提示卡，读者端会渲染成高亮块" @click="insertCallout">❝ 提示卡</button>
+          <button class="tool" title="插入代码块" @click="insertCodeBlock">▤ 代码块</button>
+          <button class="tool" title="插入列表项" @click="insertList">• 列表</button>
+          <span class="tool-tip">Ctrl+B 粗体 · Ctrl+I 斜体 · Ctrl+K 链接 · Ctrl+S 保存</span>
+        </div>
+
+        <!-- 编辑器：CodeMirror 6 懒加载，行内渲染非光标行的 Markdown -->
+        <MarkdownEditor
+          ref="editorRef"
+          :key="editorKey"
+          v-model="body"
+          :placeholder-text="'从这里开始。非光标行会直接渲染成结果，# 就是标题，**就是加粗。'"
+          @update:model-value="onInput"
+          @save="saveNow"
+        />
 
         <div class="desk-foot">
-          <button class="ghost-mini" @click="insertTemplate">✧ 插入标准章节</button>
           <span class="save-dot"><i></i>{{ saveLabel }}</span>
           <span>{{ wordCount }} 字</span>
           <span v-if="published" class="pub-flag">已发布</span>
@@ -321,10 +377,14 @@ onUnmounted(() => {
 .tag-input:focus{border-color:var(--primary)}
 .tag-hint{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint)}
 
-.body-input{flex:1; width:100%; border:none; background:transparent; outline:none; resize:none;
-  color:var(--ink); font-family:var(--font-mono); font-weight:400; font-size:14px;
-  line-height:2; min-height:360px}
-.body-input::placeholder{color:var(--ink-faint); font-family:var(--font-body)}
+/* 编辑工具栏：CodeMirror 接管正文后，原来的 textarea 样式已移除 */
+.edit-tools{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px}
+.tool{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
+  border-radius:99px; padding:6px 13px; font-size:12px; cursor:pointer; font-family:var(--font-body);
+  transition:all .25s var(--ease-spring)}
+.tool:hover{color:var(--primary); border-color:var(--primary); transform:translateY(-2px)}
+.tool-tip{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint); letter-spacing:.04em;
+  margin-left:auto}
 
 .desk-foot{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:22px;
   padding-top:16px; border-top:1px dashed var(--line);
