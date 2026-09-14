@@ -101,6 +101,20 @@ export const useAuthStore = defineStore('auth', {
       await request('/user/password', { method: 'PUT', body: { oldPassword, newPassword } })
     },
 
+    /* ---- 读者申请成为作者 ---- */
+    /** 提交（或覆盖）申请；成功后就地更新本地 user，账号页立即从「可申请」切到「审核中」 */
+    async applyRole(note) {
+      this.user = await request('/user/role-apply', { method: 'PUT', body: { note: note || '' } })
+      saveUser(this.user)
+      return this.user
+    },
+
+    async cancelRoleApply() {
+      this.user = await request('/user/role-apply/cancel', { method: 'PUT' })
+      saveUser(this.user)
+      return this.user
+    },
+
     /* 以下为 ADMIN 专属：用户列表 / 改角色 */
     async listUsers() {
       return request('/user/list')

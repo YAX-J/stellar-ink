@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
+import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
 const router = useRouter()
@@ -61,14 +62,85 @@ async function logout() {
   router.replace('/')
 }
 
-/* 当前角色能做什么：读者与作者之间缺的是站长授予，这里给出明确说明 */
+/* 当前角色能做什么：读者与作者之间缺的是站长授予，这里给出可操作的入口 */
 const canWrite = computed(() => auth.isAuthorOrAbove)
+/** 是否已提交待审的作者申请 */
+const pendingApply = computed(() => !!(user.value && user.value.roleAppliedAt))
+
+/* ---- 读者申请成为作者 ---- */
+const applyNote = ref('')
+const applying = ref(false)
+const applyMsg = ref('')
+const showApplyForm = ref(false)
+
+/** 相对时间：申请时间是给站长判断先来后到用的，「几天前」比精确时间更有用 */
+function daysAgo(value) {
+  if (!value) return ''
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  return `${days} 天前`
+}
+
+async function submitApply() {
+  if (applying.value) return
+  applying.value = true
+  applyMsg.value = ''
+  try {
+    await auth.applyRole(applyNote.value)
+    applyNote.value = ''
+    showApplyForm.value = false
+    emit(TOAST, { type: 'success', message: '申请已送达，等站长审核' })
+  } catch (e) {
+    applyMsg.value = e.message || '提交失败，请稍后再试'
+  } finally {
+    applying.value = false
+  }
+}
+
+async function withdrawApply() {
+  if (applying.value) return
+  applying.value = true
+  applyMsg.value = ''
+  try {
+    await auth.cancelRoleApply()
+    emit(TOAST, { type: 'info', message: '已撤回申请' })
+  } catch (e) {
+    applyMsg.value = e.message || '撤回失败，请稍后再试'
+  } finally {
+    applying.value = false
+  }
+}
 
 /* ---- 成员管理（ADMIN） ---- */
 const users = ref([])
 const listLoading = ref(false)
 const listError = ref('')
 const roleMsgs = ref({})
+/** 待审作者申请：站长一进页面就能看到有人在等 */
+const pendingApplies = computed(() => users.value.filter((u) => !!u.roleAppliedAt))
+
+/** 审批：通过与驳回都复用既有的改角色接口，后端会一并清空待审状态 */
+async function reviewApply(u, approved) {
+  roleMsgs.value[u.id] = ''
+  try {
+    await auth.changeRole(u.id, approved ? 'AUTHOR' : 'READER')
+    const item = users.value.find((x) => x.id === u.id)
+    if (item) {
+      item.role = approved ? 'AUTHOR' : 'READER'
+      item.roleAppliedAt = null
+      item.roleApplyNote = null
+    }
+    emit(TOAST, {
+      type: 'success',
+      message: approved
+        ? `已通过：${u.nickname || u.username} 成为作者（需重新登录后生效）`
+        : `已驳回：${u.nickname || u.username} 的申请`,
+    })
+  } catch (e) {
+    roleMsgs.value[u.id] = e.message || '操作失败'
+  }
+}
 
 async function loadUsers() {
   listLoading.value = true
@@ -87,9 +159,13 @@ async function onRoleChange(u, role) {
   try {
     await auth.changeRole(u.id, role)
     roleMsgs.value[u.id] = '已更新'
-    // 回填列表里的最新角色
+    // 回填列表里的最新角色；后端在改角色时同时清空了待审申请，本地也要跟着清
     const item = users.value.find((x) => x.id === u.id)
-    if (item) item.role = role
+    if (item) {
+      item.role = role
+      item.roleAppliedAt = null
+      item.roleApplyNote = null
+    }
   } catch (e) {
     roleMsgs.value[u.id] = e.message || '更新失败'
     // 回退到原角色
@@ -145,16 +221,46 @@ onMounted(async () => {
             <div><span>注册星历</span><b>{{ createdAt }}</b></div>
           </div>
 
-          <!-- 权限说明：读者→作者需站长授予，这里明确告知而不是让用户自己猜 -->
+          <!-- 权限与作者申请：读者→作者需要站长授予，这里给出可操作的入口而不是让人自己猜 -->
           <div class="perm-note">
             <template v-if="canWrite">
               <b>✦ 你已是{{ roleLabel(user.role) }}</b>
-              <span>可以写文章、发射流星；进入「执笔」开始今天的星尘。</span>
+              <span>可以写文章、记录技术笔记、发射流星；进入「执笔」开始今天的星尘。</span>
             </template>
+
+            <!-- 三态之一：审核中 -->
+            <template v-else-if="pendingApply">
+              <b>✎ 作者申请审核中</b>
+              <span>提交于 {{ daysAgo(user.roleAppliedAt) }}，等站长处理。</span>
+              <span v-if="user.roleApplyNote" class="apply-quote">“{{ user.roleApplyNote }}”</span>
+              <span class="apply-tip">审核通过后需要重新登录才会生效。</span>
+              <button class="apply-btn ghost" :disabled="applying" @click="withdrawApply">
+                {{ applying ? '处理中…' : '撤回申请' }}
+              </button>
+            </template>
+
+            <!-- 三态之二：可申请 -->
             <template v-else>
               <b>✦ 当前是读者</b>
-              <span>阅读、补充光芒、投瓶与申请友链都已可用；想发布文章需要站长把角色提升为作者。</span>
+              <span>阅读、补充光芒、投瓶与申请友链都已可用；想发布文章需要作者权限。</span>
+              <button v-if="!showApplyForm" class="apply-btn" @click="showApplyForm = true">
+                ✎ 申请成为作者
+              </button>
+              <template v-else>
+                <textarea
+                  v-model="applyNote" class="apply-input" rows="2" maxlength="200"
+                  placeholder="想写什么？一句话说明就好（选填，站长审核时会看）"
+                ></textarea>
+                <div class="apply-actions">
+                  <button class="apply-btn" :disabled="applying" @click="submitApply">
+                    {{ applying ? '提交中…' : '提交申请' }}
+                  </button>
+                  <button class="apply-btn ghost" :disabled="applying" @click="showApplyForm = false">取消</button>
+                </div>
+              </template>
             </template>
+
+            <p v-if="applyMsg" class="apply-err">{{ applyMsg }}</p>
           </div>
         </div>
 
@@ -194,14 +300,29 @@ onMounted(async () => {
 
       <!-- 成员管理（仅站长） -->
       <div v-if="auth.isAdmin" class="panel reveal" style="--d:.24s">
-        <h3>成员管理 · 站长</h3>
+        <h3>
+          成员管理 · 站长
+          <span v-if="pendingApplies.length" class="pending-badge">{{ pendingApplies.length }} 条待审</span>
+        </h3>
         <p v-if="listError" class="msg err">{{ listError }}</p>
         <p v-if="listLoading" class="dim">正在读取成员名单…</p>
         <div v-else class="member-list">
-          <div v-for="u in users" :key="u.id" class="member-row">
+          <div
+            v-for="u in users" :key="u.id" class="member-row"
+            :class="{ pending: !!u.roleAppliedAt }"
+          >
             <div class="member-id">
               <b>{{ u.nickname || u.username }}</b>
               <span class="mono">@{{ u.username }}</span>
+              <!-- 作者申请：站长在这里一眼看到谁在等、等了多久、为什么 -->
+              <div v-if="u.roleAppliedAt" class="apply-row">
+                <span class="apply-time">✎ 申请成为作者 · {{ daysAgo(u.roleAppliedAt) }}</span>
+                <span v-if="u.roleApplyNote" class="apply-note">“{{ u.roleApplyNote }}”</span>
+                <div class="apply-buttons">
+                  <button class="review-btn ok" @click="reviewApply(u, true)">通过</button>
+                  <button class="review-btn no" @click="reviewApply(u, false)">驳回</button>
+                </div>
+              </div>
             </div>
             <div class="member-role">
               <select
@@ -216,6 +337,9 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+        <p v-if="!listLoading && pendingApplies.length" class="apply-foot">
+          通过后该用户需要重新登录，新角色才会生效（JWT 里带的角色是登录时签发的）。
+        </p>
       </div>
     </template>
   </section>
@@ -242,9 +366,41 @@ onMounted(async () => {
 .pp-rows span{color:var(--ink-faint); font-family:var(--font-mono); font-size:11px; letter-spacing:.1em}
 .pp-rows b{font-weight:500}
 .perm-note{margin-top:18px; padding:14px 16px; border:1px dashed var(--line); border-radius:var(--r-sm);
-  background:var(--bg-3); display:flex; flex-direction:column; gap:6px}
+  background:var(--bg-3); display:flex; flex-direction:column; gap:6px; align-items:flex-start}
 .perm-note b{font-size:12px; color:var(--primary); letter-spacing:.06em}
 .perm-note span{font-size:12px; line-height:1.9; color:var(--ink-dim)}
+.apply-quote{font-family:var(--font-serif) !important; color:var(--ink) !important; font-size:13px !important;
+  border-left:2px solid var(--amber); padding-left:10px}
+.apply-tip{color:var(--ink-faint) !important; font-size:11px !important}
+.apply-btn{margin-top:4px; border:1px solid var(--primary); background:var(--primary-soft);
+  color:var(--primary); border-radius:99px; padding:7px 18px; font-size:12px; cursor:pointer;
+  font-family:var(--font-body); transition:all .25s var(--ease-spring)}
+.apply-btn:hover{transform:translateY(-2px)}
+.apply-btn:disabled{opacity:.6; cursor:wait; transform:none}
+.apply-btn.ghost{background:transparent; border-color:var(--line); color:var(--ink-faint)}
+.apply-btn.ghost:hover{border-color:var(--ink-dim); color:var(--ink-dim)}
+.apply-input{width:100%; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-2);
+  color:var(--ink); padding:10px 12px; font-size:13px; line-height:1.8; outline:none; resize:vertical;
+  font-family:var(--font-body); margin-top:4px; transition:border-color .2s}
+.apply-input:focus{border-color:var(--primary)}
+.apply-actions{display:flex; gap:8px}
+.apply-err{font-size:12px; color:var(--rose); line-height:1.6}
+
+/* 审核队列 */
+.pending-badge{margin-left:8px; font-family:var(--font-mono); font-size:10px; letter-spacing:.1em;
+  color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 9px}
+.member-row.pending{border-left:2px solid var(--amber); padding-left:14px}
+.apply-row{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+.apply-time{font-family:var(--font-mono); font-size:10px; letter-spacing:.06em; color:var(--amber)}
+.apply-note{font-size:12px; line-height:1.8; color:var(--ink-dim); max-width:46ch}
+.apply-buttons{display:flex; gap:8px}
+.review-btn{border-radius:99px; padding:5px 16px; font-size:12px; cursor:pointer;
+  font-family:var(--font-body); transition:all .25s; border:1px solid var(--line); background:transparent}
+.review-btn.ok{color:var(--teal); border-color:var(--teal)}
+.review-btn.ok:hover{background:var(--surface-2)}
+.review-btn.no{color:var(--ink-faint)}
+.review-btn.no:hover{color:var(--rose); border-color:var(--rose)}
+.apply-foot{margin-top:14px; font-size:11px; line-height:1.8; color:var(--ink-faint)}
 .msg{font-size:12px; margin-bottom:12px; line-height:1.6}
 .msg.err{color:var(--rose)}
 .msg.ok{color:var(--teal)}
