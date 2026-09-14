@@ -44,6 +44,15 @@ public class SaTokenConfigure {
     /** 文章单条路径：/posts/{id}（PUT 更新 / DELETE 删除，需 AUTHOR） */
     private static final Pattern POST_ID_PATH = Pattern.compile("^/posts/\\d+$");
 
+    /** 笔记单条路径：/notes/{id}（PUT 更新 / DELETE 删除，需 AUTHOR） */
+    private static final Pattern NOTE_ID_PATH = Pattern.compile("^/notes/\\d+$");
+
+    /** 笔记标记已验证：/notes/{id}/verify（需 AUTHOR） */
+    private static final Pattern NOTE_VERIFY_PATH = Pattern.compile("^/notes/\\d+/verify$");
+
+    /** 笔记记录浏览：公开写接口 */
+    private static final Pattern NOTE_VIEWED_PATH = Pattern.compile("^/notes/\\d+/viewed$");
+
     /** 流星单条路径：/meteors/{id}（DELETE 删除，需 AUTHOR） */
     private static final Pattern METEOR_ID_PATH = Pattern.compile("^/meteors/\\d+$");
 
@@ -54,6 +63,8 @@ public class SaTokenConfigure {
     private static final Pattern USER_ROLE_PATH = Pattern.compile("^/user/\\d+/role$");
 
     private static final String MY_POSTS_PATH = "/posts/mine";
+
+    private static final String MY_NOTES_PATH = "/notes/mine";
 
     @Bean
     public SaReactorFilter saReactorFilter() {
@@ -76,6 +87,11 @@ public class SaTokenConfigure {
                     }
                     // 3) 草稿只允许作者及以上读取，须先于「GET 全放行」判断
                     if ("GET".equalsIgnoreCase(method) && MY_POSTS_PATH.equals(path)) {
+                        requireRole(Role.AUTHOR);
+                        return;
+                    }
+                    // 3.1) 我的笔记（含私有）同样须先于「GET 全放行」拦下
+                    if ("GET".equalsIgnoreCase(method) && MY_NOTES_PATH.equals(path)) {
                         requireRole(Role.AUTHOR);
                         return;
                     }
@@ -113,8 +129,7 @@ public class SaTokenConfigure {
                 });
     }
 
-    /**
-     * 公开写接口白名单。
+    /** 公开写接口白名单。
      * <p>必须精确匹配路径——安全判断一律不用 {@code startsWith}/{@code contains}，
      * 否则 {@code /content-service/posts} 这类路径会误判为公开。
      */
@@ -122,7 +137,8 @@ public class SaTokenConfigure {
         return "/echos".equals(path)
                 || "/links".equals(path)
                 || GLOW_PATH.matcher(path).matches()
-                || VIEWED_PATH.matcher(path).matches();
+                || VIEWED_PATH.matcher(path).matches()
+                || NOTE_VIEWED_PATH.matcher(path).matches();
     }
 
     /** 需 ADMIN 的写操作：友链审核、用户角色调整 */
@@ -142,13 +158,15 @@ public class SaTokenConfigure {
         }
     }
 
-    /** 需 AUTHOR（含 ADMIN）的写操作：文章/流星的新增与维护 */
+    /** 需 AUTHOR（含 ADMIN）的写操作：文章/流星/笔记的新增与维护 */
     private static boolean requiresAuthor(String method, String path) {
         if ("POST".equalsIgnoreCase(method)) {
-            return "/posts".equals(path) || "/meteors".equals(path);
+            return "/posts".equals(path) || "/meteors".equals(path) || "/notes".equals(path);
         }
         if ("PUT".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method)) {
             return POST_ID_PATH.matcher(path).matches()
+                    || NOTE_ID_PATH.matcher(path).matches()
+                    || ("PUT".equalsIgnoreCase(method) && NOTE_VERIFY_PATH.matcher(path).matches())
                     || ("DELETE".equalsIgnoreCase(method) && METEOR_ID_PATH.matcher(path).matches());
         }
         return false;

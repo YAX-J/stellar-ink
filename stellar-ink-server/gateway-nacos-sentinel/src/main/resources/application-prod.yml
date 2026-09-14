@@ -43,7 +43,7 @@ spring:
         - id: content-service
           uri: lb://content-service
           predicates:
-            - Path=/posts/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
+            - Path=/posts/**,/notes/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
 
     sentinel:
       eager: true
