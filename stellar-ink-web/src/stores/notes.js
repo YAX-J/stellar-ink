@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { request } from '@/api/client'
+import { request, ApiError } from '@/api/client'
 import { useAuthorStore } from '@/stores/authors'
 
 /* 笔记类型：与后端 NoteType 枚举一一对应（symbol 与后端 glyph 保持一致） */
@@ -144,7 +144,13 @@ export const useNoteStore = defineStore('notes', {
       this.detailLoading = true
       this.error = ''
       try {
-        const detail = normalizeNote(await request(`/notes/${noteId}`), true)
+        const raw = await request(`/notes/${noteId}`)
+        const detail = normalizeNote(raw, true)
+        /* 接口返回空（例如被 dev 代理回退成 HTML）时不要继续往下走：
+         * 之前直接取 detail.userId 会抛 TypeError，把真实原因盖成一句看不懂的报错 */
+        if (!detail) {
+          throw new ApiError(0, '这条笔记没有返回内容，请稍后重试', 0)
+        }
         await useAuthorStore().ensureAuthors([detail.userId]).catch(() => {})
         this.details[noteId] = detail
         return detail
