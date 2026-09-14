@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { request, getToken, setToken, ApiError } from '@/api/client'
+import { request, getToken, setToken, suppressErrorToast } from '@/api/client'
 import { roleAtLeast } from '@/utils/role'
 import { useAuthorStore } from '@/stores/authors'
 
@@ -51,6 +51,7 @@ export const useAuthStore = defineStore('auth', {
     },
 
     enterAsGuest() {
+      /* 游客态与登录态互斥：已登录时不再降级为游客 */
       if (this.token) return
       this.guestMode = true
       saveGuestMode(true)
@@ -68,7 +69,9 @@ export const useAuthStore = defineStore('auth', {
 
     async logout() {
       try {
-        await request('/auth/logout', { method: 'POST' })
+        /* 登出是主动行为：token 若已过期不必再弹「会话已失效」 */
+        suppressErrorToast()
+        await request('/auth/logout', { method: 'POST', silent: true })
       } catch {
         /* 登出是语义收口，网络失败也照常清本地会话 */
       } finally {
@@ -125,7 +128,5 @@ export const useAuthStore = defineStore('auth', {
   },
 })
 
-/** 导出便于在组件里判断是否为「会话失效」（网关 HTTP 401，区别于业务码 401 如「原密码不正确」） */
-export function isAuthError(e) {
-  return e instanceof ApiError && e.status === 401
-}
+/** 语义化别名：登录失败等业务场景也返回 code=401，靠 HTTP status 区分 */
+export { isAuthError } from '@/api/client'

@@ -10,6 +10,12 @@ const auth = useAuthStore()
 
 const isLogin = computed(() => props.mode === 'login')
 
+/* 登录/注册前想去的地方（router 守卫或 RailNav 写入），登录成功后回到原处 */
+const redirect = computed(() => {
+  const raw = route.query.redirect
+  return typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
+})
+
 const username = ref('')
 const password = ref('')
 const nickname = ref('')
@@ -42,7 +48,7 @@ async function submit() {
         nickname: nickname.value.trim() || undefined,
       })
     }
-    router.replace('/account')
+    router.replace(redirect.value)
   } catch (e) {
     error.value = e.message || '操作失败，请稍后再试。'
   } finally {
@@ -52,8 +58,7 @@ async function submit() {
 
 function enterAsGuest() {
   auth.enterAsGuest()
-  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
-  router.replace(redirect)
+  router.replace(redirect.value)
 }
 </script>
 
@@ -81,7 +86,10 @@ function enterAsGuest() {
       <form class="auth-form" @submit.prevent="submit">
         <div class="field">
           <label>登录名</label>
-          <input v-model="username" autocomplete="username" placeholder="3~50 位字母 / 数字 / 下划线" />
+          <input
+            v-model="username" autocomplete="username" autofocus
+            placeholder="3~50 位字母 / 数字 / 下划线"
+          >
         </div>
         <div class="field">
           <label>密码</label>

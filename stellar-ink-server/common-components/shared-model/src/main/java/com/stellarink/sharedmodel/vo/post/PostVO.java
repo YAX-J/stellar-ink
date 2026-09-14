@@ -31,6 +31,9 @@ public class PostVO {
 
     private Integer glow;
 
+    /** 浏览量 */
+    private Integer viewCount;
+
     private Integer status;
 
     private LocalDateTime updatedAt;

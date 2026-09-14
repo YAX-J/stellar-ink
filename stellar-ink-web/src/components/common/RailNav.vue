@@ -8,7 +8,6 @@ import { roleAtLeast, roleLabel } from '@/utils/role'
 const route = useRoute()
 const settings = useSettingsStore()
 const auth = useAuthStore()
-
 const items = [
   { key: 'home', to: '/', glyph: '◉', label: '此刻' },
   { key: 'write', to: '/write', glyph: '✎', label: '执笔', requiresRole: 'AUTHOR' },
@@ -28,21 +27,30 @@ const visibleItems = computed(() => items.filter((item) =>
 ))
 
 const avatarChar = computed(() => {
-  if (auth.isGuest) return '游'
-  if (!auth.isLoggedIn) return '✦'
-  const n = auth.user.nickname || auth.user.username || '星'
-  return n.trim().charAt(0)
+  if (auth.isLoggedIn) {
+    const n = auth.user.nickname || auth.user.username || '星'
+    return n.trim().charAt(0)
+  }
+  return auth.isGuest ? '游' : '✦'
 })
-/* 身份标签区分游客、未登录与已登录角色 */
+/* 身份标签：已登录显角色，游客显「游客·去登录」，未登录显「登录/注册」 */
 const userLabel = computed(() => {
   if (auth.isLoggedIn) return roleLabel(auth.role)
-  return auth.isGuest ? '游客' : '登录'
+  return auth.isGuest ? '游客 · 去登录' : '登录 / 注册'
 })
-const userTip = computed(() =>
-  auth.isLoggedIn
-    ? `${auth.user.nickname || auth.user.username} · ${roleLabel(auth.role)}`
-    : auth.isGuest ? '游客浏览 · 登录 / 注册' : '登录 / 注册',
-)
+const userTip = computed(() => {
+  if (auth.isLoggedIn) return `${auth.user.nickname || auth.user.username} · ${roleLabel(auth.role)} · 进入账号`
+  if (auth.isGuest) return '当前以游客身份浏览 · 登录后可同步你的身份'
+  return '登录 / 注册'
+})
+/* 未登录（含游客）时把「回哪儿去」写进 redirect，登录后不会被丢到账号页 */
+const userTo = computed(() => {
+  if (auth.isLoggedIn) return '/account'
+  const name = route.name
+  const fromQuery = name === 'login' || name === 'register' ? route.query.redirect : null
+  const target = typeof fromQuery === 'string' ? fromQuery : route.fullPath
+  return { path: '/login', query: { redirect: target } }
+})
 </script>
 
 <template>
@@ -50,10 +58,11 @@ const userTip = computed(() =>
     <RouterLink class="logo" to="/" title="星笺">✦</RouterLink>
     <!-- 身份入口：紧跟 logo 下方，导航栏底部只留状态灯 -->
     <RouterLink
-      class="rail-user" :class="{ on: auth.isLoggedIn || auth.isGuest }"
-      :to="auth.isLoggedIn ? '/account' : '/login'" :title="userTip"
+      class="rail-user"
+      :class="{ on: auth.isLoggedIn, guest: auth.isGuest, anon: !auth.isLoggedIn }"
+      :to="userTo" :title="userTip"
     >
-      <span class="ru-avatar" :class="{ on: auth.isLoggedIn, guest: auth.isGuest }">{{ avatarChar }}</span>
+      <span class="ru-avatar" :class="{ on: auth.isLoggedIn, guest: auth.isGuest, anon: !auth.isLoggedIn }">{{ avatarChar }}</span>
       <span class="ru-label">{{ userLabel }}</span>
     </RouterLink>
     <RouterLink
@@ -91,7 +100,8 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
 
 /* 身份入口：圆形头像 + 角色/登录 文字，与 logo 成组 */
 .rail-user{display:flex; flex-direction:column; align-items:center; gap:7px; margin-bottom:28px;
-  text-decoration:none; color:var(--ink-faint); transition:color .3s var(--ease-spring)}
+  width:76px; text-align:center; text-decoration:none; color:var(--ink-faint);
+  transition:color .3s var(--ease-spring)}
 .ru-avatar{width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
   border:1px dashed var(--line); color:var(--ink-faint);
   font-family:var(--font-mono); font-size:16px; transition:all .3s var(--ease-spring)}
@@ -102,8 +112,12 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
   box-shadow:0 4px 16px var(--primary-soft)}
 .ru-avatar.guest{border-style:solid; border-color:var(--primary); color:var(--primary);
   background:var(--primary-soft); box-shadow:none}
-.ru-label{font-size:11px; letter-spacing:.08em}
-.rail-user.on .ru-label{color:var(--ink-dim)}
+/* 未登录：实心入口，比游客更主动地引导登录 */
+.ru-avatar.anon{border-style:solid; border-color:transparent; color:#fff;
+  background:linear-gradient(135deg,var(--primary),var(--rose));
+  box-shadow:0 4px 16px var(--primary-soft)}
+.rail-user.anon .ru-label{color:var(--ink-dim)}
+.ru-label{font-size:10px; letter-spacing:.06em; line-height:1.5; max-width:76px}
 .nav-item{
   width:64px; padding:12px 0 10px; margin:6px 0; border:none; border-radius:var(--r-md);
   background:transparent; color:var(--ink-faint); cursor:pointer;
@@ -129,9 +143,9 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
   .rail{top:auto; bottom:0; left:0; right:0; width:auto; height:72px; flex-direction:row;
     justify-content:center; gap:4px; border-right:none; border-top:1px solid var(--line); padding:0 8px}
   .logo,.rail-foot{display:none}
-  .rail-user{margin:0 2px 0 0; gap:3px}
+  .rail-user{margin:0 2px 0 0; gap:3px; width:auto}
   .ru-avatar{width:34px; height:34px; font-size:14px}
-  .ru-label{font-size:10px}
+  .ru-label{font-size:9px; max-width:52px}
   .nav-item{margin:0; width:48px; font-size:10px; padding:10px 0 8px}
   .nav-item.active::before{left:50%; top:-1px; translate:-50% 0; width:26px; height:3px}
 }

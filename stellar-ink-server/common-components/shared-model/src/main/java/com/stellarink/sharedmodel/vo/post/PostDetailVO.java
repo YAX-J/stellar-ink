@@ -32,6 +32,12 @@ public class PostDetailVO {
 
     private Integer glow;
 
+    /** 浏览量（登录用户按天去重统计） */
+    private Integer viewCount;
+
+    /** 当前登录用户是否已为这颗星补充过光芒（未登录恒为 false） */
+    private Boolean liked;
+
     private NeighborVO prev;
 
     private NeighborVO next;

@@ -1,22 +1,34 @@
 <script setup>
+import { computed } from 'vue'
 import { usePostStore } from '@/stores/posts'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const emit = defineEmits(['open'])
 const postStore = usePostStore()
+
+/* 北极星 = 已加载星图中光芒最多的那一篇（并列时取更新的）。
+ * 之前固定取 posts[0]（最新一篇），与「最受回望」的文案不符。 */
+const polaris = computed(() => {
+  const posts = postStore.posts
+  if (!posts.length) return null
+  return posts.reduce((best, post) => (
+    (post.glow || 0) > (best.glow || 0) ? post : best
+  ), posts[0])
+})
 </script>
 
 <template>
-  <div v-if="postStore.posts[0]" class="polaris reveal" style="--d:.08s" @click="emit('open', postStore.posts[0])">
+  <div v-if="polaris" class="polaris reveal" style="--d:.08s" @click="emit('open', polaris)">
     <div class="polaris-inner">
-      <span class="polaris-tag">★ POLARIS · 置顶长文</span>
-      <h3>{{ postStore.posts[0].title }}</h3>
-      <p>{{ postStore.posts[0].excerpt || '这颗星还没有留下摘要。' }}</p>
+      <span class="polaris-tag">★ POLARIS · 最受回望的一篇</span>
+      <h3>{{ polaris.title }}</h3>
+      <p>{{ polaris.excerpt || '这颗星还没有留下摘要。' }}</p>
       <div class="polaris-meta">
-        <AuthorBadge :user-id="postStore.posts[0].userId" compact />
-        <span>{{ postStore.posts[0].date }}</span>
-        <span>{{ postStore.posts[0].words.toLocaleString() }} 字</span>
-        <span>✦ {{ postStore.posts[0].glow || 0 }}</span>
+        <AuthorBadge :user-id="polaris.userId" compact />
+        <span>{{ polaris.date }}</span>
+        <span>{{ polaris.words.toLocaleString() }} 字</span>
+        <span>✦ {{ polaris.glow || 0 }} 光芒</span>
+        <span v-if="polaris.viewCount > 0">◉ {{ polaris.viewCount.toLocaleString() }} 次抵达</span>
       </div>
     </div>
   </div>

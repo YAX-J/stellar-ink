@@ -24,6 +24,9 @@ public class PostQueryDTO {
     /** 0 草稿 / 1 已发布，空为全部（管理视角） */
     private Integer status;
 
+    /** 排序：latest 最新（默认）/ hottest 最受回望（glow）/ longest 篇幅最长 */
+    private String orderBy;
+
     /** 公开接口固定只看已发布 */
     private boolean publishedOnly = true;
 }

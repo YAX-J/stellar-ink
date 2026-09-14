@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import Starfield from '@/components/canvas/Starfield.vue'
 import RailNav from '@/components/common/RailNav.vue'
+import ToastCenter from '@/components/common/ToastCenter.vue'
 
 const route = useRoute()
 const settings = useSettingsStore()
@@ -29,6 +30,7 @@ watch(
   <main class="main" :class="{ 'auth-main': isAuthPage }">
     <RouterView />
   </main>
+  <ToastCenter />
 </template>
 
 <style scoped>

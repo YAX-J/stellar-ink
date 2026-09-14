@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS `post` (
     `word_count` INT          DEFAULT 0               COMMENT '字数（正文去空白字符）',
     `status`     TINYINT      DEFAULT 1               COMMENT '0 草稿 / 1 已发布',
     `glow`       INT          DEFAULT 0               COMMENT '补充光芒数',
+    `view_count` INT          NOT NULL DEFAULT 0      COMMENT '浏览量',
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（即点亮日期）',
     `updated_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -30,6 +31,28 @@ CREATE TABLE IF NOT EXISTS `post` (
     KEY `idx_status_id` (`status`, `id`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '文章';
+
+-- -------------------------------------------------------------
+-- 文章点赞明细（一人一赞；post.glow 为计数冗余，两者以本表为准）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `post_glow` (
+    `id`         BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `post_id`    BIGINT   NOT NULL                COMMENT '文章 ID',
+    `user_id`    BIGINT   NOT NULL                COMMENT '点赞用户 ID',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '首次补充光芒时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_post_user` (`post_id`, `user_id`),
+    KEY `idx_user_id` (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '文章点赞明细';
+
+-- -------------------------------------------------------------
+-- 浏览计数闸门（每个登录用户一天一行，用于浏览量按天去重）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `post_view` (
+    `user_id`   BIGINT NOT NULL                COMMENT '用户 ID',
+    `viewed_at` DATE                        COMMENT '最近一次计数日期',
+    PRIMARY KEY (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '浏览计数闸门';
 
 -- -------------------------------------------------------------
 -- 流星备忘录（碎片）

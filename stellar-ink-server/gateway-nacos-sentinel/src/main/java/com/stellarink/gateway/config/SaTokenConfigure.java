@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  *   <li>{@code POST /auth/login}：登录本身</li>
  *   <li>{@code POST /auth/register}：开放注册（注册即登录，无需先有 token）</li>
  *   <li>GET / HEAD / OPTIONS：读请求与 CORS 预检</li>
- *   <li>公开写接口白名单：回声投瓶、友链申请、文章 glow（见 {@link #isPublicWrite}）</li>
+ *   <li>公开写接口白名单：回声投瓶、友链申请、文章 glow、记录浏览（见 {@link #isPublicWrite}）</li>
  * </ul>
  *
  * <p><b>角色门槛（登录后）</b>：{@link Role#AUTHOR} 可写文章/流星；
@@ -37,6 +37,9 @@ public class SaTokenConfigure {
 
     /** 公开写接口：文章点赞（发光） */
     private static final Pattern GLOW_PATH = Pattern.compile("^/posts/\\d+/glow$");
+
+    /** 公开写接口：记录浏览（详情页自动触发；登录用户服务端按天去重） */
+    private static final Pattern VIEWED_PATH = Pattern.compile("^/posts/\\d+/viewed$");
 
     /** 文章单条路径：/posts/{id}（PUT 更新 / DELETE 删除，需 AUTHOR） */
     private static final Pattern POST_ID_PATH = Pattern.compile("^/posts/\\d+$");
@@ -118,7 +121,8 @@ public class SaTokenConfigure {
     private static boolean isPublicWrite(String path) {
         return "/echos".equals(path)
                 || "/links".equals(path)
-                || GLOW_PATH.matcher(path).matches();
+                || GLOW_PATH.matcher(path).matches()
+                || VIEWED_PATH.matcher(path).matches();
     }
 
     /** 需 ADMIN 的写操作：友链审核、用户角色调整 */

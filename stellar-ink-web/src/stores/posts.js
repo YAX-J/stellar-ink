@@ -11,7 +11,9 @@ function normalizePost(post, detail = false) {
     tags: Array.isArray(post.tags) ? post.tags : [],
     year: Number(post.year || String(post.date || '').slice(0, 4)),
     excerpt: post.summary || post.excerpt || '',
-    ...(detail ? { content: post.content || '', readMinutes: post.readMinutes } : {}),
+    glow: Number(post.glow ?? 0),
+    viewCount: Number(post.viewCount ?? 0),
+    ...(detail ? { content: post.content || '', readMinutes: post.readMinutes, liked: !!post.liked } : {}),
   }
 }
 
@@ -187,13 +189,32 @@ export const usePostStore = defineStore('posts', {
     async addGlow(id) {
       this.error = ''
       try {
-        const data = await request(`/posts/${Number(id)}/glow`, { method: 'POST' })
+        const data = await request(`/posts/${Number(id)}/glow`, { method: 'POST', silent: true })
         const post = this.byId(id)
-        if (post && data?.glow !== undefined) post.glow = data.glow
-        return data?.glow
+        if (post) {
+          if (data?.glow !== undefined) post.glow = Number(data.glow)
+          if (data?.liked !== undefined) post.liked = !!data.liked
+        }
+        return data
       } catch (error) {
         this.error = error.message
         throw error
+      }
+    },
+
+    /** 记录一次浏览：登录用户服务端按天去重，失败静默（浏览量不值得打扰读者） */
+    async recordView(id) {
+      const postId = Number(id)
+      if (!postId) return
+      try {
+        const data = await request(`/posts/${postId}/viewed`, { method: 'POST', silent: true })
+        /* 只有服务端真的计入时才本地 +1，避免读者看到「刷了没变」 */
+        if (data?.counted) {
+          const post = this.byId(postId)
+          if (post) post.viewCount = Number(post.viewCount || 0) + 1
+        }
+      } catch {
+        /* 静默：浏览量统计失败不影响阅读 */
       }
     },
   },

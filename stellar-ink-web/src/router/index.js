@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { roleAtLeast } from '@/utils/role'
 
 const routes = [
   { path: '/', name: 'home', component: () => import('@/views/home/HomeView.vue'), meta: { title: '此刻' } },
@@ -14,7 +13,7 @@ const routes = [
   { path: '/bridge', name: 'bridge', component: () => import('@/views/bridge/BridgeView.vue'), meta: { title: '舰桥' } },
   { path: '/login', name: 'login', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'login' }, meta: { title: '登录', layout: 'auth' } },
   { path: '/register', name: 'register', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'register' }, meta: { title: '注册', layout: 'auth' } },
-  { path: '/account', name: 'account', component: () => import('@/views/account/AccountView.vue'), meta: { title: '账号' } },
+  { path: '/account', name: 'account', component: () => import('@/views/account/AccountView.vue'), meta: { title: '账号', requiresAuth: true } },
   { path: '/read/:id', name: 'read', component: () => import('@/views/read/ReadView.vue'), meta: { title: '深读' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
@@ -25,15 +24,16 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
+/* 公开页面：未登录也能逛（与网关一致 —— 所有读接口本就公开）。
+ * 只有真正需要身份的操作（写作、账号）才拦截，冷启动不再第一屏就是登录页。 */
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  const isAuthPage = to.name === 'login' || to.name === 'register'
-  if (!isAuthPage && !auth.isLoggedIn && !auth.isGuest) {
+  if (auth.isLoggedIn) return
+  /* 未登录访问需登录页：带 redirect 去登录，登录后回到原处 */
+  if (to.meta.requiresAuth) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.requiresRole && !roleAtLeast(auth.role, to.meta.requiresRole)) {
-    return { name: 'home' }
-  }
+  /* 公开页但角色不足（如读者进写作舱）：留在页内用友好提示说明，不做静默重定向 */
 })
 
 router.afterEach((to) => {

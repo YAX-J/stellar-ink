@@ -58,7 +58,10 @@ function openPost(post) {
 
     <div class="ticker-band reveal" style="--d:.4s">
       <div class="ticker">
-        <span v-for="(p, i) in [...tickerPosts, ...tickerPosts]" :key="i">{{ p.title }}</span>
+        <button
+          v-for="(p, i) in [...tickerPosts, ...tickerPosts]" :key="i"
+          class="ticker-item" :title="`深读《${p.title}》`" @click="openPost(p)"
+        >{{ p.title }}</button>
       </div>
     </div>
 
@@ -137,8 +140,12 @@ function openPost(post) {
   background:var(--surface);
 }
 .ticker{display:inline-block; animation:scroll 36s linear infinite}
-.ticker span{font-family:var(--font-serif); font-size:14px; color:var(--ink-dim); margin:0 34px}
-.ticker span::before{content:'✦ '; color:var(--amber)}
+.ticker-item{
+  border:0; background:transparent; cursor:pointer; padding:0; font-family:var(--font-serif);
+  font-size:14px; color:var(--ink-dim); margin:0 34px; transition:color .25s;
+}
+.ticker-item:hover{color:var(--primary)}
+.ticker-item::before{content:'✦ '; color:var(--amber)}
 @keyframes scroll{to{transform:translateX(-50%)}}
 
 /* 星尘卡片流 */

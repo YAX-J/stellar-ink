@@ -82,6 +82,28 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 字体：Space Grotesk / Noto Serif SC / Noto Sans SC / JetBrains Mono（index.html 引入），
   正文 300 字重、标题用衬线 900，等宽字体用于元数据。
 
+### 错误处理与提示
+- **会话失效判定必须 code/status 联合**：用 `api/client.js` 导出的 `isAuthError()`，它判定
+  `code === 401 || status === 401`。原因见上：网关放行 GET，读接口的未登录由服务端兜底返回
+  **HTTP 200 + code 401**，只看 `status` 会漏判（曾导致 token 过期后页面只显示「读取失败」）。
+- 全局兜底链路固定：`api/client.js` 出错 → `utils/bus.js` 发事件 → `main.js` 清会话并带
+  `redirect` 跳登录。**页面不要各自再写一套 401 处理**。
+- 用户可见提示统一 `emit(TOAST, { type, message, traceId })`，由 `components/common/ToastCenter.vue`
+  渲染；`traceId` 要透出给用户（可点击复制）便于排障。
+- 表单校验/面板内提示仍写页面内的 `.msg`；`request(..., { silent: true })` 可抑制全局 toast，
+  避免同一错误提示两遍。
+- 限流有独立文案：`isRateLimited()` 判定 429（Nginx 边缘限流，注意 `GET /echos`、`GET /links`
+  也在限流区内），不要退化成「请求失败（429）」。
+
+### 正文渲染与阅读体验
+- 正文 Markdown 由 `utils/markdown.js` 解析成块级结构，视图按白名单标签渲染（**不引依赖**）。
+  该文件先 `escapeHtml` 再插入自己的标签，链接有协议白名单，因此 `v-html` 处是安全的。
+- 新增 Markdown 语法：先在 `parseMarkdown` 加块类型 → 视图加 `v-else-if` 分支 →
+  在 `ReadView.vue` 的 `<style scoped>` 补样式（不要用全局样式）。
+- 阅读偏好（字号/行距/正文宽度）存 `stores/settings.js` 的 `read`，通过 CSS 变量
+  `--read-fs / --read-lh / --read-w` 下发给正文，组件里不要硬编码字号。
+- 阅读位置记忆用 sessionStorage（`settings.rememberPosition/positionOf`），只在进入文章时恢复一次。
+
 ### Canvas 惯例
 - 画布位图尺寸 = CSS 尺寸 × 2，用 `utils/canvas.js` 的 `fitCanvas`，别自己写。
 - 动画统一 `requestAnimationFrame` 循环：`onMounted` 启动、`onUnmounted` 取消；
@@ -107,9 +129,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `post/meteor/echo/link/stats` 领域分包，负责 `post`、`meteor`、`echo`、`link`，统计直接查询文章数据。
 - 共享库模式：一个 `stellar_ink` 库；user-service 与 content-service 只读写各自负责的表。
 - **鉴权在网关**（Sa-Token，JWT 无状态模式 `StpLogicJwtForStateless`）：放行 GET/OPTIONS、
-  `POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`）；
+  `POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、
+  `POST /posts/{id}/glow`、`POST /posts/{id}/viewed`）；
   其余对 `/posts|/meteors|/links|/user` 的写请求 `StpUtil.checkLogin()`。
   下游服务用 `AuthHelper.loginId()`（StpUtil 验签）取用户 id，不校验路由级权限。
+- **鉴权失败的返回形态不统一，前后端都必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；
+  但 GET 在网关是放行的，token 失效时读接口由服务端 `NotLoginException` 兜底，
+  返回 **HTTP 200 + body code=401**。
 - **角色门槛（三档，权限累积，仅做操作开关、不做数据隔离）**：`READER 读者` ⊃ 基础读与公开互动；
   `AUTHOR 作者` = READER + 写/改/删文章、发射/删除流星；`ADMIN 站长` = AUTHOR + 友链审核 + 调整用户角色。
   角色在登录/注册时写入 JWT 的 `role` extra（`Role` 枚举见 shared-model，键 `Role.JWT_KEY`）；
@@ -149,7 +175,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
-- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）；已有库升级多作者归属执行 `03_multi-author.sql`。
+- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）；
+  已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
+  `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
+  `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）。
+- 浏览量口径：登录用户在 `post_view` 闸门表按天去重（每人每天只计一次），未登录访客每次计数。
+  点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id,user_id)`），未登录访客计次不记态。
+  `post.glow` 是计数冗余，判断「我是否已赞」一律以 `post_glow` 为准。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 
 ### 日志（slf4j + logback-spring.xml）
@@ -173,3 +205,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 前端已接网关：`src/api/client.js`（fetch 封装 + token）+ Pinia stores（会话与业务数据）；
   页面 `/login` `/register` `/account` 支持改密、登出和 ADMIN 角色管理，文章/流星/回声/友链均读取真实接口；
   多作者署名通过 `/user/authors` 批量补全，写作页支持草稿自动保存、恢复、删除与发布。
+- 阅读体验一期已完成：登录后按 `redirect` 回跳、未登录可浏览公开页（`/account` 与写作需登录）、
+  全局 toast + traceId 排障、深读页 Markdown 渲染 + 目录 + 阅读设置 + 阅读位置记忆、
+  文章浏览量（登录用户按天去重）与点赞去重（一人一赞 + 已赞态）；`orderBy` 支持
+  `latest / hottest / longest` 三种排序。
+- 尚未做（待明确要求）：搜索页（后端 `/search` 已就绪但前端未接）、友链审核页
+  （`PUT /links/{id}/status` 已就绪但前端未接）、个人资料写回后端
+  （`PUT /user/profile` 已就绪但前端仍用 localStorage）、真正的分页/无限滚动
+  （当前固定 `page=1&size=100`，超过 100 篇会看不到更早文章；同时 `/user/authors`
+  一次最多 100 个 id 且超限是报错不是截断，做分页时必须分批）。

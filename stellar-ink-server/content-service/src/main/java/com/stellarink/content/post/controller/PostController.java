@@ -9,6 +9,7 @@ import com.stellarink.sharedmodel.dto.post.PostQueryDTO;
 import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.response.Response;
+import com.stellarink.sharedmodel.vo.post.GlowResultVO;
 import com.stellarink.sharedmodel.vo.post.PostDetailVO;
 import com.stellarink.sharedmodel.vo.post.PostVO;
 import jakarta.validation.Valid;
@@ -40,6 +41,7 @@ public class PostController {
                                         @RequestParam(required = false) Integer year,
                                         @RequestParam(required = false) String tag,
                                         @RequestParam(required = false) String keyword,
+                                        @RequestParam(required = false) String orderBy,
                                         @RequestParam(required = false) Integer status) {
         PostQueryDTO query = new PostQueryDTO();
         if (page != null) query.setPage(page);
@@ -47,6 +49,7 @@ public class PostController {
         query.setYear(year);
         query.setTag(tag);
         query.setKeyword(keyword);
+        query.setOrderBy(orderBy);
         // 公开列表永远只返回已发布文章，草稿统一走 /posts/mine。
         query.setStatus(1);
         query.setPublishedOnly(true);
@@ -93,9 +96,15 @@ public class PostController {
         return Response.success();
     }
 
-    /** 为这颗星补充光芒（读者可点，公开） */
+    /** 记录一次浏览（公开）：登录用户按天去重，匿名单次计数 */
+    @PostMapping("/{id}/viewed")
+    public Response<Map<String, Boolean>> viewed(@PathVariable Long id) {
+        return Response.success(Map.of("counted", postService.recordView(id)));
+    }
+
+    /** 为这颗星补充光芒（公开）；登录用户一人一次，重复点击不重复计数 */
     @PostMapping("/{id}/glow")
-    public Response<Map<String, Integer>> glow(@PathVariable Long id) {
-        return Response.success(Map.of("glow", postService.glow(id)));
+    public Response<GlowResultVO> glow(@PathVariable Long id) {
+        return Response.success(postService.glow(id));
     }
 }

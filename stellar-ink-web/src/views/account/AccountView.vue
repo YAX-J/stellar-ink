@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore, isAuthError } from '@/stores/auth'
+import { useAuthStore } from '@/stores/auth'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import SectionHead from '@/components/common/SectionHead.vue'
 
@@ -61,6 +61,9 @@ async function logout() {
   router.replace('/')
 }
 
+/* 当前角色能做什么：读者与作者之间缺的是站长授予，这里给出明确说明 */
+const canWrite = computed(() => auth.isAuthorOrAbove)
+
 /* ---- 成员管理（ADMIN） ---- */
 const users = ref([])
 const listLoading = ref(false)
@@ -88,25 +91,15 @@ async function onRoleChange(u, role) {
     const item = users.value.find((x) => x.id === u.id)
     if (item) item.role = role
   } catch (e) {
-    if (!handleAuthExpiry(e)) roleMsgs.value[u.id] = e.message || '更新失败'
+    roleMsgs.value[u.id] = e.message || '更新失败'
     // 回退到原角色
     const item = users.value.find((x) => x.id === u.id)
     if (item) item.role = u.role
   }
 }
 
-/* ---- 会话失效（网关 HTTP 401）兜底：清空并回登录页，返回是否已处理 ---- */
-function handleAuthExpiry(e) {
-  if (isAuthError(e)) {
-    auth.clearSession()
-    router.replace('/login')
-    return true
-  }
-  return false
-}
-
+/* 局部错误只落到面板里；会话失效由 client.js → bus → main.js 统一处理并跳登录 */
 function handleError(e, target) {
-  if (handleAuthExpiry(e)) return
   target.value = e.message || '操作失败'
 }
 
@@ -114,8 +107,9 @@ onMounted(async () => {
   if (!auth.isLoggedIn) return
   try {
     await auth.fetchProfile()
-  } catch (e) {
-    handleAuthExpiry(e)
+  } catch {
+    /* 会话失效已由全局兜底处理 */
+    return
   }
   if (auth.isAdmin) await loadUsers()
 })
@@ -149,6 +143,18 @@ onMounted(async () => {
           <div class="pp-rows">
             <div><span>星籍编号</span><b>NO.{{ user.id }}</b></div>
             <div><span>注册星历</span><b>{{ createdAt }}</b></div>
+          </div>
+
+          <!-- 权限说明：读者→作者需站长授予，这里明确告知而不是让用户自己猜 -->
+          <div class="perm-note">
+            <template v-if="canWrite">
+              <b>✦ 你已是{{ roleLabel(user.role) }}</b>
+              <span>可以写文章、发射流星；进入「执笔」开始今天的星尘。</span>
+            </template>
+            <template v-else>
+              <b>✦ 当前是读者</b>
+              <span>阅读、补充光芒、投瓶与申请友链都已可用；想发布文章需要站长把角色提升为作者。</span>
+            </template>
           </div>
         </div>
 
@@ -235,6 +241,10 @@ onMounted(async () => {
 .pp-rows div{display:flex; justify-content:space-between; border-bottom:1px dashed var(--line); padding-bottom:8px}
 .pp-rows span{color:var(--ink-faint); font-family:var(--font-mono); font-size:11px; letter-spacing:.1em}
 .pp-rows b{font-weight:500}
+.perm-note{margin-top:18px; padding:14px 16px; border:1px dashed var(--line); border-radius:var(--r-sm);
+  background:var(--bg-3); display:flex; flex-direction:column; gap:6px}
+.perm-note b{font-size:12px; color:var(--primary); letter-spacing:.06em}
+.perm-note span{font-size:12px; line-height:1.9; color:var(--ink-dim)}
 .msg{font-size:12px; margin-bottom:12px; line-height:1.6}
 .msg.err{color:var(--rose)}
 .msg.ok{color:var(--teal)}

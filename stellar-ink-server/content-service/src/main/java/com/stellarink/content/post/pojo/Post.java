@@ -34,6 +34,9 @@ public class Post {
     /** 补充光芒数 */
     private Integer glow;
 
+    /** 浏览量 */
+    private Integer viewCount;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

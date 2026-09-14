@@ -2,11 +2,16 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
+import { useAuthStore } from '@/stores/auth'
 import { PROMPTS } from '@/api/mock'
 
 const router = useRouter()
 const route = useRoute()
 const postStore = usePostStore()
+const auth = useAuthStore()
+
+/* 读者（或未登录）进入执笔舱时给明确说明，而不是被静默重定向 */
+const canWrite = computed(() => auth.isLoggedIn && auth.isAuthorOrAbove)
 
 const moods = [
   { label: '☀️ 专注', color: 'rgba(139,124,255,.22)', tag: '随笔' },
@@ -168,7 +173,29 @@ onUnmounted(() => {
 <template>
   <section class="page">
     <div class="kicker reveal">WRITING STUDIO · 留白写作舱</div>
-    <div class="studio">
+
+    <!-- 读者 / 未登录：说明为什么进不来，并给出可走的路 -->
+    <div v-if="!canWrite" class="gate reveal" style="--d:.08s">
+      <div class="gate-glyph" aria-hidden="true">✎</div>
+      <h2>写作舱需要作者权限</h2>
+      <p v-if="!auth.isLoggedIn">
+        你还没有登录。登录后即为读者，可阅读、补充光芒、投瓶与申请友链；
+        发布文章需要站长把角色提升为作者。
+      </p>
+      <p v-else>
+        你当前是读者。阅读、补充光芒、投瓶与申请友链都已可用；
+        想在这里写文章，需要站长把角色提升为作者。
+      </p>
+      <div class="gate-actions">
+        <RouterLink v-if="!auth.isLoggedIn" class="btn btn-primary" :to="{ path: '/login', query: { redirect: '/write' } }">
+          登录 / 注册
+        </RouterLink>
+        <RouterLink class="btn btn-ghost" to="/account">查看我的星籍</RouterLink>
+        <RouterLink class="btn btn-ghost" to="/archive">先去逛逛星图</RouterLink>
+      </div>
+    </div>
+
+    <div v-else class="studio">
       <div class="studio-desk reveal" style="--d:.1s" :style="{ '--mood': activeMood.color }">
         <div class="mood-row">
           <button
@@ -218,6 +245,20 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 权限门槛提示：与「空状态」同一套语言，不做刺眼的报错感 */
+.gate{
+  border:1px dashed var(--line); border-radius:var(--r-lg); background:var(--surface);
+  padding:clamp(30px,5vw,64px); text-align:center; display:flex; flex-direction:column;
+  align-items:center; gap:14px;
+}
+.gate-glyph{
+  width:64px; height:64px; border-radius:50%; display:grid; place-items:center; font-size:24px;
+  color:var(--primary); background:var(--primary-soft); box-shadow:0 0 26px var(--primary-soft);
+}
+.gate h2{font-family:var(--font-serif); font-weight:900; font-size:clamp(22px,2.8vw,30px)}
+.gate p{font-size:14px; line-height:2; color:var(--ink-dim); max-width:52ch}
+.gate-actions{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:8px}
+
 .studio{display:grid; grid-template-columns:1fr 300px; gap:28px}
 .studio-desk{
   border:1px solid var(--line); border-radius:var(--r-lg);
