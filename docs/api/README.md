@@ -43,6 +43,21 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 - **技术笔记归属更严格**：只有作者本人能改/删自己的笔记，**ADMIN 也不能操作他人笔记**（`笔记比文章严格`）
 - ⚠️ **角色变更需要重新登录才生效**：`PUT /user/{id}/role` 只更新数据库，不会重签 JWT；网关读的是 token 里的 `role` extra，所以被调整的用户必须重新登录，新角色才会生效
 
+### 作者申请（读者 → 作者）
+
+不新增独立申请表：待审状态每人最多一条，直接放在 `user` 表 —— **`role_applied_at` 非空即「有一条待审核申请」**，审核队列复用既有的 `GET /user/list`。
+
+| 动作 | 调用 | 效果 |
+|---|---|---|
+| 申请 | `PUT /user/role-apply` `{note?}` | `role_applied_at = now`，角色不变；重复申请覆盖为最新理由与时间 |
+| 撤回 | `PUT /user/role-apply/cancel` | 清空 `role_applied_at` / `role_apply_note` |
+| 通过 | `PUT /user/{id}/role` `{role:"AUTHOR"}` | 角色变 AUTHOR，并清空待审 |
+| 驳回 | `PUT /user/{id}/role` `{role:"READER"}` | 角色不变但清空待审 |
+
+- **通过与驳回都复用既有的改角色接口**，`changeRole` 内统一清空申请字段 —— 这样「点通过」与「站长直接改角色」两条路径不会留下自相矛盾的待审状态
+- 已提交申请未通过前，该用户仍是 READER，网关按 JWT 角色拦截其创作请求（`POST /notes`、`POST /posts` 等返回 403）
+- 申请无服务端频率限制：私人站点，站长自己看得见申请人是谁；空理由也允许提交
+
 ## 接口一览（经网关调用）
 
 ### user-service :8101
@@ -56,8 +71,10 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | GET | `/user/profile` | 当前用户资料 | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
 | PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
-| PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user | ADMIN |
-| GET | `/user/list` | 用户列表（供角色管理页枚举） | ADMIN |
+| PUT | `/user/role-apply` | 读者申请成为作者 `{note?}`（理由 ≤200 字）；已申请则覆盖为最新，返回更新后的 user | 登录（读者即可） |
+| PUT | `/user/role-apply/cancel` | 撤回自己的申请，返回更新后的 user | 登录 |
+| PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user；**同时清空该用户的待审申请** | ADMIN |
+| GET | `/user/list` | 用户列表（供角色管理页枚举）；**同时充当作者申请审核队列**，含 `roleAppliedAt`/`roleApplyNote` | ADMIN |
 
 ### content-service :8102 - 文章
 
@@ -141,7 +158,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。
-已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）。拆库：改各服务 `MYSQL_DB` 环境变量。
+已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 > `04_post_views_glow.sql` 最后一段会用 `post_glow` 明细重算 `post.glow`，升级前的历史点赞没有 user_id 明细，重算后会计数归零——需要保留旧计数时跳过该段。
 
@@ -157,6 +174,6 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
 - 未做评论/文件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
 - 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（光谱页目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
-- 角色变更需重新登录才生效（见上「角色模型」）
+- 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102

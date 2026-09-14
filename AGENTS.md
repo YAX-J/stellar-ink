@@ -182,7 +182,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
   `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
   `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
-  `06_note.sql`（技术笔记 `note` 表）。
+  `06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）。
+- 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
+  最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
+  **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
+  不要新加「驳回」专用接口，否则「点通过」与「直接改角色」会出现两套代码路径与不一致状态。
 - 浏览量口径：登录用户在 `post_view` 闸门表按天去重（每人每天只计一次），未登录访客每次计数。
   **该表与内容类型无关，文章与笔记共用**（只记「某用户某天已计一次」）。
   点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id,user_id)`），未登录访客计次不记态。
@@ -222,10 +226,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、
   `/note/:id`、`/note/edit`，导航符号 ❖（光谱改用 ▤）。
   正文渲染抽到 `components/common/MarkdownBody.vue`（文章与笔记共用，含代码块复制按钮）。
+- 作者申请已完成（读者 → 作者闭环）：`PUT /user/role-apply` 提交/覆盖申请（带可选理由）、
+  `PUT /user/role-apply/cancel` 撤回、`GET /user/list` 兼作审核队列（含 `roleAppliedAt`/`roleApplyNote`）、
+  站长在账号页「成员管理」一键通过/驳回。前端：账号页权限面板三态（可申请 / 审核中可撤回 / 已是作者）
+  + 待审计数 + 通过驳回按钮，两处都提示「通过后需重新登录才生效」。
 - 尚未做（待明确要求）：搜索页（后端 `/search` 已就绪但前端未接）、友链审核页
   （`PUT /links/{id}/status` 已就绪但前端未接）、个人资料写回后端
   （`PUT /user/profile` 已就绪但前端仍用 localStorage）、真正的分页/无限滚动
   （当前固定 `page=1&size=100`，超过 100 篇会看不到更早文章；同时 `/user/authors`
   一次最多 100 个 id 且超限是报错不是截断，做分页时必须分批）。
+- 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
 - 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
   笔记间反向链接、`verified_at` 的到期提醒；AI 自动打标签/关联推荐需先明确解锁。
