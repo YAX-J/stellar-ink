@@ -79,6 +79,12 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- 头像对象存储（stellar.ink.storage.type=cos 时才真正使用，见 CosStorageConfig） -->
+        <dependency>
+            <groupId>com.qcloud</groupId>
+            <artifactId>cos_api</artifactId>
+        </dependency>
+
         <!-- 接口文档 -->
         <dependency>
             <groupId>com.github.xiaoymin</groupId>

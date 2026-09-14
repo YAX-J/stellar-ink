@@ -15,3 +15,21 @@ sa-token:
 springdoc:
   swagger-ui:
     enabled: true
+
+# 头像上传可调项（改 Nacos 后需重启生效：@ConfigurationProperties 未开 refresh）
+stellar:
+  ink:
+    storage:
+      # local 本地磁盘 / cos 腾讯云对象存储 —— 换存储与回滚都只改这一个值
+      type: local
+      cos:
+        bucket: stellar-ink-avatars-1459736092   # 必须带 APPID 后缀
+        region: ap-shanghai
+        # 对外基址填 CDN 域名；留空则用 COS 默认域名
+        public-base: ''
+        key-prefix: avatars/
+        # 密钥不写在这里：只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读
+    upload:
+      public-prefix: /uploads
+      avatar-sub-dir: avatars
+      avatar-max-bytes: 1048576

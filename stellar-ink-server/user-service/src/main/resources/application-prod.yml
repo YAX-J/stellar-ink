@@ -34,6 +34,30 @@ spring:
       validation-query: SELECT 1
       test-while-idle: true
 
+  # 头像上传：单文件 1MB，整个请求 2MB 与 Nginx client_max_body_size 对齐
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 2MB
+
+# 头像存储：容器内固定 /app/data/uploads（type=local 时由 docker-compose 卷挂载持久化）。
+# 生产推荐 type=cos：图片与数据库解耦，多实例/重建容器都不丢头像；此时该目录不再使用。
+stellar:
+  ink:
+    storage:
+      type: ${STORAGE_TYPE:local}
+      cos:
+        bucket: ${COS_BUCKET:}
+        region: ${COS_REGION:}
+        public-base: ${COS_PUBLIC_BASE:}
+        key-prefix: avatars/
+        # 密钥只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读取（见 StorageProperties）
+    upload:
+      dir: ${UPLOAD_DIR:/app/data/uploads}
+      public-prefix: /uploads
+      avatar-sub-dir: avatars
+      avatar-max-bytes: 1048576
+
 sa-token:
   token-name: Authorization
   token-style: uuid
