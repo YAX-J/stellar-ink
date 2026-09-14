@@ -53,6 +53,9 @@ spring:
     sentinel:
       eager: true
       transport:
+        # 未部署 Sentinel dashboard 时这里连不上，客户端每 15s 重试一次并打 WARN 心跳日志。
+        # 这是刻意接受的无害噪音：eager 保持开启，等将来真要接 dashboard 时改 SENTINEL_DASHBOARD 即可，
+        # 无需动代码。若嫌日志吵，把下面 logging 里的 SentinelHealthIndicator 调成 ERROR（见文件末尾）。
         dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
 
 sa-token:
@@ -70,3 +73,11 @@ management:
       exposure:
         include: health,info,prometheus
       base-path: /actuator
+
+# 生产日志降噪
+logging:
+  level:
+    # 没有 dashboard 时的心跳失败告警（每 15s 一条）——不是故障，压到 ERROR 避免淹没真实告警
+    com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR
+    # Nacos 客户端在部分网络下的重试日志同样属噪音
+    com.alibaba.nacos: WARN
