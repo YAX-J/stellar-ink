@@ -26,5 +26,11 @@ public class UserVO {
     /** 角色：READER 读者 / AUTHOR 作者 / ADMIN 站长 */
     private String role;
 
+    /** 申请成为作者的时间；非空表示有一条待审核申请（站长据此得到审核队列） */
+    private LocalDateTime roleAppliedAt;
+
+    /** 申请理由，供站长审核参考 */
+    private String roleApplyNote;
+
     private LocalDateTime createdAt;
 }
