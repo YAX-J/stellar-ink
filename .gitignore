@@ -15,11 +15,16 @@ tools/
 # 运行时日志
 logs/
 
+# 本地上传的图片/头像文件（开发目录 data/，生产 deploy/docker/data/ 卷挂载）
+data/
+
 # Docker 部署敏感配置
 deploy/docker/.env
 
 # 本地启动脚本（含服务器 IP/密码等连接信息，不入库）
 deploy/scripts/start-all.bat
+# 本地对象存储凭据（含 COS SecretId/SecretKey，绝不可入库）
+deploy/scripts/cos-env.ps1
 
 # IDEA 运行配置（含服务器 IP/密码，仅本机使用）
 .run/

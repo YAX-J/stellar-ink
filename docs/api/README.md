@@ -19,7 +19,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | 服务 | 端口 | 路由前缀 | 表 |
 |---|---|---|---|
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
-| user-service | 8101 | `/auth/**` `/user/**` | user |
+| user-service | 8101 | `/auth/**` `/user/**` `/uploads/**` | user |
 | content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / note / meteor / echo / link |
 
 ## 鉴权（Sa-Token，网关统一）
@@ -58,6 +58,46 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 - 已提交申请未通过前，该用户仍是 READER，网关按 JWT 角色拦截其创作请求（`POST /notes`、`POST /posts` 等返回 403）
 - 申请无服务端频率限制：私人站点，站长自己看得见申请人是谁；空理由也允许提交
 
+### 头像（图片 + 底字双轨）
+
+```bash
+# 上传（multipart，字段名固定为 file）
+curl -X POST http://localhost:8080/user/avatar -H "Authorization: <token>" -F "file=@me.png"
+# 删除（回落底字头像）
+curl -X DELETE http://localhost:8080/user/avatar -H "Authorization: <token>"
+```
+
+| 项 | 口径 |
+|---|---|
+| 存储位置 | 由 `stellar.ink.storage.type` 决定：`local`（默认）落 user-service 本地磁盘 `stellar.ink.upload.dir`（dev `./data/uploads`，prod `/app/data/uploads`，环境变量 `UPLOAD_DIR`）；`cos` 存腾讯云对象存储 |
+| 访问路径 | `local`：`/uploads/avatars/<服务端生成的文件名>`，**匿名可读**（独立网关路由 `user-uploads`）；`cos`：`https://<bucket>.cos.<region>.myqcloud.com/<key>` 或 CDN 域名，由 COS 直接提供，不经网关 |
+| 返回值 | `local` 返回**站内相对路径**（`/uploads/avatars/u1_ab12cd34.jpg`）；`cos` 返回**绝对 URL**。前端 `<img src>` 对两者一视同仁 |
+| 文件名校验 | 服务端用 `u{userId}_{uuid8}.{jpg\|png\|webp}` 重新命名，**不采用客户端文件名**，从根上消除 `../` 穿越 |
+| 格式校验 | 按文件头（ImageIO 魔数）识别真实格式，只接受 JPG / PNG / WebP；**不信任 Content-Type 与扩展名** |
+| 大小限制 | 单文件 1MB（`spring.servlet.multipart.max-file-size` + 业务层字节数双拦），整请求 2MB 与 Nginx `client_max_body_size` 对齐 |
+| 换头像 | 先写新对象、写库成功后再删旧对象；删库失败会回收新对象。旧对象不做历史保留 |
+| 删除头像 | `avatar_url` 显式 `UPDATE ... SET NULL`（MyBatis-Plus `updateById` 默认忽略 null，直接置 null 会「假成功」） |
+| 降级链路 | 前端 `UserAvatar` 组件统一处理：图片 → `avatarText` 底字 → 昵称首字 → `星`；图片加载失败同样降级 |
+| 未做 | 无缩略图生成；前端上传前用 canvas 压到最长边 512px 的 JPEG，服务端不引图像库做二次处理 |
+
+### 头像对象存储（腾讯云 COS）
+
+```bash
+# 切换到 COS：只需环境变量（密钥只从环境变量注入，配置文件里写不进去）
+export STORAGE_TYPE=cos
+export COS_BUCKET=stellar-ink-avatars-1459736092   # 必须带 APPID 后缀
+export COS_REGION=ap-shanghai
+export COS_PUBLIC_BASE=https://cdn.example.com     # 留空则用 COS 默认域名
+export COS_SECRET_ID=<CAM 子账号 SecretId>
+export COS_SECRET_KEY=<CAM 子账号 SecretKey>
+```
+
+- 换存储与回滚的唯一开关是 `storage.type`；改回 `local` 后，库里遗留的 COS 绝对 URL 会被本地实现**安全忽略**（不会误删本地文件），反之 `cos` 实现也只解析自己前缀下的对象键
+- 需要的最小权限：`PutObject` / `GetObject` / `HeadObject` / `DeleteObject`（策略资源限定到该桶）
+- 桶权限：**公有读私有写**；**不要**开放 ListBucket（验证方法见 `docs/architecture/avatar-minio.md`）
+- 密钥管理：使用 CAM 子账号密钥并限定单桶；**绝不用主账号密钥**，绝不入库/入 Nacos
+- 详细方案、部署形态与迁移步骤见 [docs/architecture/avatar-minio.md](../architecture/avatar-minio.md)
+
 ## 接口一览（经网关调用）
 
 ### user-service :8101
@@ -67,9 +107,11 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | POST | `/auth/register` | 注册（开放），注册即登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/login` | 登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/logout` | 登出（无状态 JWT 语义收口，前端丢 token） | 登录 |
-| GET | `/user/authors?ids=1,2` | 批量查询公开作者摘要（最多 100 个，仅返回 id/笔名/头像底字） | 公开 |
-| GET | `/user/profile` | 当前用户资料 | 登录 |
+| GET | `/user/authors?ids=1,2` | 批量查询公开作者摘要（最多 100 个，仅返回 id/笔名/头像底字/头像路径） | 公开 |
+| GET | `/user/profile` | 当前用户资料（含 `avatarText` 底字与 `avatarUrl` 图片路径） | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
+| POST | `/user/avatar` | 上传/替换头像（**multipart，字段名 `file`**），返回带 `avatarUrl` 的资料 | 登录 |
+| DELETE | `/user/avatar` | 删除头像，回落为 `avatarText` 底字头像 | 登录 |
 | PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
 | PUT | `/user/role-apply` | 读者申请成为作者 `{note?}`（理由 ≤200 字）；已申请则覆盖为最新，返回更新后的 user | 登录（读者即可） |
 | PUT | `/user/role-apply/cancel` | 撤回自己的申请，返回更新后的 user | 登录 |
@@ -158,7 +200,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。
-已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）。拆库：改各服务 `MYSQL_DB` 环境变量。
+已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、`08_user_avatar.sql`（`user.avatar_url` 头像图片路径）。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 > `04_post_views_glow.sql` 最后一段会用 `post_glow` 明细重算 `post.glow`，升级前的历史点赞没有 user_id 明细，重算后会计数归零——需要保留旧计数时跳过该段。
 
@@ -177,3 +219,6 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102
+- 头像只有「有/无图片」两态：无缩略图、无 CDN、无对象存储；文件在 user-service 本地磁盘，
+  多实例部署需换共享存储（当前单实例部署，与登录失败计数同口径）。生产务必保留
+  `deploy/docker/data/uploads` 卷，否则容器重建会丢头像

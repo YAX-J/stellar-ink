@@ -59,10 +59,12 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 | 服务 | 路由前缀 |
 |---|---|
-| user-service | `/auth/**`、`/user/**` |
+| user-service | `/auth/**`、`/user/**`、`/uploads/**` |
 | content-service | `/posts/**`、`/notes/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
 
 网关关闭 discovery locator，只允许显式路由，防止通过 `/{serviceId}/**` 绕过鉴权。`/internal/**` 不对外路由。
+`/uploads/**` 是 `user-uploads` 路由（指向 user-service 的静态资源映射），用于头像等上传文件的**匿名读**；
+上传/删除本身走 `/user/avatar`，受网关鉴权保护。
 
 ## 鉴权
 
@@ -78,9 +80,14 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 | 服务 | 负责的数据 |
 |---|---|
-| user-service | `user` 表 |
+| user-service | `user` 表；头像图片文件（本地磁盘 `UPLOAD_DIR`，生产由 Docker 卷持久化） |
 | content-service | `post`、`post_glow`、`note` 表，`meteor`、`echo`、`link`，以及基于 `post` 的实时统计 |
 | 跨内容类型共用 | `post_view`（浏览计数闸门：只记「某用户某天已计一次」，与内容类型无关，文章与笔记共用） |
+
+> 头像存储有**两种实现**（`stellar.ink.storage.type` 切换）：
+> `local` 本地磁盘（文件与库必须同机可达，多实例或本地连远程库会出现「上传成功但图片 404」）；
+> `cos` 腾讯云对象存储（推荐生产，图片与数据库解耦）。
+> 方案、部署形态、迁移与回滚见 [avatar-minio.md](avatar-minio.md)。
 
 当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 

@@ -192,11 +192,32 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
   `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
   `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
-  `06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）。
+  `06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、
+  `08_user_avatar.sql`（`user.avatar_url` 头像图片路径）。
 - 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
   最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
   **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
   不要新加「驳回」专用接口，否则「点通过」与「直接改角色」会出现两套代码路径与不一致状态。
+- 头像口径：`avatar_url` 存**可直接给 `<img src>` 用的地址**（`local` 为站内相对路径
+  `/uploads/avatars/u{userId}_{uuid8}.{ext}`；`cos` 为 COS/CDN 绝对 URL）。上传 `POST /user/avatar`
+  （multipart，字段名 `file`）、删除 `DELETE /user/avatar`。**存储位置由 `stellar.ink.storage.type`
+  一个开关决定**（`local` 默认 / `cos`），业务层依赖 `storage/ObjectStorage` 接口，
+  换存储=新增一个实现类，可随时回滚。
+  - `local`：文件落 `UPLOAD_DIR`（生产 Docker 卷 `deploy/docker/data/uploads`，必须保留）；
+    读取走 `/uploads/**` 独立网关路由（匿名可读）。**限制：文件与库必须同机可达**，
+    本地连远程库或跑多实例时会出现「上传成功但图片 404」。
+  - `cos`：腾讯云对象存储。`bucket` 必须带 APPID 后缀、`region` 形如 `ap-shanghai`；
+    `public-base` 必须填**浏览器能访问到**的地址（CDN 域名），填内网端点或 localhost 会导致全站图片 404。
+  - 校验三件套收在 `storage/AvatarValidator`（服务端改名 + ImageIO 魔数认格式 + 1MB 双拦），
+    两个实现共用，**对象存储实现不得绕过**；`ObjectStorage.delete` 必须尽力而为、
+    只删自己前缀下的对象（切换存储后遗留的另一种形态 URL 要安全忽略）。
+  - 密钥**刻意不作为配置项**：只从环境变量 `COS_SECRET_ID` / `COS_SECRET_KEY` 读取（见 `StorageProperties`），
+    生产用 CAM 子账号密钥并限定单桶，绝不用主账号密钥。
+  - 换头像先写新对象、写库成功后再删旧对象（删库失败回收新对象）；**删除头像必须用
+    `LambdaUpdateWrapper.set(..., null)`** —— MyBatis-Plus 的 `updateById` 默认忽略 null 字段，
+    直接 `setAvatarUrl(null)` 会「接口成功、刷新又回来」。
+  - 前端一律用 `components/common/UserAvatar.vue` 渲染，降级链路「图片 → avatarText 底字 → 昵称首字 → 星」，
+    不要在视图里各写一套取字/降级逻辑。完整方案见 `docs/architecture/avatar-minio.md`。
 - 浏览量口径：登录用户在 `post_view` 闸门表按天去重（每人每天只计一次），未登录访客每次计数。
   **该表与内容类型无关，文章与笔记共用**（只记「某用户某天已计一次」）。
   点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id,user_id)`），未登录访客计次不记态。
@@ -240,11 +261,20 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `PUT /user/role-apply/cancel` 撤回、`GET /user/list` 兼作审核队列（含 `roleAppliedAt`/`roleApplyNote`）、
   站长在账号页「成员管理」一键通过/驳回。前端：账号页权限面板三态（可申请 / 审核中可撤回 / 已是作者）
   + 待审计数 + 通过驳回按钮，两处都提示「通过后需重新登录才生效」。
+- 头像已完成（图片 + 底字双轨 + 可切换对象存储）：`user.avatar_url` + `POST/DELETE /user/avatar`
+  （multipart 上传，服务端改名 + 魔数校验 + 1MB 双拦）；存储有 `local`（本地磁盘 + `/uploads/**`
+  匿名读路由 + Docker 卷）与 `cos`（腾讯云对象存储）两种，由 `stellar.ink.storage.type` 切换。
+  前端新增 `components/common/UserAvatar.vue`（降级链路：图片 → 底字 → 昵称首字 → 星），
+  接入**导航身份入口、文章/笔记作者署名 AuthorBadge（`/user/authors` 已带 `avatarUrl`）、
+  账号页「我的星籍」（可上传/更换/恢复底字）、星籍页 PassportView**；
+  账号页可单独保存 `avatarText` 底字，未上传图片时全站显示底字。
+  一期边界：无缩略图/CDN/对象存储迁移脚本、无历史头像保留。
 - 尚未做（待明确要求）：搜索页（后端 `/search` 已就绪但前端未接）、友链审核页
-  （`PUT /links/{id}/status` 已就绪但前端未接）、个人资料写回后端
-  （`PUT /user/profile` 已就绪但前端仍用 localStorage）、真正的分页/无限滚动
+  （`PUT /links/{id}/status` 已就绪但前端未接）、
+  真正的分页/无限滚动
   （当前固定 `page=1&size=100`，超过 100 篇会看不到更早文章；同时 `/user/authors`
   一次最多 100 个 id 且超限是报错不是截断，做分页时必须分批）。
+  （`PUT /user/profile` 已接：账号页可改笔名/签名/底字/每日目标，`/bridge` 舰桥页仍用 localStorage 草稿。）
 - 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
 - 技术笔记编辑器已完成：笔记编辑区换成 CodeMirror 6 的 Live Preview（`components/editor/MarkdownEditor.vue`）——
   光标行显示源码、其余行渲染；支持 `Ctrl+B/I/K/S`、Tab 缩进、撤销重做、Markdown 语法着色，

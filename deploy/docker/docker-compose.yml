@@ -108,9 +108,19 @@ services:
     restart: unless-stopped
     environment:
       <<: *db-env
+      # 头像存储：local 用下方卷目录；cos 用腾讯云对象存储（此时卷不再使用，可保留以备回滚）
+      STORAGE_TYPE: ${STORAGE_TYPE:-local}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_REGION: ${COS_REGION:-}
+      COS_PUBLIC_BASE: ${COS_PUBLIC_BASE:-}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      # 仅 STORAGE_TYPE=local 时生效的落盘目录（必须是卷挂载点，否则容器重建会丢头像）
+      UPLOAD_DIR: /app/data/uploads
     extra_hosts: *extra-hosts
     volumes:
       - ./logs/user-service:/app/logs
+      - ./data/uploads:/app/data/uploads
     healthcheck:
       <<: *health-defaults
       test: ["CMD-SHELL", "curl -fs http://localhost:8101/actuator/health || exit 1"]
