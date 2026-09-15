@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useNoteStore, NOTE_TYPES, VISIBILITY_OPTIONS, NOTE_TEMPLATE } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
 import { emit, TOAST } from '@/utils/bus'
+import { countWords } from '@/utils/wordCount'
 
 /* 编辑器懒加载：CodeMirror 6 只在本页下载，首屏与其它页面完全不受影响 */
 const MarkdownEditor = defineAsyncComponent(() => import('@/components/editor/MarkdownEditor.vue'))
@@ -38,7 +39,8 @@ const tags = computed(() => tagInput.value
   .filter(Boolean)
   .slice(0, 10))
 
-const wordCount = computed(() => body.value.replace(/\s/g, '').length)
+/* 实时字数与后端同口径（见 utils/wordCount.js），发布后列表里的数字与这里一致 */
+const wordCount = computed(() => countWords(body.value))
 const ownNotes = computed(() => noteStore.mine.filter((n) => n.id !== noteId.value).slice(0, 8))
 
 const saveLabel = computed(() => {

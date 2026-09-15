@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.common.util.WordCount;
 import com.stellarink.content.note.mapper.NoteMapper;
 import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.note.service.NoteService;
@@ -392,7 +393,8 @@ public class NoteServiceImpl implements NoteService {
     }
 
     private static int countWords(String content) {
-        return content.replaceAll("\\s", "").length();
+        /* 口径统一在 common-core 的 WordCount：剥离 Markdown 标记后计非空白字符 */
+        return WordCount.count(content);
     }
 
     private static String requireContent(String content) {

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
 import { PROMPTS } from '@/api/mock'
+import { countWords } from '@/utils/wordCount'
 
 const router = useRouter()
 const route = useRoute()
@@ -33,7 +34,8 @@ const drafts = ref([])
 const editingPublished = ref(false)
 let saveTimer = null
 
-const wordCount = computed(() => body.value.replace(/\s/g, '').length)
+/* 实时字数与后端同口径（见 utils/wordCount.js），发射后列表里的数字与这里一致 */
+const wordCount = computed(() => countWords(body.value))
 const readTime = computed(() => Math.ceil(wordCount.value / 400))
 const saveLabel = computed(() => {
   if (saving.value) return '正在保存…'
