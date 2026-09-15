@@ -4,10 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore, READ_LIMITS, READ_DEFAULTS } from '@/stores/settings'
+import { useCommentStore } from '@/stores/comments'
+import { useAuthorStore } from '@/stores/authors'
 import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
 
 const route = useRoute()
@@ -15,6 +18,8 @@ const router = useRouter()
 const postStore = usePostStore()
 const auth = useAuthStore()
 const settings = useSettingsStore()
+const commentStore = useCommentStore()
+const authorStore = useAuthorStore()
 
 const post = computed(() => postStore.byId(route.params.id))
 const prevPost = computed(() => post.value?.prev || null)
@@ -22,6 +27,36 @@ const nextPost = computed(() => post.value?.next || null)
 const canEdit = computed(() => auth.isAdmin || (
   auth.isAuthorOrAbove && Number(auth.user?.id) === Number(post.value?.userId)
 ))
+const comments = computed(() => commentStore.forPost(route.params.id))
+const commentDraft = ref('')
+const commentError = ref('')
+const canDeleteComment = (comment) => auth.isAdmin || Number(auth.user?.id) === Number(comment.userId)
+function fmtCommentTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+async function loadComments(id) {
+  try { await commentStore.fetchForPost(id) } catch { /* 评论读取失败不影响正文 */ }
+}
+
+async function submitComment() {
+  const content = commentDraft.value.trim()
+  if (!content) { commentError.value = '写下一句再发射吧' ; return }
+  if (content.length > 1000) { commentError.value = '评论最多 1000 个字' ; return }
+  commentError.value = ''
+  try {
+    await commentStore.add(route.params.id, content)
+    commentDraft.value = ''
+  } catch (error) { commentError.value = error.message }
+}
+
+async function deleteComment(comment) {
+  if (!window.confirm('确定要收回这条回声吗？')) return
+  try { await commentStore.remove(comment.id, route.params.id) } catch { /* 全局 toast 已提示 */ }
+}
 
 /* 正文：Markdown 解析为块级结构交给 MarkdownBody 渲染（首段下沉由该组件判定） */
 const rendered = computed(() => parseMarkdown(post.value?.content || ''))
@@ -136,6 +171,7 @@ watch(
     restoredId = null
     restoreHint.value = false
     await loadPost(id)
+    loadComments(id)
     onScroll()
     restorePosition()
   },
@@ -257,6 +293,34 @@ onUnmounted(() => {
             <h5>{{ nextPost.title }}</h5>
           </div>
         </div>
+
+        <section class="comments-panel reveal" style="--d:.36s" aria-label="文章评论">
+          <div class="comments-head">
+            <div><span class="kicker">ECHOES · 回声</span><h3>留下一句回声</h3></div>
+            <span class="comments-count">{{ comments.length }} 条</span>
+          </div>
+          <div v-if="auth.isLoggedIn" class="comment-compose">
+            <textarea v-model="commentDraft" maxlength="1000" rows="3" placeholder="写下你的想法，和作者在星海相遇…" @keydown.ctrl.enter="submitComment" />
+            <div class="comment-compose-foot">
+              <span class="comment-hint">Ctrl + Enter 发送<span v-if="commentError"> · {{ commentError }}</span></span>
+              <button class="btn btn-primary comment-submit" :disabled="commentStore.submitting" @click="submitComment">{{ commentStore.submitting ? '发射中…' : '发射回声' }}</button>
+            </div>
+          </div>
+          <p v-else class="comment-login-hint">登录后即可留下回声。</p>
+          <p v-if="commentStore.loading && !comments.length" class="comments-empty">正在收听回声…</p>
+          <p v-else-if="!comments.length" class="comments-empty">还没有回声，成为第一个回应这颗星的人吧。</p>
+          <ul v-else class="comment-list">
+            <li v-for="comment in comments" :key="comment.id" class="comment-item">
+              <UserAvatar
+                :url="authorStore.find(comment.userId).avatarUrl"
+                :text="authorStore.find(comment.userId).avatarText"
+                :nickname="authorStore.find(comment.userId).nickname"
+                :size="34"
+              />
+              <div class="comment-main"><div class="comment-meta"><b>{{ authorStore.find(comment.userId).nickname }}</b><time>{{ fmtCommentTime(comment.createdAt) }}</time><button v-if="canDeleteComment(comment)" class="comment-delete" @click="deleteComment(comment)">收回</button></div><p>{{ comment.content }}</p></div>
+            </li>
+          </ul>
+        </section>
       </div>
     </div>
 
@@ -346,6 +410,29 @@ onUnmounted(() => {
 .read-nav-cell small{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint); letter-spacing:.2em}
 .read-nav-cell h5{font-family:var(--font-serif); font-size:15px; margin-top:8px; line-height:1.6; font-weight:600}
 .read-nav-cell.next{text-align:right}
+
+.comments-panel{margin-top:72px; border-top:1px solid var(--line); padding-top:34px}
+.comments-head{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:24px}
+.comments-head .kicker{margin:0 0 8px}
+.comments-head h3{font-family:var(--font-serif); font-size:26px; font-weight:900}
+.comments-count{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+.comment-compose{border:1px solid var(--line); background:var(--surface); padding:16px; margin-bottom:26px}
+.comment-compose textarea{width:100%; border:0; outline:none; resize:vertical; min-height:72px; background:transparent; color:var(--ink); font:inherit; line-height:1.8}
+.comment-compose-foot{display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:8px}
+.comment-hint{font-size:11px; color:var(--ink-faint)}
+.comment-hint span{color:var(--rose)}
+.comment-submit{height:36px; padding:0 16px; border-radius:var(--r-sm); font-size:12px}
+.comment-submit:disabled{opacity:.6; cursor:wait}
+.comment-login-hint,.comments-empty{font-size:13px; color:var(--ink-faint); padding:14px 0}
+.comment-list{list-style:none; margin:0; padding:0}
+.comment-item{display:flex; gap:12px; padding:18px 0; border-bottom:1px solid var(--line)}
+.comment-main{min-width:0; flex:1}
+.comment-meta{display:flex; align-items:center; gap:10px; margin-bottom:6px}
+.comment-meta b{font-size:13px; color:var(--ink-dim)}
+.comment-meta time{font-family:var(--font-mono); color:var(--ink-faint); font-size:10px}
+.comment-main p{white-space:pre-wrap; margin:0; line-height:1.8; font-size:14px; color:var(--ink)}
+.comment-delete{margin-left:auto; border:0; background:transparent; color:var(--ink-faint); font-size:11px; cursor:pointer}
+.comment-delete:hover{color:var(--rose)}
 
 .to-top{position:fixed; right:26px; bottom:26px; z-index:45; width:44px; height:44px;
   border-radius:50%; border:1px solid var(--line); background:color-mix(in srgb, var(--bg-3) 90%, transparent);

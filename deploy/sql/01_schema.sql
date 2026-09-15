@@ -55,6 +55,22 @@ CREATE TABLE IF NOT EXISTS `post_view` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '浏览计数闸门';
 
 -- -------------------------------------------------------------
+-- 文章评论（软删除）
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `post_comment` (
+    `id`         BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `post_id`    BIGINT        NOT NULL                COMMENT '文章 ID',
+    `user_id`    BIGINT        NOT NULL                COMMENT '评论用户 ID',
+    `content`    VARCHAR(1000) NOT NULL                COMMENT '评论内容',
+    `status`     TINYINT       NOT NULL DEFAULT 1      COMMENT '1 正常 / 0 已删除',
+    `created_at` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '评论时间',
+    `updated_at` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '最后更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_post_status_created` (`post_id`, `status`, `created_at`),
+    KEY `idx_user_id` (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '文章评论';
+
+-- -------------------------------------------------------------
 -- 技术笔记（标本）：与文章同为内容，但结构化、可检索、可私有、会过期
 -- 结构约定：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，
 --          读取端据此自动生成目录，不额外占用数据库列

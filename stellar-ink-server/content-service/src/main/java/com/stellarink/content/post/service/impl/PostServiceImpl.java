@@ -7,6 +7,8 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.comment.mapper.CommentMapper;
+import com.stellarink.content.comment.pojo.Comment;
 import com.stellarink.content.post.mapper.PostGlowMapper;
 import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.mapper.PostViewMapper;
@@ -25,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
@@ -44,6 +47,7 @@ public class PostServiceImpl implements PostService {
     private final PostMapper postMapper;
     private final PostGlowMapper postGlowMapper;
     private final PostViewMapper postViewMapper;
+    private final CommentMapper commentMapper;
 
     @Override
     public IPage<PostVO> page(PostQueryDTO query) {
@@ -194,12 +198,19 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    @Transactional
     public void delete(Long id) {
         Post post = requirePost(id);
         ensureEditable(post);
         postMapper.deleteById(id);
         /* 连带清掉点赞明细，避免同一篇文章重建后继承旧点赞态 */
         postGlowMapper.delete(new LambdaQueryWrapper<PostGlow>().eq(PostGlow::getPostId, id));
+        /* 评论保留审计记录但不再对外展示。 */
+        commentMapper.update(null, new LambdaUpdateWrapper<Comment>()
+                .eq(Comment::getPostId, id)
+                .eq(Comment::getStatus, 1)
+                .set(Comment::getStatus, 0)
+                .set(Comment::getUpdatedAt, LocalDateTime.now()));
         log.info("熄灭星体 id={} title={}", id, post.getTitle());
     }
 

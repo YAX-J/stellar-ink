@@ -14,7 +14,7 @@
                          ┌────────────┴────────────┐
                          ▼                         ▼
                   user-service :8101       content-service :8102
-                  用户、认证、角色          post / note / meteor
+                  用户、认证、角色          post / comment / note / meteor
                          │                  echo / link / stats
                          └────────────┬────────────┘
                                       ▼
@@ -36,6 +36,7 @@ stellar-ink-server/
 └── content-service/           内容聚合服务（8102）
     └── com.stellarink.content/
         ├── post/              文章、标签、搜索
+        ├── comment/           文章评论（公开读取、登录发表评论）
         ├── note/              技术笔记（结构化 / 可私有 / 可验证）
         ├── meteor/            流星备忘录
         ├── echo/              回声漂流瓶
@@ -81,7 +82,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 | 服务 | 负责的数据 |
 |---|---|
 | user-service | `user` 表；头像图片文件（本地磁盘 `UPLOAD_DIR`，生产由 Docker 卷持久化） |
-| content-service | `post`、`post_glow`、`note` 表，`meteor`、`echo`、`link`，以及基于 `post` 的实时统计 |
+| content-service | `post`、`post_glow`、`post_comment`、`note` 表，`meteor`、`echo`、`link`，以及基于 `post` 的实时统计 |
 | 跨内容类型共用 | `post_view`（浏览计数闸门：只记「某用户某天已计一次」，与内容类型无关，文章与笔记共用） |
 
 > 头像存储有**两种实现**（`stellar.ink.storage.type` 切换）：

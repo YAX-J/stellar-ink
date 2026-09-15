@@ -9,8 +9,8 @@
 | `response/` | 统一响应 `Response<T>` |
 | `enums/` | `ErrorCode`、`Role` 等共享枚举 |
 | `exception/` | 业务异常与系统异常 |
-| `dto/` | 接口请求模型，按 user/post/meteor/echo/link 分包 |
-| `vo/` | 接口响应模型，按领域分包 |
+| `dto/` | 接口请求模型，按 user/post/comment/meteor/echo/link 分包 |
+| `vo/` | 接口响应模型，按领域分包（含文章评论） |
 
 ## 约束
 

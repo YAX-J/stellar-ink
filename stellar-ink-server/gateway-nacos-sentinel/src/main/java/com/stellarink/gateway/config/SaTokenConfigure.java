@@ -41,6 +41,10 @@ public class SaTokenConfigure {
     /** 公开写接口：记录浏览（详情页自动触发；登录用户服务端按天去重） */
     private static final Pattern VIEWED_PATH = Pattern.compile("^/posts/\\d+/viewed$");
 
+    /** 评论新增与删除：登录读者即可，具体作者/站长归属由内容服务复核。 */
+    private static final Pattern COMMENT_CREATE_PATH = Pattern.compile("^/posts/\\d+/comments$");
+    private static final Pattern COMMENT_DELETE_PATH = Pattern.compile("^/posts/\\d+/comments/\\d+$");
+
     /** 文章单条路径：/posts/{id}（PUT 更新 / DELETE 删除，需 AUTHOR） */
     private static final Pattern POST_ID_PATH = Pattern.compile("^/posts/\\d+$");
 
@@ -98,6 +102,12 @@ public class SaTokenConfigure {
                     // 4) 读请求与 CORS 预检放行
                     if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                             || "OPTIONS".equalsIgnoreCase(method)) {
+                        return;
+                    }
+                    // 评论是登录读者即可的互动操作，不设 AUTHOR 角色门槛。
+                    if (("POST".equalsIgnoreCase(method) && COMMENT_CREATE_PATH.matcher(path).matches())
+                            || ("DELETE".equalsIgnoreCase(method) && COMMENT_DELETE_PATH.matcher(path).matches())) {
+                        StpUtil.checkLogin();
                         return;
                     }
                     // 5) 公开写接口白名单

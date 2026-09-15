@@ -193,7 +193,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
   `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
   `06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、
-  `08_user_avatar.sql`（`user.avatar_url` 头像图片路径）。
+  `08_user_avatar.sql`（`user.avatar_url` 头像图片路径）、
+  `09_comment.sql`（文章评论 `post_comment`）。
 - 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
   最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
   **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
@@ -241,7 +242,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
   后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
 - **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
-  `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。评论系统、文件上传、
+  `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
   AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
@@ -252,6 +253,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   全局 toast + traceId 排障、深读页 Markdown 渲染 + 目录 + 阅读设置 + 阅读位置记忆、
   文章浏览量（登录用户按天去重）与点赞去重（一人一赞 + 已赞态）；`orderBy` 支持
   `latest / hottest / longest` 三种排序。
+- 文章评论一期已完成：公开文章评论列表、登录读者发表评论、评论作者或 ADMIN 软删除；
+  正文最多 1000 字，前端深读页展示评论者头像与昵称。
 - 技术笔记一期已完成：独立 `note` 表与 `/notes` 接口（列表 / 我的 / 详情 / 增删改 / 标记已验证 / 浏览计数）、
   公开与私有两档可见性、正文用 `## 现象/环境/排查/结论/参考` 章节表达并由前端自动生成目录、
   列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、

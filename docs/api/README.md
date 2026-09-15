@@ -129,6 +129,9 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | PUT / DELETE | `/posts/{id}` | 更新 / 删除；AUTHOR 仅自己的文章，ADMIN 可操作全部 | AUTHOR |
 | POST | `/posts/{id}/glow` | 补充光芒，返回 `{glow, liked, applied}` | 公开 |
 | POST | `/posts/{id}/viewed` | 记录一次浏览，返回 `{counted}` | 公开 |
+| GET | `/posts/{postId}/comments` | 公开文章评论列表 | 公开 |
+| POST | `/posts/{postId}/comments` | 发表评论 `{content}`，返回评论 | 登录（READER） |
+| DELETE | `/posts/{postId}/comments/{commentId}` | 软删除评论 | 评论作者或 ADMIN |
 | GET | `/tags` | 标签计数（光谱） | 公开 |
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
 
@@ -137,6 +140,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - 分页 `size` 服务端硬上限 100（超过会被静默夹到 100），公开列表总条数从 `IPage.total` 取
 - 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数
 - 点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id, user_id)`，重复点击 `applied=false` 且不重复计数）；未登录访客一次点击一次计数，`liked` 恒为 `false`
+- 评论口径：仅登录用户可发表评论；公开文章评论匿名可读；评论作者或 ADMIN 可软删除，已删除评论不再出现在列表中；正文最多 1000 字，不支持楼中楼与匿名评论
 
 ### content-service :8102 - 技术笔记
 
@@ -200,7 +204,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
 初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。
-已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、`08_user_avatar.sql`（`user.avatar_url` 头像图片路径）。拆库：改各服务 `MYSQL_DB` 环境变量。
+已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、`08_user_avatar.sql`（`user.avatar_url` 头像图片路径）、`09_comment.sql`（文章评论 `post_comment`）。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 > `04_post_views_glow.sql` 最后一段会用 `post_glow` 明细重算 `post.glow`，升级前的历史点赞没有 user_id 明细，重算后会计数归零——需要保留旧计数时跳过该段。
 
@@ -214,7 +218,7 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - Sentinel 规则未持久化（sentinel-datasource-nacos 已引入，待配规则）
 - 未启用 Redis 令牌桶限流（需 Redis）；生产已有 Nginx 边缘限流（详见 `deploy/docker/nginx/default.conf`，注意 `^/(echos|links)$` 不分方法限流，`GET` 也在限流区内、超限 429）
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
-- 未做评论/文件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
+- 未做文件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
 - 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（光谱页目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
 - 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
