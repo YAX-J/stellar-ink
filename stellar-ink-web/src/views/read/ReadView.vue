@@ -75,10 +75,12 @@ let restoredId = null
 let restoreTimer = null
 let hintTimer = null
 
+/* 整页布局：正文铺满页面，不再设置行宽上限（右侧不留空白）。
+ * 字号 / 行距仍按阅读偏好下发。 */
 const readStyle = computed(() => ({
   '--read-fs': `${settings.read.fontSize}px`,
   '--read-lh': `${settings.read.lineHeight}`,
-  '--read-w': `${settings.read.width}ch`,
+  '--prose-max': '100%',
 }))
 
 function onScroll() {
@@ -190,7 +192,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-<section class="page read-page">
+<section class="page page-wide read-page">
   <p v-if="postStore.detailLoading && !post" class="state-text">正在读取这颗星…</p>
   <p v-else-if="postStore.error && !post" class="state-text error-text">
     {{ postStore.error }} <button class="state-action" @click="loadPost(route.params.id)">重新读取</button>
@@ -224,21 +226,15 @@ onUnmounted(() => {
             @input="settings.setRead({ lineHeight: Number($event.target.value) })"
           >
         </label>
-        <label>
-          <span>行宽 <b>{{ settings.read.width }}</b></span>
-          <input
-            :value="settings.read.width" type="range"
-            :min="READ_LIMITS.width.min" :max="READ_LIMITS.width.max" :step="READ_LIMITS.width.step"
-            @input="settings.setRead({ width: Number($event.target.value) })"
-          >
-        </label>
         <button class="tool-reset" @click="settings.resetRead()">
-          恢复默认（{{ READ_DEFAULTS.fontSize }}px / {{ READ_DEFAULTS.lineHeight }} / {{ READ_DEFAULTS.width }}）
+          恢复默认（{{ READ_DEFAULTS.fontSize }}px / {{ READ_DEFAULTS.lineHeight }}）
         </button>
       </div>
     </div>
 
-    <div class="read-layout">
+    <!-- --prose-max 下在最外层：正文、标题、元信息、操作行、上下条、回声面板、
+         以及页面右上角的阅读设置入口都从同一个基线取宽度，右边界始终对齐 -->
+    <div class="read-layout" :class="{ 'has-toc': toc.length >= 3 }" :style="readStyle">
       <!-- 目录：仅长文（≥3 个小节）出现，滚动时高亮当前小节 -->
       <aside v-if="toc.length >= 3" class="read-toc">
         <h6>目录</h6>
@@ -251,7 +247,7 @@ onUnmounted(() => {
         </nav>
       </aside>
 
-      <div class="read-wrap" :style="readStyle">
+      <div class="read-wrap">
         <button class="read-back" @click="router.push(settings.lastPage)">← 返回星域</button>
         <div class="kicker reveal">DEEP READING · 深读舱</div>
         <h1 class="read-title reveal" style="--d:.06s">{{ post.title }}</h1>
@@ -340,12 +336,17 @@ onUnmounted(() => {
 .read-progress i{display:block; height:100%; width:0;
   background:linear-gradient(90deg,var(--primary),var(--rose),var(--amber))}
 
-/* 宽屏：目录在左，正文在右；窄屏退回单列并把目录挪到正文上方 */
-.read-layout{display:grid; grid-template-columns:minmax(0,1fr); gap:40px; align-items:start}
+/* 深读：整页布局——页面铺满导航栏右侧，不再有居中或收窄的容器。
+ * 正文与标题/元信息/操作行/上下条/回声面板统一由 --prose-max 限宽（阅读偏好换算），
+ * 右边界因此对齐，宽屏下只是行尾余量变多，不会出现「窄正文 + 长横杠」。 */
+.read-layout{display:grid; grid-template-columns:minmax(0,1fr); gap:36px; align-items:start;
+  width:100%; margin:0}
 .read-toc{display:none}
 @media (min-width:1180px){
-  .read-layout{grid-template-columns:190px minmax(0,1fr); max-width:1000px; margin:0 auto}
-  .read-toc{display:block; position:sticky; top:64px}
+  /* 目录列与间距弹性伸缩，正文列吸收全部余量 */
+  .read-layout.has-toc{grid-template-columns:clamp(132px,16vw,190px) minmax(0,1fr);
+    gap:clamp(20px,3vw,36px)}
+  .read-layout.has-toc .read-toc{display:block; position:sticky; top:64px}
 }
 .read-toc h6{font-family:var(--font-mono); font-size:10px; letter-spacing:.3em; color:var(--ink-faint);
   text-transform:uppercase; margin-bottom:14px}
@@ -358,9 +359,10 @@ onUnmounted(() => {
 .toc-item:hover{color:var(--ink-dim); background:var(--surface)}
 .toc-item.on{color:var(--primary); background:var(--primary-soft); box-shadow:inset 2px 0 0 var(--primary)}
 
-/* 阅读设置 */
+/* 阅读设置入口：与正文同宽右对齐，整页布局下不会飘到页面最右边 */
 .read-tools{display:flex; align-items:flex-start; justify-content:flex-end; gap:12px;
-  flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:5}
+  flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:5;
+  max-width:var(--prose-max,100%)}
 .restore-hint{margin:0 auto 0 0; font-size:12px; color:var(--amber); letter-spacing:.04em;
   font-family:var(--font-mono); align-self:center}
 .tool-btn{border:1px solid var(--line); background:var(--surface); color:var(--ink-faint);
@@ -382,17 +384,22 @@ onUnmounted(() => {
   border-radius:99px; padding:9px 20px; font-size:13px; cursor:pointer; margin-bottom:34px;
   transition:all .25s; font-family:var(--font-body)}
 .read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
-.read-wrap{max-width:100%; margin:0 auto; min-width:0}
+.read-wrap{max-width:100%; min-width:0}
 .read-title{font-family:var(--font-serif); font-weight:900;
-  font-size:clamp(30px,4.4vw,52px); line-height:1.3; margin:12px 0 20px}
+  font-size:clamp(30px,4.4vw,52px); line-height:1.3; margin:12px 0 20px;
+  max-width:var(--prose-max,100%)}
+/* 元信息行的下边框必须与正文同宽，否则整页布局下会拉出一条横贯页面的长线 */
 .read-meta{display:flex; gap:20px; flex-wrap:wrap; font-family:var(--font-mono); font-size:12px;
-  color:var(--ink-faint); padding-bottom:26px; border-bottom:1px solid var(--line); margin-bottom:38px}
+  color:var(--ink-faint); padding-bottom:26px; border-bottom:1px solid var(--line); margin-bottom:38px;
+  max-width:var(--prose-max,100%)}
 
 /* 正文排版已抽到 components/common/MarkdownBody.vue（与笔记详情共用），
- * 这里只保留正文容器的宽度约束：字号/行距/宽度由阅读设置经 CSS 变量下发 */
-.read-body{max-width:var(--read-w,46ch)}
+ * 行宽由其 --prose-max 统一控制，这里不再二次收窄 */
+.read-body{min-width:0}
 
-.read-actions{display:flex; justify-content:center; align-items:center; gap:12px; margin:56px 0 30px; flex-wrap:wrap}
+/* 操作行/上下条/回声面板与正文同一条右边界 */
+.read-actions{display:flex; align-items:center; gap:12px; margin:56px 0 30px; flex-wrap:wrap;
+  max-width:var(--prose-max,100%)}
 .glow-btn{border:1px solid var(--amber); background:rgba(255,180,84,.1); color:var(--amber);
   border-radius:99px; padding:14px 34px; font-size:15px; cursor:pointer;
   transition:all .3s var(--ease-spring); font-family:var(--font-body)}
@@ -403,7 +410,8 @@ onUnmounted(() => {
   background:var(--surface); color:var(--ink-dim); cursor:pointer; font-family:var(--font-body);
   font-size:13px; transition:all .25s var(--ease-spring)}
 .icon-btn:hover{color:var(--primary); border-color:var(--primary); transform:translateY(-2px)}
-.read-nav{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:30px}
+.read-nav{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:30px;
+  max-width:var(--prose-max,100%)}
 .read-nav-cell{border:1px solid var(--line); border-radius:var(--r-md); padding:18px 20px;
   background:var(--surface); cursor:pointer; transition:all .3s}
 .read-nav-cell:hover{border-color:var(--primary); transform:translateY(-3px)}
@@ -411,7 +419,8 @@ onUnmounted(() => {
 .read-nav-cell h5{font-family:var(--font-serif); font-size:15px; margin-top:8px; line-height:1.6; font-weight:600}
 .read-nav-cell.next{text-align:right}
 
-.comments-panel{margin-top:72px; border-top:1px solid var(--line); padding-top:34px}
+.comments-panel{margin-top:72px; border-top:1px solid var(--line); padding-top:34px;
+  max-width:var(--prose-max,100%)}
 .comments-head{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:24px}
 .comments-head .kicker{margin:0 0 8px}
 .comments-head h3{font-family:var(--font-serif); font-size:26px; font-weight:900}
@@ -444,6 +453,7 @@ onUnmounted(() => {
 .fade-enter-from,.fade-leave-to{opacity:0}
 
 @media (max-width:720px){
+  .page-wide{padding-left:20px; padding-right:20px}
   .read-nav{grid-template-columns:1fr}
   .read-progress{left:0}
   .read-tools{margin-bottom:14px}

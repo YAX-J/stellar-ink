@@ -98,7 +98,7 @@ watch(() => route.query, (query) => {
 </script>
 
 <template>
-  <section class="page">
+  <section class="page page-wide">
     <div class="kicker reveal">TECH NOTES · 程序员的标本册</div>
     <SectionHead title="技术笔记" more="不是文章，是能照着做的结论" />
 
@@ -167,6 +167,7 @@ watch(() => route.query, (query) => {
 </template>
 
 <style scoped>
+/* 整页布局：宽度由全局 .page-wide 决定（铺满导航栏右侧），此处不再各自设上限 */
 .notes-bar{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:20px}
 .notes-search{flex:1; min-width:240px; height:48px; border:1px solid var(--line);
   border-radius:var(--r-md); background:var(--surface); color:var(--ink); padding:0 18px;

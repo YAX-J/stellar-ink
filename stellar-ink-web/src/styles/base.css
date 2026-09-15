@@ -17,8 +17,13 @@ body.focus-mode .starfield{opacity:.3}
 .main{margin-left:96px; position:relative; z-index:1; transition:margin .5s}
 body.focus-mode .main{margin-left:0}
 
-/* 页面容器与入场动画 */
+/* 页面容器与入场动画
+ * .page：默认容器，1240px 居中（其余页面沿用）。
+ * .page-wide：整页布局——不设页面宽度上限，内容铺满「导航栏右侧的全部宽度」。
+ *   注意别再给它加 max-width：一旦留出右侧空白，就不算整页布局了。
+ *   正文行宽由 MarkdownBody 的 --prose-max 控制（阅读偏好换算），与页宽解耦。 */
 .page{padding:clamp(24px,4vw,56px); max-width:1240px; margin:0 auto}
+.page-wide{max-width:none; margin-left:0; margin-right:0}
 .page .reveal{animation:rise .7s var(--ease-standard) both; animation-delay:var(--d,0s)}
 @keyframes rise{from{opacity:0; transform:translateY(26px)}to{opacity:1; transform:none}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}

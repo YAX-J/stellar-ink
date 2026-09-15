@@ -69,8 +69,9 @@ async function copyCode(code, index) {
 </template>
 
 <style scoped>
-/* 字号/行距/宽度由阅读偏好经 CSS 变量下发（--read-fs / --read-lh / --read-w） */
-.md-body{max-width:var(--read-w,46ch)}
+/* 整页布局：正文铺满可用宽度，不再设行宽上限（右侧不留空白）。
+ * --prose-max 仍保留为统一入口，由详情页/深读页下发为 100%。 */
+.md-body{max-width:var(--prose-max,100%)}
 .md-body p{font-size:var(--read-fs,17px); line-height:var(--read-lh,2.3); color:var(--ink-dim);
   margin-bottom:30px; text-align:justify; text-justify:inter-ideograph;
   hanging-punctuation:allow-end; line-break:strict}
@@ -96,11 +97,11 @@ async function copyCode(code, index) {
 
 .marg-note{background:var(--primary-soft); border:1px dashed var(--primary); border-radius:var(--r-sm);
   padding:14px 18px; font-size:13px; line-height:1.9; color:var(--ink-dim); margin:-8px 0 30px;
-  max-width:var(--read-w,46ch)}
+  max-width:var(--prose-max,100%)}
 .marg-note b{color:var(--primary); margin-right:8px; font-size:12px}
 
 .code-block{margin:0 0 30px; border:1px solid var(--line); border-radius:var(--r-md);
-  background:var(--bg-2); overflow:hidden; max-width:min(100%,760px)}
+  background:var(--bg-2); overflow:hidden; max-width:var(--prose-max,100%)}
 .code-head{padding:7px 8px 7px 14px; border-bottom:1px solid var(--line);
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   font-family:var(--font-mono); font-size:10px; letter-spacing:.2em; color:var(--ink-faint);

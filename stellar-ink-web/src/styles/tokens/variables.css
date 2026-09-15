@@ -13,6 +13,8 @@
   --r-lg:24px; --r-md:16px; --r-sm:10px;
   --ease-spring:cubic-bezier(.34,1.56,.64,1);
   --ease-standard:cubic-bezier(.2,0,0,1);
+  /* 正文可用宽度：详情页/深读页下发为 100%（整页铺满），这里只是兜底默认值 */
+  --prose-max:100%;
 }
 body[data-theme="dusk"]{
   --bg:#181022; --bg-2:#211531; --bg-3:#2B1B40;

@@ -54,7 +54,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="page">
+  <section class="page page-wide">
     <div class="kicker reveal">MY NOTES · 只在你自己手里</div>
     <SectionHead title="我的笔记" more="含私有与草稿，其他人看不到这里" />
 
@@ -118,6 +118,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 整页布局：宽度由全局 .page-wide 决定，卡片栅格自然铺满 */
 .empty{text-align:center; padding:56px 20px; border:1px dashed var(--line); border-radius:var(--r-lg);
   display:flex; flex-direction:column; align-items:center; gap:14px}
 .empty-glyph{width:60px; height:60px; border-radius:50%; display:grid; place-items:center;

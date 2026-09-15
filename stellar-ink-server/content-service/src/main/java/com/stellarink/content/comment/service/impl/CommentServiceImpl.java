@@ -35,7 +35,7 @@ public class CommentServiceImpl implements CommentService {
         return commentMapper.selectList(new LambdaQueryWrapper<Comment>()
                 .eq(Comment::getPostId, postId)
                 .eq(Comment::getStatus, 1)
-                        .orderByAsc(Comment::getId))
+                .orderByAsc(Comment::getId))
                 .stream().map(this::toVO).toList();
     }
 

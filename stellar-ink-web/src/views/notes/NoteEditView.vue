@@ -234,7 +234,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="page">
+  <section class="page page-wide">
     <div class="kicker reveal">NOTE STUDIO · 标本工作台</div>
 
     <div v-if="!canWrite" class="gate reveal" style="--d:.08s">
@@ -341,6 +341,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 写作台：整页布局，但写作面本身给出上限——标题/正文行过长会明显降低写作与校对体验。
+ * 这是「行长」约束而非页面收窄，页宽更大时只是余量更多（其余笔记页不限宽）。 */
+.page-wide{--editor-max:1400px}
+
 .gate{border:1px dashed var(--line); border-radius:var(--r-lg); background:var(--surface);
   padding:clamp(30px,5vw,64px); text-align:center; display:flex; flex-direction:column;
   align-items:center; gap:14px}
@@ -350,7 +354,9 @@ onUnmounted(() => {
 .gate p{font-size:14px; line-height:2; color:var(--ink-dim); max-width:52ch}
 .gate-actions{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:8px}
 
-.studio{display:grid; grid-template-columns:1fr 292px; gap:26px}
+/* 正文列 minmax(0,1fr)：CodeMirror 的超长行只在自己内部滚动，不撑破栅格 */
+.studio{display:grid; grid-template-columns:minmax(0,1fr) 292px; gap:26px;
+  max-width:var(--editor-max,1400px)}
 .desk{border:1px solid var(--line); border-radius:var(--r-lg);
   background:linear-gradient(180deg,var(--bg-2),var(--bg)); padding:clamp(24px,3.2vw,42px);
   display:flex; flex-direction:column; min-height:70vh}
@@ -418,5 +424,8 @@ onUnmounted(() => {
 
 @media (max-width:980px){
   .studio{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+  .page-wide{padding-left:20px; padding-right:20px}
 }
 </style>
