@@ -11,9 +11,7 @@ import './styles/components.css'
 const app = createApp(App)
 app.use(createPinia()).use(router)
 
-/* 路由错误必须显式暴露：Vue Router 在导航失败/被中止时会保留 pending promise，
- * isReady() 可能长时间不 resolve，表现为「资源全部 200、控制台无异常、页面整片空白」，
- * 排查成本极高 —— 所以这类错误不能静默。 */
+/* 首屏懒加载或导航守卫失败时显式记录，避免只留下空的 RouterView。 */
 router.onError((error, to) => {
   console.error('[router] 导航失败 ->', to && to.fullPath, error)
 })
@@ -29,19 +27,6 @@ on(SESSION_EXPIRED, () => {
   router.replace({ name: 'login', query: { redirect: current.fullPath } })
 })
 
-/* 首屏导航：等 router.isReady()，但加安全兜底。
- *
- * 为什么不能只写 await router.isReady()：一旦它不 resolve，app.mount() 永远不会执行，
- * 而生产构建里这种失败**没有任何报错**（资源全部 200、控制台干净、页面整片空白），
- * 排查成本极高（本次 App.vue 多根节点就是这么暴露出来的）。
- * 兜底后即使等待超时也照常挂载界面，最坏情况是首屏晚几百毫秒，而不是黑屏。 */
-const READY_TIMEOUT_MS = 3000
-const ready = await Promise.race([
-  router.isReady().then(() => true),
-  new Promise((resolve) => setTimeout(() => resolve(false), READY_TIMEOUT_MS)),
-])
-if (!ready) {
-  console.warn(`[router] isReady() 超过 ${READY_TIMEOUT_MS}ms 未完成，先挂载界面（当前路由 ${router.currentRoute.value.fullPath}）`)
-}
-
+/* 立即挂载应用。初始路由的懒加载由 RouterView 接管，不能在挂载前等待：
+ * 否则路由导航较慢或挂起时，#app 会一直为空。 */
 app.mount('#app')

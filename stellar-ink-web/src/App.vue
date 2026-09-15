@@ -25,12 +25,11 @@ watch(
 </script>
 
 <template>
-  <!-- ⚠️ 必须保持单根节点：main.js 用的是 app.mount('#app')，
-       Vue 3 对「多根组件挂载到容器」只在开发模式报错，
-       生产构建会把该错误静默吞掉 —— 现象就是整页黑屏、资源全部 200、控制台无异常。 -->
+  <!-- 项目组件保持单根节点；包裹层不参与布局。 -->
   <div class="app-root">
     <Starfield />
-    <RailNav v-if="!isAuthPage" />
+    <!-- 初始路由解析前先不渲染导航，避免登录/注册页短暂闪现导航栏。 -->
+    <RailNav v-if="route.name && !isAuthPage" />
     <main class="main" :class="{ 'auth-main': isAuthPage }">
       <RouterView />
     </main>
@@ -40,7 +39,6 @@ watch(
 
 <style scoped>
 .main.auth-main{margin-left:0; margin-bottom:0}
-/* 包裹层只做分组，不参与布局：不设 display 以外的任何盒模型属性，
-   避免改变 fixed 定位的 Starfield / RailNav 与 main 的既有布局 */
+/* 包裹层只做分组，不设置会影响 fixed 后代定位的属性。 */
 .app-root{display:block}
 </style>
