@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNoteStore, NOTE_TYPES, NOTE_TYPE_MAP } from '@/stores/notes'
+import { useNoteStore, NOTE_TYPES } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
 import NoteCard from '@/components/post/NoteCard.vue'
@@ -28,14 +28,9 @@ const tagCounts = computed(() => {
 })
 
 const filtered = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
   return noteStore.notes.filter((note) => {
     if (activeTag.value && !note.tags.includes(activeTag.value)) return false
     if (activeType.value && note.noteType !== activeType.value) return false
-    if (kw) {
-      const haystack = `${note.title} ${note.excerpt} ${note.tags.join(' ')}`.toLowerCase()
-      if (!haystack.includes(kw)) return false
-    }
     return true
   })
 })
@@ -84,8 +79,6 @@ function openNote(note) {
   router.push(`/note/${note.id}`)
 }
 
-onMounted(() => noteStore.ensureLoaded().catch(() => {}))
-
 /* 从浏览器前进/后退或别的页面跳回来时，同步 URL 上的筛选条件 */
 watch(() => route.query, (query) => {
   const q = typeof query.q === 'string' ? query.q : ''
@@ -94,7 +87,8 @@ watch(() => route.query, (query) => {
   if (q !== keyword.value) keyword.value = q
   if (tag !== activeTag.value) activeTag.value = tag
   if (type !== activeType.value) activeType.value = type
-})
+  noteStore.fetchNotes({ keyword: q, tag, noteType: type }).catch(() => {})
+}, { immediate: true })
 </script>
 
 <template>
@@ -163,6 +157,11 @@ watch(() => route.query, (query) => {
         <button class="state-action" @click="resetFilter">清除筛选</button>
       </p>
     </template>
+    <div v-if="noteStore.hasMore" class="load-row">
+      <button class="btn btn-ghost" :disabled="noteStore.loading" @click="noteStore.loadMore()">
+        {{ noteStore.loading ? '正在翻阅…' : (activeTag ? '继续翻阅匹配标签' : `继续翻阅 · 还有 ${noteStore.total - noteStore.notes.length} 条`) }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -201,4 +200,6 @@ watch(() => route.query, (query) => {
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .state-link{color:var(--primary); text-decoration:none}
 .error-text{color:var(--rose)}
+.load-row{display:flex; justify-content:center; margin-top:26px}
+.load-row .btn:disabled{opacity:.55; cursor:wait}
 </style>

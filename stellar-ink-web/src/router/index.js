@@ -5,6 +5,7 @@ const routes = [
   { path: '/', name: 'home', component: () => import('@/views/home/HomeView.vue'), meta: { title: '此刻' } },
   { path: '/write', name: 'write', component: () => import('@/views/write/WriteView.vue'), meta: { title: '执笔', requiresRole: 'AUTHOR' } },
   { path: '/archive', name: 'archive', component: () => import('@/views/archive/ArchiveView.vue'), meta: { title: '星图' } },
+  { path: '/search', name: 'search', component: () => import('@/views/search/SearchView.vue'), meta: { title: '寻星' } },
   { path: '/notes', name: 'notes', component: () => import('@/views/notes/NotesView.vue'), meta: { title: '笔记' } },
   { path: '/notes/mine', name: 'notes-mine', component: () => import('@/views/notes/NotesMineView.vue'), meta: { title: '我的笔记', requiresAuth: true } },
   { path: '/note/edit', name: 'note-edit', component: () => import('@/views/notes/NoteEditView.vue'), meta: { title: '写笔记', requiresAuth: true } },

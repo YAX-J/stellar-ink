@@ -79,6 +79,11 @@ function openPost(p) {
         <p v-if="!visiblePosts.length && !postStore.loading" class="state-text">所选年份还没有已发布的星。</p>
       </div>
     </div>
+    <div v-if="postStore.hasMore" class="load-row">
+      <button class="btn btn-ghost" :disabled="postStore.loading" @click="postStore.loadMore()">
+        {{ postStore.loading ? '正在接收…' : `继续接收 · 还有 ${postStore.total - postStore.posts.length} 颗星` }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -87,6 +92,8 @@ function openPost(p) {
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .error-text{color:var(--rose)}
+.load-row{display:flex; justify-content:center; margin-top:24px}
+.load-row .btn:disabled{opacity:.55; cursor:wait}
 .year-chip{
   border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
   border-radius:99px; padding:8px 18px; font-family:var(--font-mono); font-size:13px;

@@ -2,7 +2,9 @@ import { defineStore } from 'pinia'
 import { request } from '@/api/client'
 import { useAuthorStore } from '@/stores/authors'
 
-function normalizePost(post, detail = false) {
+const PAGE_SIZE = 24
+
+export function normalizePost(post, detail = false) {
   if (!post) return null
   return {
     ...post,
@@ -21,11 +23,18 @@ export const usePostStore = defineStore('posts', {
   state: () => ({
     posts: [],
     tags: [],
+    featured: null,
     details: {},
     loading: false,
     detailLoading: false,
     error: '',
     initialized: false,
+    page: 0,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    hasMore: true,
+    listQuery: {},
+    listSequence: 0,
   }),
   getters: {
     byId: (state) => (id) => state.details[Number(id)] ||
@@ -34,7 +43,7 @@ export const usePostStore = defineStore('posts', {
   },
   actions: {
     async ensureLoaded() {
-      if (this.initialized) return this.posts
+      if (this.initialized && !Object.keys(this.listQuery).length) return this.posts
       return this.fetchPosts()
     },
 
@@ -48,24 +57,60 @@ export const usePostStore = defineStore('posts', {
       }
     },
 
-    async fetchPosts(query = {}) {
+    async fetchPosts(query = {}, { append = false } = {}) {
+      if (append && (this.loading || !this.hasMore)) return this.posts
       this.loading = true
       this.error = ''
+      const sequence = append ? this.listSequence : ++this.listSequence
       try {
+        const { page: queryPage, size: querySize, ...filters } = query
+        if (!append) this.listQuery = filters
+        const pageNumber = append ? this.page + 1 : Math.max(1, Number(queryPage) || 1)
+        const pageSize = Math.min(100, Math.max(1, Number(querySize) || this.pageSize))
         const page = await request('/posts', {
-          query: { page: 1, size: 100, ...query },
+          query: { ...(append ? this.listQuery : filters), page: pageNumber, size: pageSize },
         })
         const records = page?.records || page?.list || []
-        this.posts = records.map((post) => normalizePost(post))
-        await useAuthorStore().ensureAuthors(this.posts.map((post) => post.userId)).catch(() => {})
+        if (sequence !== this.listSequence) return this.posts
+        const normalized = records.map((post) => normalizePost(post))
+        if (append) {
+          const known = new Set(this.posts.map((post) => post.id))
+          this.posts.push(...normalized.filter((post) => !known.has(post.id)))
+        } else {
+          this.posts = normalized
+        }
+        this.page = Number(page?.current ?? pageNumber)
+        this.pageSize = Number(page?.size ?? pageSize)
+        this.total = Number(page?.total ?? this.posts.length)
+        this.hasMore = this.posts.length < this.total && records.length > 0
+        await useAuthorStore().ensureAuthors(normalized.map((post) => post.userId)).catch(() => {})
         this.initialized = true
         return this.posts
       } catch (error) {
-        this.error = error.message
+        if (sequence === this.listSequence) this.error = error.message
         throw error
       } finally {
-        this.loading = false
+        if (sequence === this.listSequence) this.loading = false
       }
+    },
+
+    async fetchFeatured() {
+      try {
+        const page = await request('/posts', { query: { page: 1, size: 1, orderBy: 'hottest' }, silent: true })
+        const first = (page?.records || page?.list || [])[0]
+        this.featured = normalizePost(first)
+        if (this.featured) {
+          await useAuthorStore().ensureAuthors([this.featured.userId]).catch(() => {})
+        }
+        return this.featured
+      } catch {
+        /* 首页仍可从已加载文章中降级选取，不让推荐位影响整页读取 */
+        return null
+      }
+    },
+
+    async loadMore() {
+      return this.fetchPosts({}, { append: true })
     },
 
     async fetchDetail(id) {

@@ -45,7 +45,9 @@ export const NOTE_TEMPLATE = [
   '- ',
 ].join('\n')
 
-function normalizeNote(note, detail = false) {
+const PAGE_SIZE = 24
+
+export function normalizeNote(note, detail = false) {
   if (!note) return null
   return {
     ...note,
@@ -77,6 +79,18 @@ export const useNoteStore = defineStore('notes', {
     error: '',
     initialized: false,
     mineInitialized: false,
+    page: 0,
+    pageSize: PAGE_SIZE,
+    total: 0,
+    hasMore: true,
+    listQuery: {},
+    minePage: 0,
+    minePageSize: PAGE_SIZE,
+    mineTotal: 0,
+    mineHasMore: true,
+    mineQuery: {},
+    listSequence: 0,
+    mineSequence: 0,
   }),
   getters: {
     byId: (state) => (id) => state.details[Number(id)] ||
@@ -97,45 +111,93 @@ export const useNoteStore = defineStore('notes', {
     },
   },
   actions: {
-    async fetchNotes(query = {}) {
+    async fetchNotes(query = {}, { append = false } = {}) {
+      if (append && (this.loading || !this.hasMore)) return this.notes
       this.loading = true
       this.error = ''
+      const sequence = append ? this.listSequence : ++this.listSequence
       try {
-        const page = await request('/notes', { query: { page: 1, size: 100, orderBy: 'latest', ...query } })
+        const { page: queryPage, size: querySize, ...filters } = query
+        if (!append) this.listQuery = filters
+        const pageNumber = append ? this.page + 1 : Math.max(1, Number(queryPage) || 1)
+        const pageSize = Math.min(100, Math.max(1, Number(querySize) || this.pageSize))
+        const page = await request('/notes', {
+          query: { orderBy: 'latest', ...(append ? this.listQuery : filters), page: pageNumber, size: pageSize },
+        })
         const records = page?.records || page?.list || []
-        this.notes = records.map((note) => normalizeNote(note))
-        await useAuthorStore().ensureAuthors(this.notes.map((note) => note.userId)).catch(() => {})
+        if (sequence !== this.listSequence) return this.notes
+        const exactTag = (append ? this.listQuery : filters).tag
+        const normalized = records.map((note) => normalizeNote(note))
+          .filter((note) => !exactTag || note.tags.includes(exactTag))
+        if (append) {
+          const known = new Set(this.notes.map((note) => note.id))
+          this.notes.push(...normalized.filter((note) => !known.has(note.id)))
+        } else {
+          this.notes = normalized
+        }
+        this.page = Number(page?.current ?? pageNumber)
+        this.pageSize = Number(page?.size ?? pageSize)
+        this.total = Number(page?.total ?? this.notes.length)
+        this.hasMore = this.notes.length < this.total && records.length > 0
+        await useAuthorStore().ensureAuthors(normalized.map((note) => note.userId)).catch(() => {})
         this.initialized = true
         return this.notes
       } catch (error) {
-        this.error = error.message
+        if (sequence === this.listSequence) this.error = error.message
         throw error
       } finally {
-        this.loading = false
+        if (sequence === this.listSequence) this.loading = false
       }
+    },
+
+    async loadMore() {
+      return this.fetchNotes({}, { append: true })
     },
 
     async ensureLoaded() {
-      if (this.initialized) return this.notes
+      if (this.initialized && !Object.keys(this.listQuery).length) return this.notes
       return this.fetchNotes()
     },
 
-    async fetchMine(query = {}) {
+    async fetchMine(query = {}, { append = false } = {}) {
+      if (append && (this.mineLoading || !this.mineHasMore)) return this.mine
       this.mineLoading = true
       this.error = ''
+      const sequence = append ? this.mineSequence : ++this.mineSequence
       try {
-        const page = await request('/notes/mine', { query: { page: 1, size: 100, ...query } })
+        const { page: queryPage, size: querySize, ...filters } = query
+        if (!append) this.mineQuery = filters
+        const pageNumber = append ? this.minePage + 1 : Math.max(1, Number(queryPage) || 1)
+        const pageSize = Math.min(100, Math.max(1, Number(querySize) || this.minePageSize))
+        const page = await request('/notes/mine', {
+          query: { ...(append ? this.mineQuery : filters), page: pageNumber, size: pageSize },
+        })
         const records = page?.records || page?.list || []
-        this.mine = records.map((note) => normalizeNote(note))
-        await useAuthorStore().ensureAuthors(this.mine.map((note) => note.userId)).catch(() => {})
+        if (sequence !== this.mineSequence) return this.mine
+        const normalized = records.map((note) => normalizeNote(note))
+        if (append) {
+          const known = new Set(this.mine.map((note) => note.id))
+          this.mine.push(...normalized.filter((note) => !known.has(note.id)))
+        } else {
+          this.mine = normalized
+        }
+        this.minePage = Number(page?.current ?? pageNumber)
+        this.minePageSize = Number(page?.size ?? pageSize)
+        this.mineTotal = Number(page?.total ?? this.mine.length)
+        this.mineHasMore = this.mine.length < this.mineTotal && records.length > 0
+        await useAuthorStore().ensureAuthors(normalized.map((note) => note.userId)).catch(() => {})
         this.mineInitialized = true
         return this.mine
       } catch (error) {
-        this.error = error.message
+        if (sequence === this.mineSequence) this.error = error.message
         throw error
       } finally {
-        this.mineLoading = false
+        if (sequence === this.mineSequence) this.mineLoading = false
       }
+    },
+
+    async loadMoreMine() {
+      return this.fetchMine({}, { append: true })
     },
 
     async fetchDetail(id) {

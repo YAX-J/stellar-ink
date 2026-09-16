@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNoteStore, NOTE_TYPES } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
@@ -17,20 +17,7 @@ const typeFilter = ref('all')
 
 const canWrite = computed(() => auth.isLoggedIn && auth.isAuthorOrAbove)
 
-const list = computed(() => noteStore.mine.filter((note) => {
-  if (statusFilter.value === 'draft' && note.status !== 0) return false
-  if (statusFilter.value === 'published' && note.status !== 1) return false
-  if (visibilityFilter.value !== 'all' && note.visibility !== visibilityFilter.value) return false
-  if (typeFilter.value !== 'all' && note.noteType !== typeFilter.value) return false
-  return true
-}))
-
-const counts = computed(() => ({
-  all: noteStore.mine.length,
-  draft: noteStore.mine.filter((n) => n.status === 0).length,
-  priv: noteStore.mine.filter((n) => n.visibility === 'PRIVATE').length,
-  pub: noteStore.mine.filter((n) => n.visibility === 'PUBLIC').length,
-}))
+const list = computed(() => noteStore.mine)
 
 function openNote(note) {
   /* 草稿直接进编辑台，已发布的先看效果 */
@@ -48,9 +35,18 @@ async function removeNote(note) {
   }
 }
 
-onMounted(() => {
-  if (auth.isLoggedIn) noteStore.fetchMine().catch(() => {})
-})
+watch(
+  () => [canWrite.value, statusFilter.value, visibilityFilter.value, typeFilter.value],
+  ([allowed, status, visibility, noteType]) => {
+    if (!allowed) return
+    noteStore.fetchMine({
+      status: status === 'all' ? '' : status === 'draft' ? 0 : 1,
+      visibility: visibility === 'all' ? '' : visibility,
+      noteType: noteType === 'all' ? '' : noteType,
+    }).catch(() => {})
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -74,16 +70,19 @@ onMounted(() => {
       <div class="mine-bar reveal" style="--d:.06s">
         <div class="chip-row">
           <button class="fchip" :class="{ on: statusFilter === 'all' }" @click="statusFilter = 'all'">
-            全部 <b>{{ counts.all }}</b>
+            全部
           </button>
           <button class="fchip" :class="{ on: statusFilter === 'draft' }" @click="statusFilter = 'draft'">
-            草稿 <b>{{ counts.draft }}</b>
+            草稿
+          </button>
+          <button class="fchip" :class="{ on: statusFilter === 'published' }" @click="statusFilter = 'published'">
+            已发布
           </button>
           <button class="fchip" :class="{ on: visibilityFilter === 'PRIVATE' }" @click="visibilityFilter = visibilityFilter === 'PRIVATE' ? 'all' : 'PRIVATE'">
-            🔒 私有 <b>{{ counts.priv }}</b>
+            🔒 私有
           </button>
           <button class="fchip" :class="{ on: visibilityFilter === 'PUBLIC' }" @click="visibilityFilter = visibilityFilter === 'PUBLIC' ? 'all' : 'PUBLIC'">
-            ◉ 公开 <b>{{ counts.pub }}</b>
+            ◉ 公开
           </button>
         </div>
         <select v-model="typeFilter" class="type-select">
@@ -112,6 +111,11 @@ onMounted(() => {
           这里还没有笔记。去 <RouterLink class="state-link" to="/note/edit">新建一条</RouterLink>，
           私有的草稿只有你自己能看到。
         </p>
+      </div>
+      <div v-if="noteStore.mineHasMore" class="load-row">
+        <button class="btn btn-ghost" :disabled="noteStore.mineLoading" @click="noteStore.loadMoreMine()">
+          {{ noteStore.mineLoading ? '正在翻阅…' : `继续翻阅 · 还有 ${noteStore.mineTotal - noteStore.mine.length} 条` }}
+        </button>
       </div>
     </template>
   </section>
@@ -151,4 +155,6 @@ onMounted(() => {
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .state-link{color:var(--primary); text-decoration:none}
 .error-text{color:var(--rose)}
+.load-row{display:flex; justify-content:center; margin-top:26px}
+.load-row .btn:disabled{opacity:.55; cursor:wait}
 </style>

@@ -6,9 +6,9 @@ import AuthorBadge from '@/components/common/AuthorBadge.vue'
 const emit = defineEmits(['open'])
 const postStore = usePostStore()
 
-/* 北极星 = 已加载星图中光芒最多的那一篇（并列时取更新的）。
- * 之前固定取 posts[0]（最新一篇），与「最受回望」的文案不符。 */
+/* 优先使用服务端按 hottest 选出的全站结果；请求失败时再从已加载列表降级。 */
 const polaris = computed(() => {
+  if (postStore.featured) return postStore.featured
   const posts = postStore.posts
   if (!posts.length) return null
   return posts.reduce((best, post) => (

@@ -13,6 +13,7 @@ const items = [
   { key: 'home', to: '/', glyph: '◉', label: '此刻' },
   { key: 'write', to: '/write', glyph: '✎', label: '执笔', requiresRole: 'AUTHOR' },
   { key: 'archive', to: '/archive', glyph: '✧', label: '星图' },
+  { key: 'search', to: '/search', glyph: '⌕', label: '寻星' },
   /* 技术笔记用 ❖（原光谱符号，笔记更需要「标本」感）；光谱改用 ▤ 以免同符号 */
   { key: 'notes', to: '/notes', glyph: '❖', label: '笔记' },
   { key: 'meteor', to: '/meteor', glyph: '☄', label: '流星' },
@@ -185,12 +186,13 @@ body.focus-mode .rail{opacity:0; transform:translateX(-100%); pointer-events:non
 
 @media (max-width:720px){
   .rail{top:auto; bottom:0; left:0; right:0; width:auto; height:72px; flex-direction:row;
-    justify-content:center; gap:4px; border-right:none; border-top:1px solid var(--line); padding:0 8px}
+    justify-content:flex-start; gap:4px; border-right:none; border-top:1px solid var(--line); padding:0 8px;
+    overflow-x:auto; overflow-y:hidden}
   .logo,.rail-foot{display:none}
-  .rail-user{margin:0 2px 0 0; gap:3px; width:auto}
+  .rail-user{margin:0 2px 0 0; gap:3px; width:52px; flex:0 0 52px}
   .ru-avatar{width:34px; height:34px; font-size:14px}
   .ru-label{font-size:9px; max-width:52px}
-  .nav-item{margin:0; width:48px; font-size:10px; padding:10px 0 8px}
+  .nav-item{margin:0; width:48px; flex:0 0 48px; font-size:10px; padding:10px 0 8px}
   .nav-item.active::before{left:50%; top:-1px; translate:-50% 0; width:26px; height:3px}
 }
 </style>

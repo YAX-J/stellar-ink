@@ -88,6 +88,11 @@ function reload() {
         <h4 style="color:var(--ink-faint)">{{ tags.length ? '这个波段还没有星，去写一篇吧 →' : '还没有可展示的标签。' }}</h4>
       </div>
     </div>
+    <div v-if="postStore.hasMore" class="load-row">
+      <button class="btn btn-ghost" :disabled="postStore.loading" @click="postStore.loadMore()">
+        {{ postStore.loading ? '正在接收…' : `继续接收 · 还有 ${postStore.total - postStore.posts.length} 颗星` }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -97,6 +102,8 @@ function reload() {
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .error-text{color:var(--rose)}
+.load-row{display:flex; justify-content:center; margin-top:24px}
+.load-row .btn:disabled{opacity:.55; cursor:wait}
 .spectrum-bar i{height:100%; cursor:pointer; transition:filter .2s}
 .spectrum-bar i:hover{filter:brightness(1.35)}
 .spec-tags{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:30px}

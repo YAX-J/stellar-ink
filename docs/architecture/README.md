@@ -102,6 +102,10 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、两个业务服务和前端 Nginx。MySQL 与 Nacos 继续复用宿主机现有实例。
 
+前端 history 路由 `/notes`、`/links`、`/search` 与后端 API 前缀重名。Vite 与生产 Nginx 通过
+`GET + Accept: text/html` 识别浏览器页面导航并回退 `index.html`；`fetch` 的 `Accept: */*`
+继续代理到网关。新增重名路由时必须保持这条分流规则，不能简单按路径把所有请求都代理到后端。
+
 ## 再拆分门槛
 
 只有某个领域出现以下情况之一时再拆成独立服务：需要独立扩缩容；需要独立数据库或事务边界；需要不同发布节奏；存在明确团队所有权；故障隔离收益显著高于远程调用成本。不要只因表不同就拆服务。

@@ -16,6 +16,7 @@ const auth = useAuthStore()
 
 onMounted(() => Promise.all([
   postStore.ensureLoaded(),
+  postStore.fetchFeatured(),
   statsStore.fetchOverview(),
 ]).catch(() => {}))
 

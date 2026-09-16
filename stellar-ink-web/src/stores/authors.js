@@ -30,13 +30,16 @@ export const useAuthorStore = defineStore('authors', {
       const missing = requested.filter((id) => !loaded.has(id))
       if (!missing.length) return
 
-      const authors = await request('/user/authors', { query: { ids: missing.join(',') } })
-      const foundIds = new Set()
-      for (const author of authors || []) {
-        this.upsertAuthor(author)
-        foundIds.add(Number(author.id))
+      for (let start = 0; start < missing.length; start += 100) {
+        const batch = missing.slice(start, start + 100)
+        const authors = await request('/user/authors', { query: { ids: batch.join(',') } })
+        const foundIds = new Set()
+        for (const author of authors || []) {
+          this.upsertAuthor(author)
+          foundIds.add(Number(author.id))
+        }
+        this.loadedIds.push(...batch.filter((id) => !foundIds.has(id)))
       }
-      this.loadedIds.push(...missing.filter((id) => !foundIds.has(id)))
     },
 
     /** 作者自己换了头像/笔名后，让缓存里的这条摘要失效并立刻重取。
