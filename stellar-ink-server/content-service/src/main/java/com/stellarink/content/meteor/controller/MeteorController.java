@@ -1,8 +1,10 @@
 package com.stellarink.content.meteor.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.meteor.mapper.MeteorMapper;
 import com.stellarink.content.meteor.pojo.Meteor;
 import com.stellarink.sharedmodel.dto.meteor.MeteorCreateDTO;
@@ -31,16 +33,25 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MeteorController {
 
+    private static final TypeReference<List<MeteorVO>> CACHE_TYPE = new TypeReference<>() { };
+
     private final MeteorMapper meteorMapper;
+    private final ContentCache cache;
 
     @GetMapping
     public Response<List<MeteorVO>> list(@RequestParam(required = false, defaultValue = "50") Integer limit) {
         // limit 为 Integer，不存在注入；但过大的值会拖垮查询，这里夹紧到 1~200
         int safeLimit = Math.min(Math.max(limit == null ? 50 : limit, 1), 200);
+        String cacheKey = cache.versionedKey("meteor", "list", safeLimit);
+        return Response.success(cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.DEFAULT_TTL,
+                () -> loadMeteors(safeLimit)));
+    }
+
+    private List<MeteorVO> loadMeteors(int safeLimit) {
         List<Meteor> items = meteorMapper.selectList(new LambdaQueryWrapper<Meteor>()
                 .orderByDesc(Meteor::getId)
                 .last("LIMIT " + safeLimit));
-        return Response.success(items.stream().map(this::toVO).toList());
+        return items.stream().map(this::toVO).toList();
     }
 
     /** 发射流星（作者及以上） */
@@ -55,6 +66,7 @@ public class MeteorController {
         entity.setContent(dto.getContent().trim());
         entity.setCreatedAt(LocalDateTime.now());
         meteorMapper.insert(entity);
+        cache.invalidate("meteor");
         log.info("发射流星 id={}", entity.getId());
         return Response.success();
     }
@@ -71,6 +83,7 @@ public class MeteorController {
             throw BusinessExceptionHelper.of("不能熄灭别人的流星。");
         }
         meteorMapper.deleteById(entity.getId());
+        cache.invalidate("meteor");
         log.info("删除流星 id={}", id);
         return Response.success();
     }

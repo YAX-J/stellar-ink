@@ -4,6 +4,9 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisCache;
+import com.stellarink.common.redis.RedisUtils;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.comment.mapper.CommentMapper;
 import com.stellarink.content.comment.pojo.Comment;
 import com.stellarink.content.post.mapper.PostMapper;
@@ -26,7 +29,9 @@ class CommentServiceImplTest {
 
     private final CommentMapper commentMapper = mock(CommentMapper.class);
     private final PostMapper postMapper = mock(PostMapper.class);
-    private final CommentServiceImpl commentService = new CommentServiceImpl(commentMapper, postMapper);
+    private final RedisUtils redisUtils = mock(RedisUtils.class);
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final CommentServiceImpl commentService = new CommentServiceImpl(commentMapper, postMapper, cache);
 
     @BeforeAll
     static void initializeMybatisMetadata() {

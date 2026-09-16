@@ -1,8 +1,10 @@
 package com.stellarink.user.service.impl;
 
+import com.stellarink.common.redis.RedisCache;
 import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.component.AvatarStorage;
 import com.stellarink.user.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +47,8 @@ class UserServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        userService = new UserServiceImpl(userMapper, passwordEncoder, avatarStorage, redisUtils);
+        userService = new UserServiceImpl(
+                userMapper, passwordEncoder, avatarStorage, redisUtils, new RedisCache(redisUtils));
     }
 
     @Test
@@ -108,6 +111,20 @@ class UserServiceImplTest {
         verify(redisUtils).set(LOCK_KEY, 1, WINDOW);
         verify(redisUtils).delete(FAILURE_KEY);
         verify(redisUtils, never()).get(FAILURE_KEY, Integer.class);
+    }
+
+    @Test
+    @DisplayName("用户资料命中 Redis 时不再查询数据库")
+    void profileUsesRedisCache() {
+        UserVO cached = new UserVO();
+        cached.setId(7L);
+        cached.setNickname("缓存星籍");
+        when(redisUtils.get("stellar-ink:user:cache:profile:7", UserVO.class)).thenReturn(cached);
+
+        UserVO profile = userService.profile(7L);
+
+        assertEquals("缓存星籍", profile.getNickname());
+        verifyNoInteractions(userMapper);
     }
 
     private LoginDTO login(String username, String password) {

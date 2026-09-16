@@ -11,7 +11,7 @@ Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，�
 |---|---|---|
 | Nacos（宿主机进程） | 8848 / 9848 | **现在就用到**。Java 容器经 `host.docker.internal` 访问 |
 | mysql | 3306 | **现在就用到**。业务服务经 `host.docker.internal`（host-gateway）访问宿主机 3306 |
-| redis | 6379 | **现在就用到**。业务服务经 `host.docker.internal` 访问；当前仅提供公共工具，尚无业务缓存 |
+| redis | 6379 | **现在就用到**。业务服务经 `host.docker.internal` 访问；承载登录防爆破、公开读模型及用户/作者资料缓存 |
 | qdrant | 6333-6334 | 暂未使用（AI 能力预留） |
 
 本编排启动的容器：
@@ -145,6 +145,7 @@ docker compose down                     # 停止并移除本项目容器，不�
 | 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠 |
 | 头像上传 | 已加固 | 服务端重命名（不用客户端文件名，杜绝 `../` 与可执行后缀）、ImageIO 读魔数认格式、1MB 双拦（multipart + 业务层），Nginx `client_max_body_size 2m` 兜底；`/uploads/` 只读且由 nginx 单独转发到网关（不放静态目录，避免被长缓存规则截走） |
 | 登录防爆破 | 已启用 | user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次锁定 15 分钟，多实例共享状态 |
+| Redis 业务缓存 | 已启用 | 公开文章/笔记及聚合读模型采用 30 秒至 5 分钟 TTL，写后按命名空间失效；普通缓存故障时回源 MySQL，JWT 会话与持久业务明细不进 Redis |
 | 容器权限 | 已加固 | 3 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
 | 网关端口 | 仅宿主机回环 | `127.0.0.1:${GATEWAY_PORT}:8080`。前端走容器内网 `gateway:8080`，无需对外发布端口 |
 | JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。本编排对 3 个 Java 服务统一注入 `SA_TOKEN_JWT_SECRET`，密钥弱时整体拒绝启动（fail-closed） |

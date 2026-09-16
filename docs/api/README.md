@@ -11,7 +11,7 @@ cd stellar-ink-server && mvn -DskipTests package
 deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 + 网关
 ```
 
-环境变量：`NACOS_ADDR`（默认 127.0.0.1:8848）、`MYSQL_HOST/PORT/DB/USER/PASSWORD`、`SA_TOKEN_JWT_SECRET`。
+环境变量：`NACOS_ADDR`（默认 127.0.0.1:8848）、`MYSQL_HOST/PORT/DB/USER/PASSWORD`、`REDIS_HOST/PORT/PASSWORD/DATABASE`、`SA_TOKEN_JWT_SECRET`。
 种子账号：`stellar / stellar123`。
 
 ## 服务与端口
@@ -120,6 +120,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 登录防爆破：user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次后锁定账号 15 分钟；
 锁定与失败计数在多个服务实例之间共享，成功登录会清理失败计数。
+`GET /user/profile` 与 `GET /user/authors` 使用 Redis 短期缓存；修改资料、底字或头像后立即失效，不改变接口响应格式。
 
 ### content-service :8102 - 文章
 
@@ -139,6 +140,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
 
 - `orderBy` 取值：`latest` 最新（默认）/ `hottest` 最受回望（按 `glow`）/ `longest` 篇幅最长；一律追加 `id` 倒序保证分页稳定
+- 公开文章列表、搜索与详情使用 Redis 旁路缓存（1 分钟）；新增、更新、删除时推进缓存版本。浏览量和点赞仍先持久化 MySQL，详情缓存随写失效，列表计数最多延迟一个 TTL。
 - `tag` 为 **`LIKE '%tag%'` 子串匹配**（逗号串），不是精确标签匹配 —— 前端拿到结果后需按 `tags.includes(tag)` 二次过滤
 - 分页 `size` 服务端硬上限 100（超过会被静默夹到 100），公开列表总条数从 `IPage.total` 取
 - 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数
@@ -164,6 +166,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - `visibility` 取值：`PUBLIC` 公开 / `PRIVATE` 私有；`orderBy` 取值：`latest` / `hottest`（按 `viewCount`）/ `longest`
 - **结构约定**：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，前端据此自动生成目录，不额外占用数据库列；列表 `summary` 优先截取「结论」章节
 - **私有隔离（硬性约束）**：`PRIVATE` 笔记不得出现在公开列表、标签聚合与搜索里；详情对非作者返回 404（不是 403，避免枚举存在性）；**ADMIN 也读不到他人私有笔记**
+- 公开笔记列表与详情使用 Redis 旁路缓存（1 分钟）；草稿、私有笔记、我的列表和复核队列不缓存。更新可见性、发布状态、正文或验证时间后推进缓存版本。
 - 浏览量口径：仅公开且已发布的笔记计数；按天去重与文章共用 `post_view` 闸门（该表只记「某用户某天已计一次」，与内容类型无关）；作者本人浏览不计
 - `reviewState` 取值：`DUE` 待复核查询（`UNVERIFIED + EXPIRED`）/ `UNVERIFIED` 从未验证 / `EXPIRED` 超过 180 天 / `FRESH` 有效期内；`DUE` 只作为筛选值，不会出现在单条笔记响应中
 - 笔记列表与详情返回 `verifiedAt/reviewState/reviewDueAt`；180 天口径由服务端统一计算，`PUT /notes/{id}/verify` 会从当前时间重新续期
@@ -200,6 +203,8 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/stats/overview` | 写作脉搏：totalPosts / totalWords / todayWords / streakDays / nightRatio / tagDistribution（**全站统计，不区分用户**） | 公开 |
+
+公开评论、回声使用 30 秒缓存；公开流星列表使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
 
 ### 各服务通用
 

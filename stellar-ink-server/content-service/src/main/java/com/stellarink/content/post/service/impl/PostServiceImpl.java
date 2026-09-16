@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
 import com.stellarink.common.util.WordCount;
+import com.stellarink.content.cache.CachedPage;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.comment.mapper.CommentMapper;
 import com.stellarink.content.comment.pojo.Comment;
 import com.stellarink.content.post.mapper.PostGlowMapper;
@@ -44,14 +47,32 @@ public class PostServiceImpl implements PostService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final int SUMMARY_LEN = 60;
+    private static final String CACHE_NAMESPACE = "post";
+    private static final TypeReference<CachedPage<PostVO>> PAGE_CACHE_TYPE = new TypeReference<>() { };
 
     private final PostMapper postMapper;
     private final PostGlowMapper postGlowMapper;
     private final PostViewMapper postViewMapper;
     private final CommentMapper commentMapper;
+    private final ContentCache cache;
 
     @Override
     public IPage<PostVO> page(PostQueryDTO query) {
+        if (!query.isPublishedOnly()
+                || (query.getStatus() != null && !Integer.valueOf(1).equals(query.getStatus()))) {
+            return loadPublicPage(query);
+        }
+        String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "page",
+                query.getPage(), query.getSize(), query.getYear(), query.getTag(), query.getKeyword(),
+                query.getStatus(), query.getOrderBy(), query.isPublishedOnly());
+        CachedPage<PostVO> cached = cache.getOrLoad(cacheKey, PAGE_CACHE_TYPE, ContentCache.DEFAULT_TTL, () -> {
+            IPage<PostVO> loaded = loadPublicPage(query);
+            return CachedPage.from(loaded);
+        });
+        return cached.toPage();
+    }
+
+    private IPage<PostVO> loadPublicPage(PostQueryDTO query) {
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                 .eq(query.isPublishedOnly(), Post::getStatus, 1)
                 .eq(query.getStatus() != null, Post::getStatus, query.getStatus())
@@ -97,8 +118,24 @@ public class PostServiceImpl implements PostService {
 
     @Override
     public PostDetailVO detail(Long id) {
+        String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "detail", id);
+        PostDetailVO cached = cache.get(cacheKey, PostDetailVO.class);
+        if (cached != null) {
+            cached.setLiked(likedBy(id));
+            return cached;
+        }
         Post post = requirePost(id);
         ensureReadable(post);
+        PostDetailVO vo = toDetailVO(post);
+        if (Integer.valueOf(1).equals(post.getStatus())) {
+            vo.setLiked(false);
+            cache.put(cacheKey, vo, ContentCache.DEFAULT_TTL);
+        }
+        vo.setLiked(likedBy(id));
+        return vo;
+    }
+
+    private PostDetailVO toDetailVO(Post post) {
         PostDetailVO vo = new PostDetailVO();
         vo.setId(post.getId());
         vo.setUserId(post.getUserId());
@@ -112,7 +149,7 @@ public class PostServiceImpl implements PostService {
         vo.setDate(post.getCreatedAt().toLocalDate().format(DATE_FMT));
         vo.setGlow(post.getGlow());
         vo.setViewCount(post.getViewCount() == null ? 0 : post.getViewCount());
-        vo.setLiked(likedBy(id));
+        vo.setLiked(false);
         vo.setPrev(neighbor(post.getId(), true));
         vo.setNext(neighbor(post.getId(), false));
         return vo;
@@ -144,6 +181,7 @@ public class PostServiceImpl implements PostService {
             postMapper.update(null, new LambdaUpdateWrapper<Post>()
                     .eq(Post::getId, id)
                     .setSql("view_count = view_count + 1"));
+            cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         }
         return counted;
     }
@@ -165,6 +203,7 @@ public class PostServiceImpl implements PostService {
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         postMapper.insert(entity);
+        invalidatePublicCaches();
         log.info("发射新星 id={} title={} 字数={} tags={}",
                 entity.getId(), entity.getTitle(), entity.getWordCount(), entity.getTags());
         return entity.getId();
@@ -195,6 +234,7 @@ public class PostServiceImpl implements PostService {
         }
         post.setUpdatedAt(LocalDateTime.now());
         postMapper.updateById(post);
+        invalidatePublicCaches();
         log.info("更新文章 id={} title={}", id, post.getTitle());
     }
 
@@ -212,6 +252,7 @@ public class PostServiceImpl implements PostService {
                 .eq(Comment::getStatus, 1)
                 .set(Comment::getStatus, 0)
                 .set(Comment::getUpdatedAt, LocalDateTime.now()));
+        invalidatePublicCaches();
         log.info("熄灭星体 id={} title={}", id, post.getTitle());
     }
 
@@ -249,6 +290,7 @@ public class PostServiceImpl implements PostService {
                     .setSql("glow = glow + 1"));
         }
         Integer glow = postMapper.selectById(id).getGlow();
+        cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         log.debug("文章 {} 补充光芒 applied={} -> {}", id, applied, glow);
         return new GlowResultVO(glow, likedBy(id), applied);
     }
@@ -262,6 +304,13 @@ public class PostServiceImpl implements PostService {
         return postGlowMapper.selectCount(new LambdaQueryWrapper<PostGlow>()
                 .eq(PostGlow::getPostId, postId)
                 .eq(PostGlow::getUserId, userId)) > 0;
+    }
+
+    private void invalidatePublicCaches() {
+        cache.invalidate(CACHE_NAMESPACE);
+        cache.invalidate("tag");
+        cache.invalidate("stats");
+        cache.invalidate("comment");
     }
 
     private Post requirePost(Long id) {

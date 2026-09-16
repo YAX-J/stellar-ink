@@ -5,6 +5,7 @@ import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisCache;
 import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
@@ -30,8 +31,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 @Slf4j
@@ -47,6 +51,9 @@ public class UserServiceImpl implements UserService {
     private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
     private static final String LOGIN_FAILURE_KEY_PREFIX = "stellar-ink:user:login:failure:";
     private static final String LOGIN_LOCK_KEY_PREFIX = "stellar-ink:user:login:lock:";
+    private static final String PROFILE_CACHE_KEY_PREFIX = "stellar-ink:user:cache:profile:";
+    private static final String AUTHOR_CACHE_KEY_PREFIX = "stellar-ink:user:cache:author:";
+    private static final Duration USER_CACHE_TTL = Duration.ofMinutes(5);
 
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
@@ -57,6 +64,7 @@ public class UserServiceImpl implements UserService {
      * X-Forwarded-For 伪造，按 IP 限流会形同虚设。按账号锁定至少能保护站长账号不被爆破，且多实例共享状态。
      */
     private final RedisUtils redisUtils;
+    private final RedisCache redisCache;
 
     @Override
     public UserVO login(LoginDTO dto) {
@@ -82,6 +90,7 @@ public class UserServiceImpl implements UserService {
         clearFailures(attemptKey);
         // Sa-Token JWT 无状态登录：token 由网关与各服务用相同密钥验签；角色一并写入 JWT 供门槛校验
         StpUtil.login(user.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, roleOf(user)));
+        cacheUser(user);
         log.info("登录成功 userId={} username={}", user.getId(), user.getUsername());
         return toVO(user);
     }
@@ -113,6 +122,7 @@ public class UserServiceImpl implements UserService {
         log.info("注册新账号 userId={} username={}", entity.getId(), entity.getUsername());
         // 注册即登录：与 login 一致签发 JWT（新账号固定 READER）
         StpUtil.login(entity.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, Role.READER.name()));
+        cacheUser(entity);
         return toVO(entity);
     }
 
@@ -163,7 +173,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserVO profile(Long userId) {
-        return toVO(requireUser(userId));
+        return redisCache.getOrLoad(profileCacheKey(userId), UserVO.class, USER_CACHE_TTL,
+                () -> toVO(requireUser(userId)));
     }
 
     @Override
@@ -184,6 +195,7 @@ public class UserServiceImpl implements UserService {
         user.setRoleAppliedAt(null);
         user.setRoleApplyNote(null);
         userMapper.updateById(user);
+        evictUserCache(targetUserId, false);
         log.info("调整角色 operatorId={} targetUserId={} role={}（同时清空待审申请）",
                 operatorId, targetUserId, target.name());
         return toVO(user);
@@ -201,6 +213,7 @@ public class UserServiceImpl implements UserService {
         user.setRoleAppliedAt(LocalDateTime.now());
         user.setRoleApplyNote(StringUtils.hasText(note) ? note.trim() : null);
         userMapper.updateById(user);
+        evictUserCache(userId, false);
         log.info("收到作者申请 userId={} note长度={}", userId,
                 user.getRoleApplyNote() == null ? 0 : user.getRoleApplyNote().length());
         return toVO(user);
@@ -215,6 +228,7 @@ public class UserServiceImpl implements UserService {
         user.setRoleAppliedAt(null);
         user.setRoleApplyNote(null);
         userMapper.updateById(user);
+        evictUserCache(userId, false);
         log.info("撤回作者申请 userId={}", userId);
         return toVO(user);
     }
@@ -241,7 +255,24 @@ public class UserServiceImpl implements UserService {
         if (safeIds.isEmpty()) {
             return List.of();
         }
-        return userMapper.selectBatchIds(safeIds).stream().map(this::toAuthorVO).toList();
+        Map<Long, AuthorVO> authors = new HashMap<>();
+        List<Long> misses = new ArrayList<>();
+        for (Long id : safeIds) {
+            AuthorVO cached = redisCache.get(authorCacheKey(id), AuthorVO.class);
+            if (cached == null) {
+                misses.add(id);
+            } else {
+                authors.put(id, cached);
+            }
+        }
+        if (!misses.isEmpty()) {
+            for (User user : userMapper.selectBatchIds(misses)) {
+                AuthorVO author = toAuthorVO(user);
+                authors.put(user.getId(), author);
+                redisCache.put(authorCacheKey(user.getId()), author, USER_CACHE_TTL);
+            }
+        }
+        return safeIds.stream().map(authors::get).filter(Objects::nonNull).toList();
     }
 
     @Override
@@ -275,6 +306,7 @@ public class UserServiceImpl implements UserService {
             user.setDailyGoal(Math.max(0, dto.getDailyGoal()));
         }
         userMapper.updateById(user);
+        evictUserCache(userId, true);
         log.info("更新资料 userId={} nickname={} dailyGoal={}", userId, user.getNickname(), user.getDailyGoal());
         return toVO(user);
     }
@@ -294,6 +326,7 @@ public class UserServiceImpl implements UserService {
         }
         // 换头像成功后再删旧文件：先删后写会在一失败时既丢新图又丢旧图
         avatarStorage.delete(oldUrl);
+        evictUserCache(userId, true);
         log.info("更新头像 userId={} url={}", userId, newUrl);
         return toVO(user);
     }
@@ -313,6 +346,7 @@ public class UserServiceImpl implements UserService {
                 .set(User::getAvatarUrl, null));
         user.setAvatarUrl(null);
         avatarStorage.delete(oldUrl);
+        evictUserCache(userId, true);
         log.info("删除头像 userId={} 已回落为底字头像", userId);
         return toVO(user);
     }
@@ -353,5 +387,25 @@ public class UserServiceImpl implements UserService {
         vo.setAvatarText(user.getAvatarText());
         vo.setAvatarUrl(user.getAvatarUrl());
         return vo;
+    }
+
+    private void cacheUser(User user) {
+        redisCache.put(profileCacheKey(user.getId()), toVO(user), USER_CACHE_TTL);
+        redisCache.put(authorCacheKey(user.getId()), toAuthorVO(user), USER_CACHE_TTL);
+    }
+
+    private void evictUserCache(Long userId, boolean authorChanged) {
+        redisCache.evict(profileCacheKey(userId));
+        if (authorChanged) {
+            redisCache.evict(authorCacheKey(userId));
+        }
+    }
+
+    private String profileCacheKey(Long userId) {
+        return PROFILE_CACHE_KEY_PREFIX + userId;
+    }
+
+    private String authorCacheKey(Long userId) {
+        return AUTHOR_CACHE_KEY_PREFIX + userId;
     }
 }

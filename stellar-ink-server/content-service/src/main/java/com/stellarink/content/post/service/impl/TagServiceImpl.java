@@ -1,6 +1,8 @@
 package com.stellarink.content.post.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.pojo.Post;
 import com.stellarink.content.post.service.TagService;
@@ -16,10 +18,18 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class TagServiceImpl implements TagService {
 
+    private static final TypeReference<List<TagVO>> CACHE_TYPE = new TypeReference<>() { };
+
     private final PostMapper postMapper;
+    private final ContentCache cache;
 
     @Override
     public List<TagVO> listWithCount() {
+        String cacheKey = cache.versionedKey("tag", "list");
+        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.LONG_TTL, this::loadTags);
+    }
+
+    private List<TagVO> loadTags() {
         List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
                 .eq(Post::getStatus, 1)
                 .select(Post::getTags));

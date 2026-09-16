@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
 import com.stellarink.common.util.WordCount;
+import com.stellarink.content.cache.CachedPage;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.note.mapper.NoteMapper;
 import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.note.service.NoteService;
@@ -42,13 +45,27 @@ public class NoteServiceImpl implements NoteService {
     private static final int PUBLISHED = 1;
     private static final int DRAFT = 0;
     private static final int REVIEW_VALID_DAYS = 180;
+    private static final String CACHE_NAMESPACE = "note";
+    private static final TypeReference<CachedPage<NoteVO>> PAGE_CACHE_TYPE = new TypeReference<>() { };
 
     private final NoteMapper noteMapper;
     /** 浏览量闸门与文章共用：该表只记「某用户某天已计过一次」，与内容类型无关 */
     private final PostViewMapper postViewMapper;
+    private final ContentCache cache;
 
     @Override
     public IPage<NoteVO> page(NoteQueryDTO query) {
+        String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "page",
+                query.getPage(), query.getSize(), query.getTag(), query.getNoteType(),
+                query.getKeyword(), query.getOrderBy(), query.isPublicOnly());
+        CachedPage<NoteVO> cached = cache.getOrLoad(cacheKey, PAGE_CACHE_TYPE, ContentCache.DEFAULT_TTL, () -> {
+            IPage<NoteVO> loaded = loadPublicPage(query);
+            return CachedPage.from(loaded);
+        });
+        return cached.toPage();
+    }
+
+    private IPage<NoteVO> loadPublicPage(NoteQueryDTO query) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getStatus, PUBLISHED)
                 .eq(Note::getVisibility, NoteVisibility.PUBLIC.name());
@@ -134,16 +151,32 @@ public class NoteServiceImpl implements NoteService {
 
     @Override
     public NoteDetailVO detail(Long id) {
+        String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "detail", id);
+        Long viewerId = currentLoginId();
+        NoteDetailVO cached = cache.get(cacheKey, NoteDetailVO.class);
+        if (cached != null) {
+            if (shouldRecordView(cached.getUserId(), viewerId) && recordView(id)) {
+                NoteDetailVO refreshed = toDetailVO(requireNote(id));
+                cache.put(cacheKey, refreshed, ContentCache.DEFAULT_TTL);
+                return refreshed;
+            }
+            return cached;
+        }
         Note note = requireNote(id);
         /* 私有笔记只有作者本人可读；其它人（含 ADMIN）一律 404，不暴露存在性 */
         ensureReadable(note);
-
-        Long viewerId = currentLoginId();
-        if (isPublicPublished(note) && (viewerId == null || !viewerId.equals(note.getUserId()))) {
-            recordView(note.getId());
+        if (isPublicPublished(note) && shouldRecordView(note.getUserId(), viewerId)
+                && recordView(note.getId())) {
             note = requireNote(id);
         }
+        NoteDetailVO vo = toDetailVO(note);
+        if (isPublicPublished(note)) {
+            cache.put(cacheKey, vo, ContentCache.DEFAULT_TTL);
+        }
+        return vo;
+    }
 
+    private NoteDetailVO toDetailVO(Note note) {
         NoteDetailVO vo = new NoteDetailVO();
         vo.setId(note.getId());
         vo.setUserId(note.getUserId());
@@ -189,6 +222,7 @@ public class NoteServiceImpl implements NoteService {
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         noteMapper.insert(entity);
+        invalidatePublicCaches();
         log.info("新建笔记 id={} type={} visibility={} status={} title={}",
                 entity.getId(), entity.getNoteType(), entity.getVisibility(), entity.getStatus(), entity.getTitle());
         return entity.getId();
@@ -228,6 +262,7 @@ public class NoteServiceImpl implements NoteService {
         }
         note.setUpdatedAt(LocalDateTime.now());
         noteMapper.updateById(note);
+        invalidatePublicCaches();
         log.info("更新笔记 id={} visibility={} status={} title={}",
                 id, note.getVisibility(), note.getStatus(), note.getTitle());
     }
@@ -237,6 +272,7 @@ public class NoteServiceImpl implements NoteService {
         Note note = requireNote(id);
         ensureOwned(note);
         noteMapper.deleteById(id);
+        invalidatePublicCaches();
         log.info("删除笔记 id={} title={}", id, note.getTitle());
     }
 
@@ -248,6 +284,7 @@ public class NoteServiceImpl implements NoteService {
         noteMapper.update(null, new LambdaUpdateWrapper<Note>()
                 .eq(Note::getId, id)
                 .set(Note::getVerifiedAt, now));
+        invalidatePublicCaches();
         log.info("笔记 {} 标记为已验证，结论截至 {}", id, now);
         return now;
     }
@@ -280,8 +317,13 @@ public class NoteServiceImpl implements NoteService {
             noteMapper.update(null, new LambdaUpdateWrapper<Note>()
                     .eq(Note::getId, id)
                     .setSql("view_count = view_count + 1"));
+            cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         }
         return counted;
+    }
+
+    private void invalidatePublicCaches() {
+        cache.invalidate(CACHE_NAMESPACE);
     }
 
     private Note requireNote(Long id) {
@@ -321,6 +363,10 @@ public class NoteServiceImpl implements NoteService {
     private boolean isPublicPublished(Note note) {
         return Integer.valueOf(PUBLISHED).equals(note.getStatus())
                 && NoteVisibility.PUBLIC.name().equals(note.getVisibility());
+    }
+
+    private boolean shouldRecordView(Long ownerId, Long viewerId) {
+        return viewerId == null || !viewerId.equals(ownerId);
     }
 
     /** 当前登录用户 id；未登录返回 null（不抛异常，供可选登录场景使用） */

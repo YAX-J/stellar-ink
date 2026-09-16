@@ -99,9 +99,13 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 ## Redis 基础设施
 
-- `common-core` 通过 Spring Data Redis 提供 `RedisUtils`，版本由父 POM 的 Spring Boot 版本统一管理，供 user-service 与 content-service 注入使用；网关不依赖该阻塞式工具。
-- 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL 与原子整数计数。
-- 当前已将 user-service 登录失败计数与账号锁定迁移到 Redis；尚未建立通用业务缓存、Redis 限流、分布式锁或会话状态，其他业务键仍由后续具体功能定义。
+- `common-core` 通过 Spring Data Redis 提供 `RedisUtils` 与 `RedisCache`，版本由父 POM 的 Spring Boot 版本统一管理，供 user-service 与 content-service 注入使用；网关不依赖该阻塞式工具。
+- 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。
+- user-service 使用 Redis 维护登录失败窗口与账号锁定，并缓存当前用户资料、公开作者摘要（5 分钟）；昵称、底字或头像更新后同时清理资料与作者缓存。
+- content-service 缓存公开文章/笔记列表与详情、标签、统计、评论、友链、流星和回声；TTL 按数据热度为 30 秒、1 分钟或 5 分钟。参数化列表使用“命名空间版本 + 参数指纹”构造键，内容写入后原子推进版本，使旧参数组合立即不可达。
+- 草稿、私有笔记、我的内容、复核队列、用户列表和友链待审队列不进入共享缓存；JWT 仍保持无状态，不引入 Redis Session。
+- 浏览去重、点赞明细及文章/笔记计数仍以 MySQL 为事实来源。浏览与点赞成功后只清理详情缓存，列表计数允许在短 TTL 内最终一致，避免高频写操作击穿整组列表缓存。
+- 普通缓存采用故障放行：Redis 不可用时回源 MySQL，并短暂熔断 30 秒，避免一次请求重复等待命令超时；登录锁定是安全状态，继续直接使用 Redis。尚未实现 Redis 限流或分布式锁。
 - 连接参数统一来自 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`，连接和命令超时均为 3 秒。
 - Actuator 会自动加入 Redis 健康项；Redis 不可达时两个业务服务的 `/actuator/health` 为 `DOWN`。
 

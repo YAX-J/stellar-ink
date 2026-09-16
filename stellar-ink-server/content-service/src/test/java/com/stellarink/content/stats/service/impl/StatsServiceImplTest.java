@@ -1,5 +1,8 @@
 package com.stellarink.content.stats.service.impl;
 
+import com.stellarink.common.redis.RedisCache;
+import com.stellarink.common.redis.RedisUtils;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.pojo.Post;
 import com.stellarink.sharedmodel.vo.stats.StatsVO;
@@ -22,7 +25,9 @@ import static org.mockito.Mockito.when;
 class StatsServiceImplTest {
 
     private final PostMapper postMapper = mock(PostMapper.class);
-    private final StatsServiceImpl statsService = new StatsServiceImpl(postMapper);
+    private final RedisUtils redisUtils = mock(RedisUtils.class);
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final StatsServiceImpl statsService = new StatsServiceImpl(postMapper, cache);
 
     @BeforeAll
     static void initializeMybatisMetadata() {

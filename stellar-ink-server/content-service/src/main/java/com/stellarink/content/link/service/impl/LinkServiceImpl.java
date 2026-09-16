@@ -1,8 +1,10 @@
 package com.stellarink.content.link.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.link.mapper.LinkMapper;
 import com.stellarink.content.link.pojo.Link;
 import com.stellarink.content.link.service.LinkService;
@@ -26,12 +28,16 @@ public class LinkServiceImpl implements LinkService {
     static final int PENDING = 0;
     static final int APPROVED = 1;
     static final int REJECTED = 2;
+    private static final TypeReference<List<LinkVO>> CACHE_TYPE = new TypeReference<>() { };
 
     private final LinkMapper linkMapper;
+    private final ContentCache cache;
 
     @Override
     public List<LinkVO> listApproved() {
-        return listByStatus(APPROVED);
+        String cacheKey = cache.versionedKey("link", "approved");
+        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.LONG_TTL,
+                () -> listByStatus(APPROVED));
     }
 
     @Override
@@ -76,6 +82,7 @@ public class LinkServiceImpl implements LinkService {
         }
         entity.setStatus(status);
         linkMapper.updateById(entity);
+        cache.invalidate("link");
         log.info("友链 {} 审核结果为 {}", id, status == APPROVED ? "通过" : "驳回");
     }
 

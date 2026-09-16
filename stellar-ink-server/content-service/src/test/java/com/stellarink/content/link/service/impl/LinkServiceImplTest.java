@@ -3,6 +3,9 @@ package com.stellarink.content.link.service.impl;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisCache;
+import com.stellarink.common.redis.RedisUtils;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.link.mapper.LinkMapper;
 import com.stellarink.content.link.pojo.Link;
 import com.stellarink.sharedmodel.enums.ErrorCode;
@@ -27,7 +30,9 @@ import static org.mockito.Mockito.when;
 class LinkServiceImplTest {
 
     private final LinkMapper linkMapper = mock(LinkMapper.class);
-    private final LinkServiceImpl linkService = new LinkServiceImpl(linkMapper);
+    private final RedisUtils redisUtils = mock(RedisUtils.class);
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final LinkServiceImpl linkService = new LinkServiceImpl(linkMapper, cache);
 
     @BeforeAll
     static void initializeMybatisMetadata() {

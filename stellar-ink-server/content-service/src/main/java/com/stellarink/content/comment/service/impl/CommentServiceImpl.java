@@ -2,8 +2,10 @@ package com.stellarink.content.comment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.comment.mapper.CommentMapper;
 import com.stellarink.content.comment.pojo.Comment;
 import com.stellarink.content.comment.service.CommentService;
@@ -26,11 +28,20 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CommentServiceImpl implements CommentService {
 
+    private static final TypeReference<List<CommentVO>> CACHE_TYPE = new TypeReference<>() { };
+
     private final CommentMapper commentMapper;
     private final PostMapper postMapper;
+    private final ContentCache cache;
 
     @Override
     public List<CommentVO> list(Long postId) {
+        String cacheKey = cache.versionedKey("comment", "post", postId);
+        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
+                () -> loadComments(postId));
+    }
+
+    private List<CommentVO> loadComments(Long postId) {
         ensurePublishedPost(postId);
         return commentMapper.selectList(new LambdaQueryWrapper<Comment>()
                 .eq(Comment::getPostId, postId)
@@ -55,6 +66,7 @@ public class CommentServiceImpl implements CommentService {
         comment.setCreatedAt(LocalDateTime.now());
         comment.setUpdatedAt(comment.getCreatedAt());
         commentMapper.insert(comment);
+        cache.invalidate("comment");
         log.info("发表评论 id={} postId={} userId={}", comment.getId(), postId, comment.getUserId());
         return toVO(comment);
     }
@@ -75,6 +87,7 @@ public class CommentServiceImpl implements CommentService {
                 .eq(Comment::getId, commentId)
                 .set(Comment::getStatus, 0)
                 .set(Comment::getUpdatedAt, LocalDateTime.now()));
+        cache.invalidate("comment");
         log.info("删除评论 id={} postId={} userId={}", commentId, postId, comment.getUserId());
     }
 

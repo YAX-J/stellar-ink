@@ -1,7 +1,9 @@
 package com.stellarink.content.echo.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.echo.mapper.EchoMapper;
 import com.stellarink.content.echo.pojo.Echo;
 import com.stellarink.sharedmodel.dto.echo.EchoCreateDTO;
@@ -27,14 +29,22 @@ import java.util.List;
 public class EchoController {
 
     private static final String ANONYMOUS = "匿名旅人";
+    private static final TypeReference<List<EchoVO>> CACHE_TYPE = new TypeReference<>() { };
 
     private final EchoMapper echoMapper;
+    private final ContentCache cache;
 
     @GetMapping
     public Response<List<EchoVO>> list() {
+        String cacheKey = cache.versionedKey("echo", "list");
+        return Response.success(cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
+                this::loadEchos));
+    }
+
+    private List<EchoVO> loadEchos() {
         List<Echo> items = echoMapper.selectList(new LambdaQueryWrapper<Echo>()
                 .orderByDesc(Echo::getId));
-        return Response.success(items.stream().map(this::toVO).toList());
+        return items.stream().map(this::toVO).toList();
     }
 
     /** 投瓶入海（公开） */
@@ -48,6 +58,7 @@ public class EchoController {
         entity.setContent(dto.getContent().trim());
         entity.setCreatedAt(LocalDateTime.now());
         echoMapper.insert(entity);
+        cache.invalidate("echo");
         log.info("投瓶入海 id={} 昵称={}", entity.getId(), entity.getNickname());
         return Response.success();
     }

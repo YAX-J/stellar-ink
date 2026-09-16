@@ -6,6 +6,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisCache;
+import com.stellarink.common.redis.RedisUtils;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.note.mapper.NoteMapper;
 import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.post.mapper.PostViewMapper;
@@ -16,18 +19,22 @@ import com.stellarink.sharedmodel.enums.NoteType;
 import com.stellarink.sharedmodel.enums.NoteVisibility;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import com.stellarink.sharedmodel.vo.note.NoteDetailVO;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,7 +44,9 @@ class NoteServiceImplTest {
 
     private final NoteMapper noteMapper = mock(NoteMapper.class);
     private final PostViewMapper postViewMapper = mock(PostViewMapper.class);
-    private final NoteServiceImpl noteService = new NoteServiceImpl(noteMapper, postViewMapper);
+    private final RedisUtils redisUtils = mock(RedisUtils.class);
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final NoteServiceImpl noteService = new NoteServiceImpl(noteMapper, postViewMapper, cache);
 
     @BeforeAll
     static void initializeMybatisMetadata() {
@@ -129,6 +138,69 @@ class NoteServiceImplTest {
 
             assertThat(noteService.detail(1L).getId()).isEqualTo(1L);
             verify(noteMapper, never()).update(Mockito.<Note>isNull(), any());
+            verify(postViewMapper, never()).findViewedAt(any());
+            verify(redisUtils, never()).set(anyString(), any(), any());
+        }
+    }
+
+    @Test
+    void shouldCountAnonymousViewAndReturnLatestPublicNote() {
+        Note before = note(1L, 10L, NoteVisibility.PUBLIC, 1);
+        Note after = note(1L, 10L, NoteVisibility.PUBLIC, 1);
+        after.setViewCount(1);
+        when(noteMapper.selectById(1L)).thenReturn(before, before, after);
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class)) {
+            token.when(StpUtil::isLogin).thenReturn(false);
+
+            assertThat(noteService.detail(1L).getViewCount()).isEqualTo(1);
+            verify(noteMapper).update(Mockito.<Note>isNull(), any());
+            verify(redisUtils).set(anyString(), any(), any());
+        }
+    }
+
+    @Test
+    void shouldCountPublicNoteViewWhenDetailCacheHits() {
+        var cached = new NoteDetailVO();
+        cached.setId(1L);
+        cached.setUserId(10L);
+        cached.setViewCount(4);
+        Note before = note(1L, 10L, NoteVisibility.PUBLIC, 1);
+        before.setViewCount(4);
+        Note after = note(1L, 10L, NoteVisibility.PUBLIC, 1);
+        after.setViewCount(5);
+        when(redisUtils.get(anyString(), eq(NoteDetailVO.class)))
+                .thenReturn(cached);
+        when(noteMapper.selectById(1L)).thenReturn(before, after);
+        when(postViewMapper.findViewedAt(99L)).thenReturn(LocalDate.now().minusDays(1));
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
+             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            token.when(StpUtil::isLogin).thenReturn(true);
+            auth.when(AuthHelper::loginId).thenReturn(99L);
+
+            assertThat(noteService.detail(1L).getViewCount()).isEqualTo(5);
+            verify(postViewMapper).touchToday(99L);
+            verify(noteMapper).update(Mockito.<Note>isNull(), any());
+            verify(redisUtils).set(anyString(), any(), any());
+        }
+    }
+
+    @Test
+    void shouldReturnCachedPublicNoteWithoutCountingOwnerView() {
+        var cached = new NoteDetailVO();
+        cached.setId(1L);
+        cached.setUserId(10L);
+        when(redisUtils.get(anyString(), eq(NoteDetailVO.class)))
+                .thenReturn(cached);
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
+             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            token.when(StpUtil::isLogin).thenReturn(true);
+            auth.when(AuthHelper::loginId).thenReturn(10L);
+
+            assertThat(noteService.detail(1L)).isSameAs(cached);
+            verify(noteMapper, never()).selectById(any());
             verify(postViewMapper, never()).findViewedAt(any());
         }
     }

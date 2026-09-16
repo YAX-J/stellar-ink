@@ -1,6 +1,7 @@
 package com.stellarink.content.stats.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.pojo.Post;
 import com.stellarink.content.stats.service.StatsService;
@@ -20,9 +21,15 @@ import java.util.stream.Collectors;
 public class StatsServiceImpl implements StatsService {
 
     private final PostMapper postMapper;
+    private final ContentCache cache;
 
     @Override
     public StatsVO overview() {
+        String cacheKey = cache.versionedKey("stats", "overview");
+        return cache.getOrLoad(cacheKey, StatsVO.class, ContentCache.LONG_TTL, this::loadOverview);
+    }
+
+    private StatsVO loadOverview() {
         List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
                 .eq(Post::getStatus, 1)
                 .select(Post::getWordCount, Post::getTags, Post::getCreatedAt));
