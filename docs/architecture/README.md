@@ -76,6 +76,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 - 友链使用 `0 待审核 / 1 已接入 / 2 已驳回` 三态；公开 `/links` 只返回已接入项，
   `/links/pending` 在网关 GET 放行规则之前单独校验 ADMIN，内容服务再做一次角色复核。
 - JWT 无状态验签，网关与两个业务服务必须使用同一 `SA_TOKEN_JWT_SECRET`。
+- JWT 仍是无状态主体，但登出/改密会把当前令牌摘要写入 Redis 撤销列表；网关用响应式 Redis 在路由前统一拦截，键只保存 SHA-256 摘要并随 JWT 到期删除。
 - **笔记的私有隔离不在网关**：网关对所有 GET 放行，`PRIVATE` 笔记的可读性由 content-service 的
   `NoteServiceImpl#ensureReadable` 判定（非作者一律 404，ADMIN 也不能读他人私有笔记）；
   归属判定 `ensureOwned` 比文章更严格，只有作者本人能改删。
@@ -99,15 +100,15 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 ## Redis 基础设施
 
-- `common-core` 通过 Spring Data Redis 提供 `RedisUtils` 与 `RedisCache`，版本由父 POM 的 Spring Boot 版本统一管理，供 user-service 与 content-service 注入使用；网关不依赖该阻塞式工具。
+- `common-core` 通过 Spring Data Redis 提供阻塞式 `RedisUtils` 与 `RedisCache`，供 Servlet 业务服务注入；网关单独使用 Reactive Redis 检查 JWT 撤销列表，禁止在 Netty 事件循环里调用阻塞式工具。撤销键规则由 `shared-model` 共享。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。
-- user-service 使用 Redis 维护登录失败窗口与账号锁定，并缓存当前用户资料、公开作者摘要（5 分钟）；昵称、底字或头像更新后同时清理资料与作者缓存。
+- user-service 使用 Redis 维护登录失败窗口、账号锁定和 JWT 撤销记录，并缓存公开作者摘要（5 分钟）；完整用户资料含登录名和申请理由，不进入共享缓存。
 - content-service 缓存公开文章/笔记列表与详情、标签、统计、评论、友链、流星和回声；TTL 按数据热度为 30 秒、1 分钟或 5 分钟。参数化列表使用“命名空间版本 + 参数指纹”构造键，内容写入后原子推进版本，使旧参数组合立即不可达。
-- 草稿、私有笔记、我的内容、复核队列、用户列表和友链待审队列不进入共享缓存；JWT 仍保持无状态，不引入 Redis Session。
-- 浏览去重、点赞明细及文章/笔记计数仍以 MySQL 为事实来源。浏览与点赞成功后只清理详情缓存，列表计数允许在短 TTL 内最终一致，避免高频写操作击穿整组列表缓存。
-- 普通缓存采用故障放行：Redis 不可用时回源 MySQL，并短暂熔断 30 秒，避免一次请求重复等待命令超时；登录锁定是安全状态，继续直接使用 Redis。尚未实现 Redis 限流或分布式锁。
+- 草稿、私有笔记、我的内容、复核队列、完整用户资料、用户列表和友链待审队列不进入共享缓存；不引入 Redis Session。
+- 浏览去重、点赞明细及文章/笔记计数仍以 MySQL 为事实来源。登录用户的每日闸门用条件更新 + `INSERT IGNORE` 原子抢占，并与计数更新处于同一事务；浏览与点赞成功后只清理详情缓存，列表计数允许在短 TTL 内最终一致。
+- 普通缓存采用故障放行：Redis 不可用时回源 MySQL，并短暂熔断 30 秒；登录锁定和令牌撤销是安全状态，不故障放行。尚未实现 Redis 限流或分布式锁。
 - 连接参数统一来自 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`，连接和命令超时均为 3 秒。
-- Actuator 会自动加入 Redis 健康项；Redis 不可达时两个业务服务的 `/actuator/health` 为 `DOWN`。
+- Actuator 会自动加入 Redis 健康项；Redis 不可达时三个 Java 服务的 `/actuator/health` 为 `DOWN`。
 
 ## 配置与部署
 

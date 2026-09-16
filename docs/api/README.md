@@ -25,6 +25,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 ## 鉴权（Sa-Token，网关统一）
 
 - 登录返回 `tokenName: Authorization` 与 `tokenValue`；后续请求带 `Authorization: <tokenValue>`（无 Bearer 前缀）
+- 登出与修改密码会把当前 JWT 的 SHA-256 摘要写入 Redis 撤销列表，网关在令牌自然过期前拒绝它；Redis 不可用时会话校验返回 HTTP 503，不故障放行
 - 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`、`POST /posts/{id}/viewed`、`POST /notes/{id}/viewed`）
 - 其余写请求需有效 token，失败返回 `{"code":401,...}`（网关同时设置真实 HTTP 状态 401/403）
 - **鉴权失败返回形态不一致，前端必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；而 GET 请求在网关是放行的，token 失效时由服务端 `NotLoginException` 兜底，返回的是 **HTTP 200 + `code:401`**
@@ -106,13 +107,13 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 |---|---|---|---|
 | POST | `/auth/register` | 注册（开放），注册即登录，返回 `{tokenName, tokenValue, user}` | 公开 |
 | POST | `/auth/login` | 登录，返回 `{tokenName, tokenValue, user}` | 公开 |
-| POST | `/auth/logout` | 登出（无状态 JWT 语义收口，前端丢 token） | 登录 |
+| POST | `/auth/logout` | 登出并立即撤销当前 JWT | 登录 |
 | GET | `/user/authors?ids=1,2` | 批量查询公开作者摘要（最多 100 个，仅返回 id/笔名/头像底字/头像路径） | 公开 |
 | GET | `/user/profile` | 当前用户资料（含 `avatarText` 底字与 `avatarUrl` 图片路径） | 登录 |
 | PUT | `/user/profile` | 更新资料 `{nickname?, signature?, avatarText?, dailyGoal?}` | 登录 |
 | POST | `/user/avatar` | 上传/替换头像（**multipart，字段名 `file`**），返回带 `avatarUrl` 的资料 | 登录 |
 | DELETE | `/user/avatar` | 删除头像，回落为 `avatarText` 底字头像 | 登录 |
-| PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}` | 登录 |
+| PUT | `/user/password` | 修改密码 `{oldPassword, newPassword}`；成功后撤销当前 JWT，需重新登录 | 登录 |
 | PUT | `/user/role-apply` | 读者申请成为作者 `{note?}`（理由 ≤200 字）；已申请则覆盖为最新，返回更新后的 user | 登录（读者即可） |
 | PUT | `/user/role-apply/cancel` | 撤回自己的申请，返回更新后的 user | 登录 |
 | PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user；**同时清空该用户的待审申请** | ADMIN |
@@ -120,7 +121,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 登录防爆破：user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次后锁定账号 15 分钟；
 锁定与失败计数在多个服务实例之间共享，成功登录会清理失败计数。
-`GET /user/profile` 与 `GET /user/authors` 使用 Redis 短期缓存；修改资料、底字或头像后立即失效，不改变接口响应格式。
+`GET /user/authors` 的公开作者摘要使用 Redis 短期缓存，修改笔名、底字或头像后立即失效；`GET /user/profile` 含登录名与申请理由，始终读取 MySQL，不进入共享缓存。
 
 ### content-service :8102 - 文章
 
@@ -141,9 +142,9 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 - `orderBy` 取值：`latest` 最新（默认）/ `hottest` 最受回望（按 `glow`）/ `longest` 篇幅最长；一律追加 `id` 倒序保证分页稳定
 - 公开文章列表、搜索与详情使用 Redis 旁路缓存（1 分钟）；新增、更新、删除时推进缓存版本。浏览量和点赞仍先持久化 MySQL，详情缓存随写失效，列表计数最多延迟一个 TTL。
-- `tag` 为 **`LIKE '%tag%'` 子串匹配**（逗号串），不是精确标签匹配 —— 前端拿到结果后需按 `tags.includes(tag)` 二次过滤
-- 分页 `size` 服务端硬上限 100（超过会被静默夹到 100），公开列表总条数从 `IPage.total` 取
-- 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数
+- `tag` 使用 `FIND_IN_SET` 按逗号分隔成员精确匹配；标签本身禁止包含逗号
+- 所有分页接口要求 `page >= 1`、`1 <= size <= 100`，越界返回参数错误；总条数从 `IPage.total` 取
+- 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数；闸门抢占与计数更新处于同一事务
 - 点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id, user_id)`，重复点击 `applied=false` 且不重复计数）；未登录访客一次点击一次计数，`liked` 恒为 `false`
 - 评论口径：仅登录用户可发表评论；公开文章评论匿名可读；评论作者或 ADMIN 可软删除，已删除评论不再出现在列表中；正文最多 1000 字，不支持楼中楼与匿名评论
 
@@ -167,7 +168,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - **结构约定**：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，前端据此自动生成目录，不额外占用数据库列；列表 `summary` 优先截取「结论」章节
 - **私有隔离（硬性约束）**：`PRIVATE` 笔记不得出现在公开列表、标签聚合与搜索里；详情对非作者返回 404（不是 403，避免枚举存在性）；**ADMIN 也读不到他人私有笔记**
 - 公开笔记列表与详情使用 Redis 旁路缓存（1 分钟）；草稿、私有笔记、我的列表和复核队列不缓存。更新可见性、发布状态、正文或验证时间后推进缓存版本。
-- 浏览量口径：仅公开且已发布的笔记计数；按天去重与文章共用 `post_view` 闸门（该表只记「某用户某天已计一次」，与内容类型无关）；作者本人浏览不计
+- 浏览量口径：仅 `POST /notes/{id}/viewed` 计数，读取详情本身不计；仅公开且已发布的笔记可计数，按天去重与文章共用 `post_view` 闸门（该表只记「某用户某天已计一次」，与内容类型无关），作者本人浏览不计
 - `reviewState` 取值：`DUE` 待复核查询（`UNVERIFIED + EXPIRED`）/ `UNVERIFIED` 从未验证 / `EXPIRED` 超过 180 天 / `FRESH` 有效期内；`DUE` 只作为筛选值，不会出现在单条笔记响应中
 - 笔记列表与详情返回 `verifiedAt/reviewState/reviewDueAt`；180 天口径由服务端统一计算，`PUT /notes/{id}/verify` 会从当前时间重新续期
 - 笔记一期**不做点赞**
@@ -176,7 +177,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| GET | `/meteors?limit=50` | 最近流星 | 公开 |
+| GET | `/meteors?page=1&size=24` | 流星分页列表，返回 `IPage<MeteorVO>` | 公开 |
 | POST | `/meteors` | 发射 `{content}` | AUTHOR |
 | DELETE | `/meteors/{id}` | 删除；AUTHOR 仅自己的流星，ADMIN 可操作全部 | AUTHOR |
 
@@ -204,7 +205,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 |---|---|---|---|
 | GET | `/stats/overview` | 写作脉搏：totalPosts / totalWords / todayWords / streakDays / nightRatio / tagDistribution（**全站统计，不区分用户**） | 公开 |
 
-公开评论、回声使用 30 秒缓存；公开流星列表使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
+公开评论、回声使用 30 秒缓存；公开流星分页使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
 
 ### 各服务通用
 
