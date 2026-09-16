@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.common.util.Pagination;
 import com.stellarink.common.util.WordCount;
 import com.stellarink.content.cache.CachedPage;
 import com.stellarink.content.cache.ContentCache;
@@ -55,6 +56,7 @@ public class NoteServiceImpl implements NoteService {
 
     @Override
     public IPage<NoteVO> page(NoteQueryDTO query) {
+        Pagination.requireValid(query.getPage(), query.getSize());
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "page",
                 query.getPage(), query.getSize(), query.getTag(), query.getNoteType(),
                 query.getKeyword(), query.getOrderBy(), query.isPublicOnly());
@@ -77,6 +79,7 @@ public class NoteServiceImpl implements NoteService {
 
     @Override
     public IPage<NoteVO> mine(NoteQueryDTO query) {
+        Pagination.requireValid(query.getPage(), query.getSize());
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getUserId, AuthHelper.loginId())
                 .eq(query.getStatus() != null, Note::getStatus, query.getStatus());
@@ -94,6 +97,7 @@ public class NoteServiceImpl implements NoteService {
 
     @Override
     public IPage<NoteVO> review(NoteQueryDTO query) {
+        Pagination.requireValid(query.getPage(), query.getSize());
         LocalDateTime reviewCutoff = reviewCutoff();
         NoteReviewState state = NoteReviewState.parseOrDefault(query.getReviewState());
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()

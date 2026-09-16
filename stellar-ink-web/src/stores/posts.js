@@ -138,13 +138,17 @@ export const usePostStore = defineStore('posts', {
       }
     },
 
-    async fetchDrafts() {
+    async fetchDrafts({ page: pageNumber = 1, size = 20 } = {}) {
       this.error = ''
       try {
-        const page = await request('/posts/mine', { query: { status: 0, page: 1, size: 50 } })
+        const safePage = Math.max(1, Number(pageNumber) || 1)
+        const safeSize = Math.min(100, Math.max(1, Number(size) || 20))
+        const page = await request('/posts/mine', { query: { status: 0, page: safePage, size: safeSize } })
         const drafts = (page?.records || page?.list || []).map((post) => normalizePost(post))
         await useAuthorStore().ensureAuthors(drafts.map((post) => post.userId)).catch(() => {})
-        return drafts
+        const current = Number(page?.current ?? safePage)
+        const total = Number(page?.total ?? drafts.length)
+        return { records: drafts, current, total, hasMore: current * safeSize < total && drafts.length > 0 }
       } catch (error) {
         this.error = error.message
         throw error

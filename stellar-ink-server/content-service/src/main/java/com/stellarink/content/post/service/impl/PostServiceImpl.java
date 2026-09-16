@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.common.util.Pagination;
 import com.stellarink.common.util.WordCount;
 import com.stellarink.content.cache.CachedPage;
 import com.stellarink.content.cache.ContentCache;
@@ -57,6 +58,7 @@ public class PostServiceImpl implements PostService {
 
     @Override
     public IPage<PostVO> page(PostQueryDTO query) {
+        Pagination.requireValid(query.getPage(), query.getSize());
         if (!query.isPublishedOnly()
                 || (query.getStatus() != null && !Integer.valueOf(1).equals(query.getStatus()))) {
             return loadPublicPage(query);
@@ -106,6 +108,7 @@ public class PostServiceImpl implements PostService {
 
     @Override
     public IPage<PostVO> mine(PostQueryDTO query) {
+        Pagination.requireValid(query.getPage(), query.getSize());
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                 .eq(query.getStatus() != null, Post::getStatus, query.getStatus())
                 .eq(Post::getUserId, AuthHelper.loginId())

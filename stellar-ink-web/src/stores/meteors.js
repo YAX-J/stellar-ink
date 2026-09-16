@@ -17,15 +17,31 @@ export const useMeteorStore = defineStore('meteors', {
     loading: false,
     error: '',
     initialized: false,
+    page: 0,
+    pageSize: 24,
+    total: 0,
+    hasMore: true,
   }),
   actions: {
-    async fetchItems() {
+    async fetchItems({ append = false } = {}) {
+      if (append && (this.loading || !this.hasMore)) return this.items
       this.loading = true
       this.error = ''
       try {
-        const data = await request('/meteors', { query: { limit: 100 } })
-        this.items = (data || []).map(normalizeMeteor)
-        await useAuthorStore().ensureAuthors(this.items.map((item) => item.userId)).catch(() => {})
+        const pageNumber = append ? this.page + 1 : 1
+        const data = await request('/meteors', { query: { page: pageNumber, size: this.pageSize } })
+        const records = data?.records || data?.list || []
+        const normalized = records.map(normalizeMeteor)
+        if (append) {
+          const known = new Set(this.items.map((item) => item.id))
+          this.items.push(...normalized.filter((item) => !known.has(item.id)))
+        } else {
+          this.items = normalized
+        }
+        this.page = Number(data?.current ?? pageNumber)
+        this.total = Number(data?.total ?? this.items.length)
+        this.hasMore = this.items.length < this.total && records.length > 0
+        await useAuthorStore().ensureAuthors(normalized.map((item) => item.userId)).catch(() => {})
         this.initialized = true
         return this.items
       } catch (error) {
@@ -39,6 +55,10 @@ export const useMeteorStore = defineStore('meteors', {
     async ensureLoaded() {
       if (this.initialized) return this.items
       return this.fetchItems()
+    },
+
+    async loadMore() {
+      return this.fetchItems({ append: true })
     },
 
     async launch(text) {
@@ -60,6 +80,7 @@ export const useMeteorStore = defineStore('meteors', {
       try {
         await request(`/meteors/${Number(id)}`, { method: 'DELETE' })
         this.items = this.items.filter((item) => item.id !== Number(id))
+        this.total = Math.max(0, this.total - 1)
       } catch (error) {
         this.error = error.message
         throw error

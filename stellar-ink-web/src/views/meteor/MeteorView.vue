@@ -67,6 +67,11 @@ async function remove(meteor) {
         </div>
       </div>
     </div>
+    <div v-if="meteorStore.hasMore" class="load-row">
+      <button class="btn btn-ghost" :disabled="meteorStore.loading" @click="meteorStore.loadMore()">
+        {{ meteorStore.loading ? '正在接收…' : `继续接收 · 还有 ${meteorStore.total - meteorStore.items.length} 颗` }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -93,4 +98,6 @@ async function remove(meteor) {
 .meteor-delete{width:28px; height:28px; margin-left:auto; border:0; background:transparent; color:var(--ink-faint);
   font-size:20px; cursor:pointer; transition:color .2s}
 .meteor-delete:hover{color:var(--rose)}
+.load-row{display:flex; justify-content:center; margin-top:24px}
+.load-row .btn:disabled{opacity:.55; cursor:wait}
 </style>

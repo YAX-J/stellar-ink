@@ -31,6 +31,9 @@ const publishing = ref(false)
 const saving = ref(false)
 const draftId = ref(null)
 const drafts = ref([])
+const draftPage = ref(0)
+const draftTotal = ref(0)
+const draftLoading = ref(false)
 const editingPublished = ref(false)
 let saveTimer = null
 
@@ -78,11 +81,23 @@ async function saveDraft() {
     saving.value = false
   }
 }
-async function loadDrafts() {
+async function loadDrafts(append = false) {
+  if (draftLoading.value) return
+  draftLoading.value = true
   try {
-    drafts.value = await postStore.fetchDrafts()
+    const page = await postStore.fetchDrafts({ page: append ? draftPage.value + 1 : 1 })
+    if (append) {
+      const known = new Set(drafts.value.map((draft) => draft.id))
+      drafts.value.push(...page.records.filter((draft) => !known.has(draft.id)))
+    } else {
+      drafts.value = page.records
+    }
+    draftPage.value = page.current
+    draftTotal.value = page.total
   } catch {
-    drafts.value = []
+    if (!append) drafts.value = []
+  } finally {
+    draftLoading.value = false
   }
 }
 async function restoreDraft(draft) {
@@ -240,6 +255,10 @@ onUnmounted(() => {
             <button class="draft-delete" title="删除草稿" @click.stop="removeDraft(d)">×</button>
           </div>
           <p v-if="!drafts.length" class="draft-empty">还没有保存的草稿。</p>
+          <button
+            v-if="drafts.length < draftTotal" class="draft-more" :disabled="draftLoading"
+            @click="loadDrafts(true)"
+          >{{ draftLoading ? '读取中…' : `更多草稿 · ${draftTotal - drafts.length}` }}</button>
         </div>
       </aside>
     </div>
@@ -335,6 +354,9 @@ body.focus-mode .studio-side .side-card{opacity:.12; animation:none}
   color:var(--ink-faint); font-size:20px; cursor:pointer; transition:color .2s}
 .draft-delete:hover{color:var(--rose)}
 .draft-empty{font-size:12px; color:var(--ink-faint); line-height:1.8}
+.draft-more{width:100%; margin-top:10px; border:0; background:transparent; color:var(--primary);
+  font:11px var(--font-mono); cursor:pointer}
+.draft-more:disabled{color:var(--ink-faint); cursor:wait}
 .focus-toggle{
   width:100%; height:52px; border-radius:var(--r-md); cursor:pointer; border:1px solid var(--line);
   background:var(--surface); color:var(--ink-dim); font-size:14px; letter-spacing:.1em;

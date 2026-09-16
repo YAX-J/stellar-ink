@@ -1,9 +1,13 @@
 package com.stellarink.content.meteor.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.common.util.Pagination;
+import com.stellarink.content.cache.CachedPage;
 import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.meteor.mapper.MeteorMapper;
 import com.stellarink.content.meteor.pojo.Meteor;
@@ -25,33 +29,31 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
-import java.util.List;
-
 @Slf4j
 @RestController
 @RequestMapping("/meteors")
 @RequiredArgsConstructor
 public class MeteorController {
 
-    private static final TypeReference<List<MeteorVO>> CACHE_TYPE = new TypeReference<>() { };
+    private static final TypeReference<CachedPage<MeteorVO>> CACHE_TYPE = new TypeReference<>() { };
 
     private final MeteorMapper meteorMapper;
     private final ContentCache cache;
 
     @GetMapping
-    public Response<List<MeteorVO>> list(@RequestParam(required = false, defaultValue = "50") Integer limit) {
-        // limit 为 Integer，不存在注入；但过大的值会拖垮查询，这里夹紧到 1~200
-        int safeLimit = Math.min(Math.max(limit == null ? 50 : limit, 1), 200);
-        String cacheKey = cache.versionedKey("meteor", "list", safeLimit);
-        return Response.success(cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.DEFAULT_TTL,
-                () -> loadMeteors(safeLimit)));
+    public Response<IPage<MeteorVO>> list(@RequestParam(required = false, defaultValue = "1") Integer page,
+                                           @RequestParam(required = false, defaultValue = "24") Integer size) {
+        Pagination.requireValid(page, size);
+        String cacheKey = cache.versionedKey("meteor", "page", page, size);
+        CachedPage<MeteorVO> cached = cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.DEFAULT_TTL,
+                () -> CachedPage.from(loadMeteors(page, size)));
+        return Response.success(cached.toPage());
     }
 
-    private List<MeteorVO> loadMeteors(int safeLimit) {
-        List<Meteor> items = meteorMapper.selectList(new LambdaQueryWrapper<Meteor>()
-                .orderByDesc(Meteor::getId)
-                .last("LIMIT " + safeLimit));
-        return items.stream().map(this::toVO).toList();
+    private IPage<MeteorVO> loadMeteors(int page, int size) {
+        IPage<Meteor> items = meteorMapper.selectPage(new Page<>(page, size),
+                new LambdaQueryWrapper<Meteor>().orderByDesc(Meteor::getId));
+        return items.convert(this::toVO);
     }
 
     /** 发射流星（作者及以上） */
