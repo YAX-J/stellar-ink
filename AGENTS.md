@@ -18,7 +18,7 @@ stellar-ink/
 ├── stellar-ink-server/             后端：Spring Cloud Alibaba 微服务（已跑通）
 │   ├── common-components/          公共组件聚合（非独立运行）
 │   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO
-│   │   ├── common-core/            基础设施：全局异常(Servlet+Reactive)/TraceId/MP配置/健康检查
+│   │   ├── common-core/            基础设施：全局异常/TraceId/MP配置/健康检查/Redis工具
 │   ├── gateway-nacos-sentinel/     网关 :8080（WebFlux：路由/CORS/Sa-Token 鉴权/Sentinel）
 │   ├── user-service/   :8101       登录认证、站长资料（表 user）
 │   ├── content-service/:8102       文章/流星/回声/星链/写作统计（按领域分包）
@@ -169,7 +169,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `@EnableFeignClients(basePackages="com.stellarink.serviceapi.feign")`。
 - 公共模块：`shared-model`（Response/ErrorCode/BusinessException/DTO/VO）、
   `common-core`（GlobalExceptionHandler(Servlet+Reactive)/TraceIdFilter/LogInterceptor/
-  MybatisPlusConfig/SimpleHealthController/AuthHelper/BusinessExceptionHelper）。
+  MybatisPlusConfig/SimpleHealthController/AuthHelper/BusinessExceptionHelper/RedisUtils）。
+- Redis 基础工具使用 `StringRedisTemplate + ObjectMapper`，普通值统一存 JSON；只供 user/content
+  两个 Servlet 业务服务使用，网关不得引入阻塞式 Redis 工具。连接参数统一走 `REDIS_HOST/PORT/PASSWORD/DATABASE`。
 - 所有接口统一返回 `Response<T>`（code/msg/data/traceId）；业务校验失败抛 `BusinessException`
   （用 `BusinessExceptionHelper.of(...)`），全局处理器带 traceId 并写 MDC。
 
@@ -241,6 +243,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 - 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
   后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
+- Redis 基础接入已完成：`common-core` 提供 JSON Value/TTL/删除/存在判断/原子计数工具，
+  user/content 已接连接配置与健康检查；尚未绑定业务缓存、限流、锁或会话。
 - **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
   `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。

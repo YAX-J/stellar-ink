@@ -11,6 +11,16 @@ sa-token:
   is-concurrent: true
   is-share: true
 
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      connect-timeout: 3s
+
 # SpringDoc 动态路径（如生产环境关闭 Swagger）
 springdoc:
   swagger-ui:

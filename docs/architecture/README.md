@@ -17,8 +17,9 @@
                   用户、认证、角色          post / comment / note / meteor
                          │                  echo / link / stats
                          └────────────┬────────────┘
-                                      ▼
-                         MySQL（共享 stellar_ink 库）
+                              ┌───────┴───────┐
+                              ▼               ▼
+                  MySQL（共享 stellar_ink 库） Redis（公共基础设施）
 
   三个 Java 服务均注册到 Nacos :8848（注册中心 + 配置中心）
 ```
@@ -30,7 +31,7 @@ stellar-ink-server/
 ├── pom.xml
 ├── common-components/
 │   ├── shared-model/          Response、异常、跨模块 DTO/VO
-│   └── common-core/           异常处理、TraceId、MyBatis-Plus、鉴权辅助
+│   └── common-core/           异常处理、TraceId、MyBatis-Plus、鉴权辅助、Redis 工具
 ├── gateway-nacos-sentinel/    API 网关（8080）
 ├── user-service/              用户与认证（8101）
 └── content-service/           内容聚合服务（8102）
@@ -96,6 +97,14 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 
+## Redis 基础设施
+
+- `common-core` 通过 Spring Data Redis 提供 `RedisUtils`，版本由父 POM 的 Spring Boot 版本统一管理，供 user-service 与 content-service 注入使用；网关不依赖该阻塞式工具。
+- 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL 与原子整数计数。
+- 当前只完成连接与公共工具，尚未建立业务缓存、Redis 限流、分布式锁或会话状态，业务键应由后续具体功能定义。
+- 连接参数统一来自 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`，连接和命令超时均为 3 秒。
+- Actuator 会自动加入 Redis 健康项；Redis 不可达时两个业务服务的 `/actuator/health` 为 `DOWN`。
+
 ## 配置与部署
 
 每个运行服务保留 `application.yml`、`application-dev.yml`、`application-prod.yml`、`nacos-application-dev.yml` 和 `logback-spring.xml`。Nacos Data ID 分别为：
@@ -104,7 +113,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 - `user-service-dev.yaml`
 - `content-service-dev.yaml`
 
-生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、两个业务服务和前端 Nginx。MySQL 与 Nacos 继续复用宿主机现有实例。
+生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、两个业务服务和前端 Nginx。MySQL、Redis 与 Nacos 继续复用宿主机现有实例。
 
 前端 history 路由 `/notes`、`/links`、`/search` 与后端 API 前缀重名。Vite 与生产 Nginx 通过
 `GET + Accept: text/html` 识别浏览器页面导航并回退 `index.html`；`fetch` 的 `Accept: */*`

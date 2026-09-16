@@ -1,6 +1,6 @@
 # 星笺 STELLAR INK Docker 部署手册
 
-Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，复用宿主机已有 Nacos。
+Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，复用宿主机已有 Nacos、MySQL 与 Redis。
 所有 Java 服务走 `prod` profile，敏感配置统一放同目录 `.env`。
 
 ## 一、与服务器已有容器的关系
@@ -11,7 +11,7 @@ Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，�
 |---|---|---|
 | Nacos（宿主机进程） | 8848 / 9848 | **现在就用到**。Java 容器经 `host.docker.internal` 访问 |
 | mysql | 3306 | **现在就用到**。业务服务经 `host.docker.internal`（host-gateway）访问宿主机 3306 |
-| redis | 6379 | 暂未使用（将来接入限流/会话时再纳入 compose 网络） |
+| redis | 6379 | **现在就用到**。业务服务经 `host.docker.internal` 访问；当前仅提供公共工具，尚无业务缓存 |
 | qdrant | 6333-6334 | 暂未使用（AI 能力预留） |
 
 本编排启动的容器：
@@ -25,7 +25,7 @@ Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，�
 ```
 浏览器 ──▶ web(:80)──静态 SPA；/auth|/posts|/meteors|/echos|/links|/stats|/uploads… ──▶ gateway(:8080)
                                                                      gateway ──▶ 两个业务服务(8101-8102)
-全部 Java 服务 ──▶ 宿主机 Nacos(:8848/9848)    业务服务 ──▶ 宿主机 3306（已有 mysql 容器）
+全部 Java 服务 ──▶ 宿主机 Nacos(:8848/9848)    业务服务 ──▶ 宿主机 MySQL(:3306) / Redis(:6379)
 头像文件：浏览器 ──▶ web ──▶ gateway ──▶ user-service(:8101) ──▶ 卷 ./data/uploads
 ```
 
@@ -49,6 +49,8 @@ vi .env
 | `SA_TOKEN_JWT_SECRET` | JWT 签名密钥，`openssl rand -base64 48` 生成 |
 | `GATEWAY_CORS_ORIGINS` | 前端实际域名，多个逗号分隔；**不要填 `*`** |
 `NACOS_ADDR` 默认是 `host.docker.internal:8848`；`NACOS_USERNAME` / `NACOS_PASSWORD` 必须与宿主机现有 Nacos 一致。
+Redis 默认通过 `host.docker.internal:6379` 访问；若开启认证或使用其他实例，设置
+`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DATABASE`。Redis 不可达时两个业务服务的健康检查会变为 `DOWN`。
 
 ### 2. 初始化数据库（一次性，复用已有 mysql 容器）
 
@@ -162,6 +164,7 @@ Java 服务统一使用 `-Xms32m -Xmx128m` 和 `SerialGC`，适合低并发个�
 
 - **端口被占用**：改 `.env` 的 `WEB_PORT` / `GATEWAY_PORT`。
 - **业务服务起不来、报 MySQL 连接失败**：核对 `.env` 密码与账号；确认该账号允许从 Docker 网段连接（见上文建账号 SQL）；`docker compose logs user-service` 看详情。
+- **业务服务健康检查为 DOWN、Redis 连接失败**：核对 `.env` 的 `REDIS_*`；确认 Redis 已监听宿主机 6379，且允许 Docker 网桥访问。不要把容器内的 `127.0.0.1` 当作宿主机。
 - **网关反复重启**：多为 `SA_TOKEN_JWT_SECRET` 未设置或各服务密钥不一致，检查 `.env`。
 - **业务服务启动报 `SecretGuard ... 拒绝启动`**：说明 prod 下 JWT 密钥为空/过短/沿用了仓库中的 dev 默认值。
   用 `openssl rand -base64 48` 重新生成并写入 `.env` 的 `SA_TOKEN_JWT_SECRET` 即可。
@@ -169,4 +172,4 @@ Java 服务统一使用 `-Xms32m -Xmx128m` 和 `SerialGC`，适合低并发个�
 - **前端报 429**：触发了 Nginx 限流（`limit_req`）。阈值见 `deploy/docker/nginx/default.conf`，按需调整。
 - **首次构建慢/超时**：国内网络可给 Docker daemon 配置镜像加速器；或本地 `docker compose build` 后 `docker save | docker load` 到服务器。
 - **Sentinel dashboard 未部署**：网关 Sentinel 会尝试上报 `localhost:8858`，连接失败仅是无害告警，需要时再单独部署 dashboard。
-- **Redis/Qdrant 接入**：业务暂未使用。将来接入时把对应服务加入 compose 网络即可（同一网络内直接用容器名作主机名，或继续走 host-gateway 用宿主机端口）。
+- **Qdrant 接入**：业务暂未使用。将来接入时可加入 compose 网络，或继续走 host-gateway 使用宿主机端口。

@@ -92,6 +92,13 @@
                 <version>${druid.version}</version>
             </dependency>
 
+            <!-- Redis 公共基础设施（版本跟随 Spring Boot） -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-redis</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
             <!-- Sa-Token 认证授权 -->
             <dependency>
                 <groupId>cn.dev33</groupId>

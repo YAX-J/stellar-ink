@@ -47,6 +47,15 @@ spring:
       remove-abandoned-timeout: 600
       log-abandoned: true
 
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      connect-timeout: 3s
+
   # 头像上传：单文件 1MB（业务层同值再校验一次），整个请求 2MB 与 Nginx client_max_body_size 对齐
   servlet:
     multipart:
