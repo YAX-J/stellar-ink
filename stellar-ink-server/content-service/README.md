@@ -39,4 +39,5 @@ mvn -pl content-service -am package
 java -jar content-service/target/content-service.jar
 ```
 
-当前测试覆盖统计聚合、友链公开/待审隔离和无状态 JWT 配置。接口改动还需启动网关后进行端到端验证。
+当前测试覆盖统计聚合、友链公开/待审隔离、私有笔记隔离、文章归属、评论删除权限和无状态 JWT 配置。
+接口改动还需启动网关后进行端到端验证。
