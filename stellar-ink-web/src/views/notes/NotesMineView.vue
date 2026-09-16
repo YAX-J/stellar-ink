@@ -89,7 +89,10 @@ watch(
           <option value="all">全部类型</option>
           <option v-for="t in NOTE_TYPES" :key="t.key" :value="t.key">{{ t.glyph }} {{ t.label }}</option>
         </select>
-        <RouterLink class="btn btn-primary" to="/note/edit">✎ 新建笔记</RouterLink>
+        <div class="mine-actions">
+          <RouterLink class="btn btn-ghost" to="/notes/review">✓ 复核结论</RouterLink>
+          <RouterLink class="btn btn-primary" to="/note/edit">✎ 新建笔记</RouterLink>
+        </div>
       </div>
 
       <p v-if="noteStore.mineLoading && !noteStore.mine.length" class="state-text">正在读取…</p>
@@ -141,7 +144,8 @@ watch(
 .type-select{height:40px; padding:0 12px; border:1px solid var(--line); border-radius:var(--r-sm);
   background:var(--bg-2); color:var(--ink); font-family:var(--font-body); font-size:13px; outline:none}
 .type-select:focus{border-color:var(--primary)}
-.mine-bar .btn{margin-left:auto; height:40px}
+.mine-actions{display:flex; gap:10px; margin-left:auto; flex-wrap:wrap}
+.mine-actions .btn{height:40px}
 
 .mine-list{display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:16px}
 .mine-item{position:relative; display:flex; flex-direction:column}

@@ -49,6 +49,10 @@ const PAGE_SIZE = 24
 
 export function normalizeNote(note, detail = false) {
   if (!note) return null
+  const verifiedAt = note.verifiedAt || null
+  const fallbackReviewState = !verifiedAt
+    ? 'UNVERIFIED'
+    : (Date.now() - new Date(verifiedAt).getTime()) > 180 * 86400000 ? 'EXPIRED' : 'FRESH'
   return {
     ...note,
     id: Number(note.id),
@@ -61,7 +65,11 @@ export function normalizeNote(note, detail = false) {
     noteTypeGlyph: note.noteTypeGlyph || NOTE_TYPE_MAP[note.noteType]?.glyph || '❖',
     visibility: note.visibility || 'PRIVATE',
     excerpt: note.summary || '',
-    verifiedAt: note.verifiedAt || null,
+    verifiedAt,
+    reviewState: note.reviewState || fallbackReviewState,
+    reviewDueAt: note.reviewDueAt || (verifiedAt
+      ? new Date(new Date(verifiedAt).getTime() + 180 * 86400000).toISOString()
+      : null),
     ...(detail ? { content: note.content || '', readMinutes: note.readMinutes } : {}),
   }
 }
@@ -89,6 +97,15 @@ export const useNoteStore = defineStore('notes', {
     mineTotal: 0,
     mineHasMore: true,
     mineQuery: {},
+    /* 复核中心：与「我的笔记」分开维护，切换页面不会互相覆盖筛选与分页 */
+    reviewNotes: [],
+    reviewLoading: false,
+    reviewPage: 0,
+    reviewPageSize: PAGE_SIZE,
+    reviewTotal: 0,
+    reviewHasMore: true,
+    reviewQuery: {},
+    reviewSequence: 0,
     listSequence: 0,
     mineSequence: 0,
   }),
@@ -200,6 +217,45 @@ export const useNoteStore = defineStore('notes', {
       return this.fetchMine({}, { append: true })
     },
 
+    async fetchReview(query = {}, { append = false } = {}) {
+      if (append && (this.reviewLoading || !this.reviewHasMore)) return this.reviewNotes
+      this.reviewLoading = true
+      this.error = ''
+      const sequence = append ? this.reviewSequence : ++this.reviewSequence
+      try {
+        const { page: queryPage, size: querySize, ...filters } = query
+        if (!append) this.reviewQuery = filters
+        const pageNumber = append ? this.reviewPage + 1 : Math.max(1, Number(queryPage) || 1)
+        const pageSize = Math.min(100, Math.max(1, Number(querySize) || this.reviewPageSize))
+        const page = await request('/notes/review', {
+          query: { reviewState: 'DUE', ...(append ? this.reviewQuery : filters), page: pageNumber, size: pageSize },
+        })
+        const records = page?.records || page?.list || []
+        if (sequence !== this.reviewSequence) return this.reviewNotes
+        const normalized = records.map((note) => normalizeNote(note))
+        if (append) {
+          const known = new Set(this.reviewNotes.map((note) => note.id))
+          this.reviewNotes.push(...normalized.filter((note) => !known.has(note.id)))
+        } else {
+          this.reviewNotes = normalized
+        }
+        this.reviewPage = Number(page?.current ?? pageNumber)
+        this.reviewPageSize = Number(page?.size ?? pageSize)
+        this.reviewTotal = Number(page?.total ?? this.reviewNotes.length)
+        this.reviewHasMore = this.reviewNotes.length < this.reviewTotal && records.length > 0
+        return this.reviewNotes
+      } catch (error) {
+        if (sequence === this.reviewSequence) this.error = error.message
+        throw error
+      } finally {
+        if (sequence === this.reviewSequence) this.reviewLoading = false
+      }
+    },
+
+    async loadMoreReview() {
+      return this.fetchReview({}, { append: true })
+    },
+
     async fetchDetail(id) {
       const noteId = Number(id)
       if (!noteId) return null
@@ -287,6 +343,7 @@ export const useNoteStore = defineStore('notes', {
         delete this.details[noteId]
         this.notes = this.notes.filter((note) => note.id !== noteId)
         this.mine = this.mine.filter((note) => note.id !== noteId)
+        this.reviewNotes = this.reviewNotes.filter((note) => note.id !== noteId)
       } catch (error) {
         this.error = error.message
         throw error
@@ -300,10 +357,28 @@ export const useNoteStore = defineStore('notes', {
         const data = await request(`/notes/${Number(id)}/verify`, { method: 'PUT' })
         const noteId = Number(id)
         const verifiedAt = data?.verifiedAt || new Date().toISOString()
-        if (this.details[noteId]) this.details[noteId].verifiedAt = verifiedAt
+        if (this.details[noteId]) {
+          this.details[noteId].verifiedAt = verifiedAt
+          this.details[noteId].reviewState = 'FRESH'
+          this.details[noteId].reviewDueAt = new Date(new Date(verifiedAt).getTime() + 180 * 86400000).toISOString()
+        }
         for (const list of [this.notes, this.mine]) {
           const item = list.find((note) => note.id === noteId)
-          if (item) item.verifiedAt = verifiedAt
+          if (item) {
+            item.verifiedAt = verifiedAt
+            item.reviewState = 'FRESH'
+            item.reviewDueAt = new Date(new Date(verifiedAt).getTime() + 180 * 86400000).toISOString()
+          }
+        }
+        const reviewItem = this.reviewNotes.find((note) => note.id === noteId)
+        if (reviewItem) {
+          reviewItem.verifiedAt = verifiedAt
+          reviewItem.reviewState = 'FRESH'
+          reviewItem.reviewDueAt = new Date(new Date(verifiedAt).getTime() + 180 * 86400000).toISOString()
+          if ((this.reviewQuery.reviewState || 'DUE') !== 'FRESH') {
+            this.reviewNotes = this.reviewNotes.filter((note) => note.id !== noteId)
+            this.reviewTotal = Math.max(0, this.reviewTotal - 1)
+          }
         }
         return verifiedAt
       } catch (error) {

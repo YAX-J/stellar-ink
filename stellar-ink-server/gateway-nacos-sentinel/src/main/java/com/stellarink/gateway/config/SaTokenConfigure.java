@@ -70,6 +70,8 @@ public class SaTokenConfigure {
 
     private static final String MY_NOTES_PATH = "/notes/mine";
 
+    private static final String NOTE_REVIEW_PATH = "/notes/review";
+
     @Bean
     public SaReactorFilter saReactorFilter() {
         return new SaReactorFilter()
@@ -89,13 +91,8 @@ public class SaTokenConfigure {
                         requireRole(Role.ADMIN);
                         return;
                     }
-                    // 3) 草稿只允许作者及以上读取，须先于「GET 全放行」判断
-                    if ("GET".equalsIgnoreCase(method) && MY_POSTS_PATH.equals(path)) {
-                        requireRole(Role.AUTHOR);
-                        return;
-                    }
-                    // 3.1) 我的笔记（含私有）同样须先于「GET 全放行」拦下
-                    if ("GET".equalsIgnoreCase(method) && MY_NOTES_PATH.equals(path)) {
+                    // 3) 我的内容与复核队列只允许作者及以上读取，须先于「GET 全放行」判断
+                    if (requiresAuthorRead(method, path)) {
                         requireRole(Role.AUTHOR);
                         return;
                     }
@@ -164,6 +161,12 @@ public class SaTokenConfigure {
     static boolean requiresAdminRead(String method, String path) {
         return "GET".equalsIgnoreCase(method)
                 && ("/user/list".equals(path) || "/links/pending".equals(path));
+    }
+
+    /** 作者私域读接口必须在 GET 公开放行规则之前完成角色校验。 */
+    static boolean requiresAuthorRead(String method, String path) {
+        return "GET".equalsIgnoreCase(method)
+                && (MY_POSTS_PATH.equals(path) || MY_NOTES_PATH.equals(path) || NOTE_REVIEW_PATH.equals(path));
     }
 
     private static void requireRole(Role required) {

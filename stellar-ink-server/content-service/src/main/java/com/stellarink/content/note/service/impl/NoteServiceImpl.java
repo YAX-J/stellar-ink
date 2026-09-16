@@ -16,6 +16,7 @@ import com.stellarink.sharedmodel.dto.note.NoteCreateDTO;
 import com.stellarink.sharedmodel.dto.note.NoteQueryDTO;
 import com.stellarink.sharedmodel.dto.note.NoteUpdateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
+import com.stellarink.sharedmodel.enums.NoteReviewState;
 import com.stellarink.sharedmodel.enums.NoteType;
 import com.stellarink.sharedmodel.enums.NoteVisibility;
 import com.stellarink.sharedmodel.vo.note.NoteDetailVO;
@@ -40,6 +41,7 @@ public class NoteServiceImpl implements NoteService {
     private static final int SUMMARY_LEN = 60;
     private static final int PUBLISHED = 1;
     private static final int DRAFT = 0;
+    private static final int REVIEW_VALID_DAYS = 180;
 
     private final NoteMapper noteMapper;
     /** 浏览量闸门与文章共用：该表只记「某用户某天已计过一次」，与内容类型无关 */
@@ -71,6 +73,38 @@ public class NoteServiceImpl implements NoteService {
         applyOrder(wrapper, query.getOrderBy());
         IPage<Note> page = noteMapper.selectPage(new Page<>(query.getPage(), query.getSize()), wrapper);
         return page.convert(this::toVO);
+    }
+
+    @Override
+    public IPage<NoteVO> review(NoteQueryDTO query) {
+        LocalDateTime reviewCutoff = reviewCutoff();
+        NoteReviewState state = NoteReviewState.parseOrDefault(query.getReviewState());
+        LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
+                .eq(Note::getUserId, AuthHelper.loginId())
+                .eq(Note::getStatus, PUBLISHED);
+        NoteVisibility visibility = NoteVisibility.parse(query.getVisibility());
+        if (visibility != null) {
+            wrapper.eq(Note::getVisibility, visibility.name());
+        }
+        applyFilters(wrapper, query);
+        applyReviewFilter(wrapper, state, reviewCutoff);
+        /* NULL 在 MySQL 升序时排最前：从未验证优先，其次是最早到期的结论。 */
+        wrapper.orderByAsc(Note::getVerifiedAt).orderByDesc(Note::getId);
+        IPage<Note> page = noteMapper.selectPage(new Page<>(query.getPage(), query.getSize()), wrapper);
+        return page.convert(this::toVO);
+    }
+
+    private void applyReviewFilter(LambdaQueryWrapper<Note> wrapper, NoteReviewState state,
+                                   LocalDateTime reviewCutoff) {
+        switch (state) {
+            case UNVERIFIED -> wrapper.isNull(Note::getVerifiedAt);
+            case EXPIRED -> wrapper.isNotNull(Note::getVerifiedAt)
+                    .lt(Note::getVerifiedAt, reviewCutoff);
+            case FRESH -> wrapper.ge(Note::getVerifiedAt, reviewCutoff);
+            case DUE -> wrapper.and(w -> w.isNull(Note::getVerifiedAt)
+                    .or()
+                    .lt(Note::getVerifiedAt, reviewCutoff));
+        }
     }
 
     private void applyFilters(LambdaQueryWrapper<Note> wrapper, NoteQueryDTO query) {
@@ -127,6 +161,7 @@ public class NoteServiceImpl implements NoteService {
         vo.setViewCount(note.getViewCount() == null ? 0 : note.getViewCount());
         vo.setDate(note.getCreatedAt().toLocalDate().format(DATE_FMT));
         vo.setVerifiedAt(note.getVerifiedAt());
+        applyReviewState(vo, note.getVerifiedAt());
         vo.setPrev(neighbor(note.getId(), true));
         vo.setNext(neighbor(note.getId(), false));
         return vo;
@@ -330,10 +365,32 @@ public class NoteServiceImpl implements NoteService {
         vo.setDate(note.getCreatedAt().toLocalDate().format(DATE_FMT));
         vo.setUpdatedAt(note.getUpdatedAt());
         vo.setVerifiedAt(note.getVerifiedAt());
+        applyReviewState(vo, note.getVerifiedAt());
         String content = note.getContent() == null ? "" : note.getContent();
         /* 摘要优先取「结论」章节：技术笔记最有价值的是结论，而不是开头 */
         vo.setSummary(summarize(content));
         return vo;
+    }
+
+    private void applyReviewState(NoteVO vo, LocalDateTime verifiedAt) {
+        vo.setReviewState(reviewState(verifiedAt).name());
+        vo.setReviewDueAt(verifiedAt == null ? null : verifiedAt.plusDays(REVIEW_VALID_DAYS));
+    }
+
+    private void applyReviewState(NoteDetailVO vo, LocalDateTime verifiedAt) {
+        vo.setReviewState(reviewState(verifiedAt).name());
+        vo.setReviewDueAt(verifiedAt == null ? null : verifiedAt.plusDays(REVIEW_VALID_DAYS));
+    }
+
+    private NoteReviewState reviewState(LocalDateTime verifiedAt) {
+        if (verifiedAt == null) {
+            return NoteReviewState.UNVERIFIED;
+        }
+        return verifiedAt.isBefore(reviewCutoff()) ? NoteReviewState.EXPIRED : NoteReviewState.FRESH;
+    }
+
+    private LocalDateTime reviewCutoff() {
+        return LocalDateTime.now().minusDays(REVIEW_VALID_DAYS);
     }
 
     /**

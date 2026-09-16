@@ -20,4 +20,13 @@ class SaTokenConfigureTest {
         assertThat(SaTokenConfigure.requiresAdminRead("GET", "/links")).isFalse();
         assertThat(SaTokenConfigure.requiresAdminRead("POST", "/links/pending")).isFalse();
     }
+
+    @Test
+    void shouldProtectAuthorReadEndpointsBeforePublicGetRule() {
+        assertThat(SaTokenConfigure.requiresAuthorRead("GET", "/posts/mine")).isTrue();
+        assertThat(SaTokenConfigure.requiresAuthorRead("GET", "/notes/mine")).isTrue();
+        assertThat(SaTokenConfigure.requiresAuthorRead("GET", "/notes/review")).isTrue();
+        assertThat(SaTokenConfigure.requiresAuthorRead("GET", "/notes")).isFalse();
+        assertThat(SaTokenConfigure.requiresAuthorRead("POST", "/notes/review")).isFalse();
+    }
 }

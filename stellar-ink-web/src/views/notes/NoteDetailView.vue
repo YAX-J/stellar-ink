@@ -54,11 +54,13 @@ function backToTop() {
 /** 验证新鲜度：技术笔记最怕的是结论悄悄失效 */
 const verifyInfo = computed(() => {
   const at = note.value?.verifiedAt
-  if (!at) return { text: '尚未验证', stale: true, days: null }
+  if (note.value?.reviewState === 'UNVERIFIED' || !at) {
+    return { text: '尚未验证', stale: true, days: null }
+  }
   const days = Math.floor((Date.now() - new Date(at).getTime()) / 86400000)
   return {
     text: days <= 0 ? '今天刚验证过' : `结论验证于 ${days} 天前`,
-    stale: days > 180,
+    stale: note.value?.reviewState === 'EXPIRED',
     days,
   }
 })

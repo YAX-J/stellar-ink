@@ -8,6 +8,7 @@ const routes = [
   { path: '/search', name: 'search', component: () => import('@/views/search/SearchView.vue'), meta: { title: '寻星' } },
   { path: '/notes', name: 'notes', component: () => import('@/views/notes/NotesView.vue'), meta: { title: '笔记' } },
   { path: '/notes/mine', name: 'notes-mine', component: () => import('@/views/notes/NotesMineView.vue'), meta: { title: '我的笔记', requiresAuth: true } },
+  { path: '/notes/review', name: 'notes-review', component: () => import('@/views/notes/NoteReviewView.vue'), meta: { title: '笔记复核', requiresAuth: true, requiresRole: 'AUTHOR' } },
   { path: '/note/edit', name: 'note-edit', component: () => import('@/views/notes/NoteEditView.vue'), meta: { title: '写笔记', requiresAuth: true } },
   { path: '/note/:id', name: 'note', component: () => import('@/views/notes/NoteDetailView.vue'), meta: { title: '笔记' } },
   { path: '/meteor', name: 'meteor', component: () => import('@/views/meteor/MeteorView.vue'), meta: { title: '流星' } },

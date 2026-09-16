@@ -14,11 +14,13 @@ watchEffect(() => {
   document.body.dataset.theme = settings.theme
 })
 
-/* 记录最后一个非深读页，供深读页「返回星域」使用 */
+/* 记录最后一个列表/功能页；文章深读与笔记详情都不覆盖导航来源。 */
 watch(
   () => route.fullPath,
   () => {
-    if (route.name !== 'read') settings.rememberPage(route.name, route.fullPath)
+    if (route.name !== 'read' && route.name !== 'note') {
+      settings.rememberPage(route.name, route.fullPath)
+    }
   },
   { immediate: true },
 )

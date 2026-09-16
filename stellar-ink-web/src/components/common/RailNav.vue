@@ -16,6 +16,7 @@ const items = [
   { key: 'search', to: '/search', glyph: '⌕', label: '寻星' },
   /* 技术笔记用 ❖（原光谱符号，笔记更需要「标本」感）；光谱改用 ▤ 以免同符号 */
   { key: 'notes', to: '/notes', glyph: '❖', label: '笔记' },
+  { key: 'notes-review', to: '/notes/review', glyph: '✓', label: '复核', requiresRole: 'AUTHOR' },
   { key: 'meteor', to: '/meteor', glyph: '☄', label: '流星' },
   { key: 'spectrum', to: '/spectrum', glyph: '▤', label: '光谱' },
   { key: 'echo', to: '/echo', glyph: '❞', label: '回声' },

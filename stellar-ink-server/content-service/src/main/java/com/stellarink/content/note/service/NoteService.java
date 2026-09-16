@@ -15,6 +15,9 @@ public interface NoteService {
     /** 我的笔记（含私有与草稿），只返回当前登录用户自己的 */
     IPage<NoteVO> mine(NoteQueryDTO query);
 
+    /** 我的已发布笔记复核队列，按 180 天有效期筛选 */
+    IPage<NoteVO> review(NoteQueryDTO query);
+
     /** 详情：私有笔记仅作者本人可读，其他人一律 404 */
     NoteDetailVO detail(Long id);
 

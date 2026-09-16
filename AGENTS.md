@@ -151,7 +151,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   角色在登录/注册时写入 JWT 的 `role` extra（`Role` 枚举见 shared-model，键 `Role.JWT_KEY`）；
   网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做门槛（文章/笔记/流星写需 AUTHOR，`PUT /links/{id}/status`、
   `GET /links/pending`、`PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /links/pending`、`GET /user/list`、`GET /posts/mine`、
-  `GET /notes/mine` 都是「读」但需更高角色，**必须在网关「GET 全放行」之前单独拦下**），
+  `GET /notes/mine`、`GET /notes/review` 都是「读」但需更高角色，**必须在网关「GET 全放行」之前单独拦下**），
   角色不足返回 403；服务内用 `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。
   注册固定 READER，种子账号 stellar 为 ADMIN。
 - ⚠️ **角色变更需重新登录才生效**：`PUT /user/{id}/role` 只改库、不重签 JWT，而网关读的是 token 里的
@@ -260,6 +260,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、
   `/note/:id`、`/note/edit`，导航符号 ❖（光谱改用 ▤）。
   正文渲染抽到 `components/common/MarkdownBody.vue`（文章与笔记共用，含代码块复制按钮）。
+- 技术笔记复核中心已完成：AUTHOR 通过 `/notes/review` 查看自己的已发布笔记，按
+  `DUE / UNVERIFIED / EXPIRED / FRESH` 筛选；180 天时效由后端从 `verified_at` 实时派生，
+  前端 `/notes/review` 支持搜索、分页、编辑跳转和就地标记「仍然有效」。
 - 作者申请已完成（读者 → 作者闭环）：`PUT /user/role-apply` 提交/覆盖申请（带可选理由）、
   `PUT /user/role-apply/cancel` 撤回、`GET /user/list` 兼作审核队列（含 `roleAppliedAt`/`roleApplyNote`）、
   站长在账号页「成员管理」一键通过/驳回。前端：账号页权限面板三态（可申请 / 审核中可撤回 / 已是作者）
@@ -284,4 +287,4 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   列表渲染成圆点；工具栏含「标准章节 / 提示卡（`> [!NOTE]`）/ 代码块 / 列表」四个插入按钮。
   **只改笔记编辑器**，文章的「留白写作舱」保持原样。
 - 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
-  笔记间反向链接、`verified_at` 的到期提醒；AI 自动打标签/关联推荐需先明确解锁。
+  笔记间反向链接；AI 自动打标签/关联推荐需先明确解锁。

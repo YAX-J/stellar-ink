@@ -31,6 +31,9 @@ public class NoteQueryDTO {
     /** PUBLIC / PRIVATE，空为全部（仅 /notes/mine 有效） */
     private String visibility;
 
+    /** DUE / UNVERIFIED / EXPIRED / FRESH（仅 /notes/review 有效，默认 DUE） */
+    private String reviewState;
+
     /** 排序：latest 最新（默认）/ hottest 最多浏览 / longest 篇幅最长 */
     private String orderBy;
 

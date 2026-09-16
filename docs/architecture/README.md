@@ -78,6 +78,8 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 - **笔记的私有隔离不在网关**：网关对所有 GET 放行，`PRIVATE` 笔记的可读性由 content-service 的
   `NoteServiceImpl#ensureReadable` 判定（非作者一律 404，ADMIN 也不能读他人私有笔记）；
   归属判定 `ensureOwned` 比文章更严格，只有作者本人能改删。
+- `/notes/review` 与 `/notes/mine` 都可能返回作者的私有内容，因此网关必须在 GET 公开放行规则之前
+  校验 AUTHOR；content-service 再复核角色和 `user_id`。复核状态不落新列，由 `verified_at` 按 180 天实时派生。
 
 ## 数据边界
 

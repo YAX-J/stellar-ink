@@ -150,6 +150,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 |---|---|---|---|
 | GET | `/notes` | 公开笔记分页列表；`page/size/tag/noteType/keyword/orderBy`。**服务端强制「已发布 + 公开」，不接受可见性参数** | 公开 |
 | GET | `/notes/mine` | 我的笔记（含私有与草稿）；`status/visibility/noteType/keyword` | AUTHOR |
+| GET | `/notes/review` | 我的已发布笔记复核队列；`reviewState/visibility/noteType/keyword/page/size`，默认 `reviewState=DUE` | AUTHOR |
 | GET | `/notes/{id}` | 详情；**私有笔记仅作者本人可读，其他人一律 404** | 按可见性 |
 | POST | `/notes` | 新建 `{title, content, tags[], noteType, visibility, status}`；**缺省 `visibility=PRIVATE`、`status=0` 草稿** | AUTHOR |
 | PUT / DELETE | `/notes/{id}` | 更新 / 删除；**只有作者本人**（ADMIN 也不行） | AUTHOR |
@@ -161,7 +162,8 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - **结构约定**：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，前端据此自动生成目录，不额外占用数据库列；列表 `summary` 优先截取「结论」章节
 - **私有隔离（硬性约束）**：`PRIVATE` 笔记不得出现在公开列表、标签聚合与搜索里；详情对非作者返回 404（不是 403，避免枚举存在性）；**ADMIN 也读不到他人私有笔记**
 - 浏览量口径：仅公开且已发布的笔记计数；按天去重与文章共用 `post_view` 闸门（该表只记「某用户某天已计一次」，与内容类型无关）；作者本人浏览不计
-- `verifiedAt` 是笔记区别于文章的核心字段：用于提示「这个结论是否还新鲜」（前端超过 180 天会标为待复核）
+- `reviewState` 取值：`DUE` 待复核查询（`UNVERIFIED + EXPIRED`）/ `UNVERIFIED` 从未验证 / `EXPIRED` 超过 180 天 / `FRESH` 有效期内；`DUE` 只作为筛选值，不会出现在单条笔记响应中
+- 笔记列表与详情返回 `verifiedAt/reviewState/reviewDueAt`；180 天口径由服务端统一计算，`PUT /notes/{id}/verify` 会从当前时间重新续期
 - 笔记一期**不做点赞**
 
 ### content-service :8102 - 流星

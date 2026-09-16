@@ -23,6 +23,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -68,6 +69,38 @@ class NoteServiceImplTest {
                 });
 
         assertThat(noteService.page(new NoteQueryDTO()).getRecords()).isEmpty();
+    }
+
+    @Test
+    void shouldReturnOnlyOwnedPublishedDueNotesWithReviewMetadata() {
+        LocalDateTime verifiedAt = LocalDateTime.now().minusDays(200);
+        Note expired = note(1L, 10L, NoteVisibility.PRIVATE, 1);
+        expired.setVerifiedAt(verifiedAt);
+        when(noteMapper.selectPage(
+                Mockito.<Page<Note>>any(), Mockito.<LambdaQueryWrapper<Note>>any()))
+                .thenAnswer(invocation -> {
+                    LambdaQueryWrapper<Note> wrapper = invocation.getArgument(1);
+                    assertThat(wrapper.getSqlSegment())
+                            .contains("user_id", "status", "verified_at IS NULL", "verified_at <");
+                    assertThat(wrapper.getParamNameValuePairs().values()).contains(10L, 1);
+                    Page<Note> result = new Page<>(1, 10);
+                    result.setRecords(List.of(expired));
+                    result.setTotal(1);
+                    return result;
+                });
+
+        try (MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            auth.when(AuthHelper::loginId).thenReturn(10L);
+            NoteQueryDTO query = new NoteQueryDTO();
+            query.setReviewState("DUE");
+
+            var page = noteService.review(query);
+
+            assertThat(page.getRecords()).singleElement().satisfies(note -> {
+                assertThat(note.getReviewState()).isEqualTo("EXPIRED");
+                assertThat(note.getReviewDueAt()).isEqualTo(verifiedAt.plusDays(180));
+            });
+        }
     }
 
     @Test

@@ -49,4 +49,10 @@ public class NoteVO {
 
     /** 上次验证结论仍有效的时间，null 表示未验证过 */
     private LocalDateTime verifiedAt;
+
+    /** UNVERIFIED / EXPIRED / FRESH，由服务端按统一的 180 天口径计算 */
+    private String reviewState;
+
+    /** 下次应复核的时间；从未验证时为 null */
+    private LocalDateTime reviewDueAt;
 }

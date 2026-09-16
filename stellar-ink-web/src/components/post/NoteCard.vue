@@ -10,12 +10,16 @@ const props = defineProps({
 })
 const emit = defineEmits(['open'])
 
-/** 验证新鲜度：超过 180 天提示可能过期 —— 技术笔记最容易失效的地方 */
+/** 新鲜度由后端统一判定；天数只用于更具体的展示。 */
 const verifyState = computed(() => {
-  if (!props.note.verifiedAt) return { text: '未验证', stale: true }
+  if (props.note.reviewState === 'UNVERIFIED' || !props.note.verifiedAt) {
+    return { text: '未验证', stale: true }
+  }
   const days = Math.floor((Date.now() - new Date(props.note.verifiedAt).getTime()) / 86400000)
-  if (days <= 180) return { text: `已验证 · ${days} 天前`, stale: false }
-  return { text: `结论待复核 · ${days} 天前`, stale: true }
+  if (props.note.reviewState === 'EXPIRED') {
+    return { text: `结论待复核 · ${days} 天前`, stale: true }
+  }
+  return { text: `已验证 · ${Math.max(0, days)} 天前`, stale: false }
 })
 </script>
 

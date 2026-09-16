@@ -7,6 +7,7 @@
 | 包 | 接口 | 数据 |
 |---|---|---|
 | `post/` | `/posts/**`、`/tags/**`、`/search/**` | `post` 表 |
+| `note/` | `/notes/**` | `note` 表 |
 | `meteor/` | `/meteors/**` | `meteor` 表 |
 | `echo/` | `/echos/**` | `echo` 表 |
 | `link/` | `/links/**` | `link` 表 |
@@ -18,6 +19,7 @@
 
 - 文章和流星记录 `user_id`；AUTHOR 只能维护自己的数据，ADMIN 可管理全部。
 - 草稿列表只允许 AUTHOR 访问，草稿详情只允许作者本人或 ADMIN。
+- 笔记复核队列只返回当前作者自己的已发布笔记，按 `verified_at` 的 180 天时效派生状态。
 - 回声投递、友链申请和文章 glow 是公开写操作；文章评论读取公开，发表评论需登录。
 - 友链公开列表只返回已接入项；待审列表与状态修改要求 ADMIN，网关和本服务都会校验。
 - 统计与文章同进程，直接通过 `PostMapper` 查询，不使用 Feign。
@@ -39,5 +41,5 @@ mvn -pl content-service -am package
 java -jar content-service/target/content-service.jar
 ```
 
-当前测试覆盖统计聚合、友链公开/待审隔离、私有笔记隔离、文章归属、评论删除权限和无状态 JWT 配置。
+当前测试覆盖统计聚合、友链公开/待审隔离、私有笔记隔离、笔记复核队列、文章归属、评论删除权限和无状态 JWT 配置。
 接口改动还需启动网关后进行端到端验证。

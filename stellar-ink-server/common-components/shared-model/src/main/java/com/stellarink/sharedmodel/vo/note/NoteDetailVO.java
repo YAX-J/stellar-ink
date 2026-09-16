@@ -45,6 +45,12 @@ public class NoteDetailVO {
 
     private LocalDateTime verifiedAt;
 
+    /** UNVERIFIED / EXPIRED / FRESH */
+    private String reviewState;
+
+    /** 下次应复核的时间；从未验证时为 null */
+    private LocalDateTime reviewDueAt;
+
     private NeighborVO prev;
 
     private NeighborVO next;

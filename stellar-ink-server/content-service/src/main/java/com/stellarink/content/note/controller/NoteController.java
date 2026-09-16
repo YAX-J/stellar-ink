@@ -79,6 +79,26 @@ public class NoteController {
         return Response.success(noteService.mine(query));
     }
 
+    /** 我的已发布笔记复核队列：默认只看从未验证或超过 180 天的笔记 */
+    @GetMapping("/review")
+    public Response<IPage<NoteVO>> review(@RequestParam(required = false, defaultValue = "1") Integer page,
+                                          @RequestParam(required = false, defaultValue = "24") Integer size,
+                                          @RequestParam(required = false, defaultValue = "DUE") String reviewState,
+                                          @RequestParam(required = false) String visibility,
+                                          @RequestParam(required = false) String noteType,
+                                          @RequestParam(required = false) String keyword) {
+        AuthHelper.requireAtLeast(Role.AUTHOR);
+        NoteQueryDTO query = new NoteQueryDTO();
+        query.setPage(page);
+        query.setSize(size);
+        query.setReviewState(reviewState);
+        query.setVisibility(visibility);
+        query.setNoteType(noteType);
+        query.setKeyword(keyword);
+        query.setPublicOnly(false);
+        return Response.success(noteService.review(query));
+    }
+
     /** 详情：私有笔记仅作者本人可读，其他人 404 */
     @GetMapping("/{id}")
     public Response<NoteDetailVO> detail(@PathVariable Long id) {
