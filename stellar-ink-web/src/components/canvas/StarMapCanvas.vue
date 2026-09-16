@@ -38,6 +38,7 @@ function frame() {
 
   ctx.clearRect(0, 0, w, h)
   const vis = visible()
+  const latestYear = Math.max(0, ...postStore.posts.map((post) => Number(post.year) || 0))
   /* 连线：相同标签 */
   ctx.lineWidth = 1.5
   for (let i = 0; i < vis.length; i++) {
@@ -53,7 +54,7 @@ function frame() {
   }
   vis.forEach((p, i) => {
     const tw = ((Math.sin(t + i * 1.7) + 1) / 2) * .35 + .65
-    const hot = p.year === 2026
+    const hot = p.year === latestYear
     ctx.beginPath()
     ctx.arc(p.x, p.y, p.r * tw, 0, 7)
     ctx.fillStyle = hot ? '#FFB454' : '#8B7CFF'

@@ -218,11 +218,10 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - Sentinel 规则未持久化（sentinel-datasource-nacos 已引入，待配规则）
 - 未启用 Redis 令牌桶限流（需 Redis）；生产已有 Nginx 边缘限流（详见 `deploy/docker/nginx/default.conf`，注意 `^/(echos|links)$` 不分方法限流，`GET` 也在限流区内、超限 429）
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
-- 未做文件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
+- 未做通用附件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
 - 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（光谱页目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
 - 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102
-- 头像只有「有/无图片」两态：无缩略图、无 CDN、无对象存储；文件在 user-service 本地磁盘，
-  多实例部署需换共享存储（当前单实例部署，与登录失败计数同口径）。生产务必保留
-  `deploy/docker/data/uploads` 卷，否则容器重建会丢头像
+- 头像没有缩略图与历史版本；`local` 模式下文件在 user-service 本地磁盘，多实例部署应切换到
+  `cos` 对象存储。生产使用 `local` 时务必保留 `deploy/docker/data/uploads` 卷，否则容器重建会丢头像

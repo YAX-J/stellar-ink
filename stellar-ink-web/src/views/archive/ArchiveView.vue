@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -10,11 +10,20 @@ import AuthorBadge from '@/components/common/AuthorBadge.vue'
 const router = useRouter()
 const postStore = usePostStore()
 
-const yearAll = [2024, 2025, 2026]
-const activeYears = ref([2025, 2026])
+const yearAll = computed(() => [...new Set(postStore.posts.map((post) => post.year).filter(Boolean))]
+  .sort((a, b) => b - a))
+const activeYears = ref([])
 const view = ref('map')
+const visiblePosts = computed(() => postStore.posts.filter((post) => activeYears.value.includes(post.year)))
+const constellationCount = computed(() => new Set(visiblePosts.value.flatMap((post) => post.tags)).size)
 
 onMounted(() => postStore.ensureLoaded().catch(() => {}))
+
+watch(yearAll, (years) => {
+  const available = new Set(years)
+  activeYears.value = activeYears.value.filter((year) => available.has(year))
+  if (!activeYears.value.length) activeYears.value = [...years]
+}, { immediate: true })
 
 function toggleYear(y) {
   const i = activeYears.value.indexOf(y)
@@ -54,12 +63,12 @@ function openPost(p) {
       <div class="map-legend">
         <i style="background:var(--amber)"></i>星体大小 = 字数 &nbsp;
         <i style="background:var(--primary)"></i>连线 = 相同标签<br>
-        共 {{ postStore.posts.length }} 颗星 · 已连成 9 个星座
+        共 {{ visiblePosts.length }} 颗星 · {{ constellationCount }} 个标签星座
       </div>
       <div v-if="view === 'river'" class="scroll-view">
         <div class="river-line"></div>
         <div
-          v-for="(p, i) in postStore.posts" :key="p.id"
+          v-for="(p, i) in visiblePosts" :key="p.id"
           class="river-item" :class="i % 2 ? 'even' : 'odd'" @click="openPost(p)"
         >
           <span class="d">{{ p.date }}</span>
@@ -67,7 +76,7 @@ function openPost(p) {
           <AuthorBadge class="river-author" :user-id="p.userId" compact />
           <p>{{ fmt(p.words) }} 字 · #{{ p.tags.join(' #') }}</p>
         </div>
-        <p v-if="!postStore.posts.length && !postStore.loading" class="state-text">还没有已发布的星。</p>
+        <p v-if="!visiblePosts.length && !postStore.loading" class="state-text">所选年份还没有已发布的星。</p>
       </div>
     </div>
   </section>

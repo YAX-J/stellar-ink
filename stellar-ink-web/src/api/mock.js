@@ -67,12 +67,6 @@ export const FRIENDS = [
   { n: '零点公园', u: '0park.life', d: '城市夜游观察，凌晨街灯收藏家。', x: .85, y: .78 },
 ]
 
-export const TAGS = [
-  { n: '随笔', c: '#8B7CFF' }, { n: '沉思', c: '#4DC9D9' }, { n: '写作', c: '#FFB454' }, { n: '城市', c: '#FF6B9D' },
-  { n: '速写', c: '#7AD9C4' }, { n: '工具', c: '#C99CFF' }, { n: '生活', c: '#FF9E6B' }, { n: '社交', c: '#5AB0FF' },
-  { n: '读书', c: '#8FD16A' }, { n: '旅行', c: '#FFD166' },
-]
-
 export const TAG_CLASS = {
   '随笔': '', '沉思': 'cool', '写作': 'warm', '城市': 'cool', '工具': 'warm',
   '社交': '', '读书': 'cool', '生活': 'warm', '速写': '', '旅行': 'cool',

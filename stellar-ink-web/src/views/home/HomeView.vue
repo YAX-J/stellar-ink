@@ -104,7 +104,7 @@ function openPost(post) {
     <div class="foot">
       <span>© 2026 星笺 STELLAR INK</span>
       <span>由 {{ todayWords.toLocaleString() }} 个今晚的字驱动</span>
-      <span>RSS · 星链 · 关于</span>
+      <span>星图 · 星链 · 关于</span>
     </div>
   </section>
 </template>

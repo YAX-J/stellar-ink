@@ -1,16 +1,18 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
+import { useStatsStore } from '@/stores/stats'
 import SectionHead from '@/components/common/SectionHead.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const settings = useSettingsStore()
 const auth = useAuthStore()
+const statsStore = useStatsStore()
 
 /* 星籍页原本写死「星」与 settings.penName。已登录时改用真实资料 —— 这是站长自己的档案页，
    显示登录用户的头像才算真的交付了头像功能；未登录保持原样（游客不该看到别人的资料）。 */
-const loggedIn = computed(() => auth.isLoggedIn)
+const loggedIn = computed(() => auth.isLoggedIn && !!auth.user)
 const penName = computed(() => (loggedIn.value ? auth.user.nickname || auth.user.username : settings.penName))
 const avatarUrl = computed(() => (loggedIn.value ? auth.user.avatarUrl || '' : ''))
 const avatarText = computed(() => (loggedIn.value ? auth.user.avatarText || '' : ''))
@@ -18,20 +20,16 @@ const avatarName = computed(() => (loggedIn.value ? auth.user.nickname || auth.u
 /* 编号与星历用真实值，避免「登录后头像变了、编号还是写死的 ST-2024-0307」的割裂感 */
 const passportNo = computed(() => (loggedIn.value ? `NO.ST-${String(auth.user.id).padStart(4, '0')}` : 'NO.ST-2024-0307'))
 const registeredAt = computed(() => {
-  if (!loggedIn.value || !auth.user.createdAt) return '2024.03.07 · 第 1 夜'
+  if (!loggedIn.value || !auth.user.createdAt) return '2024.03.07'
   const d = new Date(auth.user.createdAt)
-  if (Number.isNaN(d.getTime())) return '2024.03.07 · 第 1 夜'
+  if (Number.isNaN(d.getTime())) return '2024.03.07'
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`
 })
+const totalPosts = computed(() => Number(statsStore.overview?.totalPosts ?? 0))
+const streakDays = computed(() => Number(statsStore.overview?.streakDays ?? 0))
 
-async function copyRss() {
-  try {
-    await navigator.clipboard.writeText(`${location.origin}/rss.xml`)
-  } catch {
-    /* 剪贴板不可用时静默 */
-  }
-}
+onMounted(() => statsStore.fetchOverview().catch(() => {}))
 </script>
 
 <template>
@@ -42,8 +40,8 @@ async function copyRss() {
     <div class="passport">
       <div class="pp-card reveal" style="--d:.08s">
         <div class="stamps">
-          <div class="stamp">142 星<br>已点亮</div>
-          <div class="stamp g">连续<br>21 夜</div>
+          <div class="stamp">{{ totalPosts }} 星<br>已点亮</div>
+          <div class="stamp g">连续<br>{{ streakDays }} 夜</div>
         </div>
         <div class="pp-head">
           <UserAvatar
@@ -87,7 +85,6 @@ async function copyRss() {
     <SectionHead title="信标" more="向这些频率发信号，会收到回复" />
     <div class="beacon-row reveal" style="--d:.08s">
       <a class="beacon" href="mailto:hi@stellar.ink">📮 hi@stellar.ink</a>
-      <button class="beacon" @click="copyRss">✦ RSS 订阅</button>
       <a class="beacon" href="https://github.com" target="_blank" rel="noreferrer">⬡ GitHub</a>
       <a class="beacon" href="https://web.okjike.com" target="_blank" rel="noreferrer">☄ 即刻 @拾星人</a>
     </div>

@@ -1,41 +1,50 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
-import { TAGS } from '@/api/mock'
 import SectionHead from '@/components/common/SectionHead.vue'
 import { fmt } from '@/utils/format'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
-const filter = ref('沉思')
+const filter = ref('')
+const colors = ['var(--primary)', 'var(--teal)', 'var(--amber)', 'var(--rose)', 'var(--ink-dim)']
 
 onMounted(() => {
   Promise.all([postStore.ensureLoaded(), postStore.fetchTags()]).catch(() => {})
 })
 
-const counts = computed(() => {
-  const m = {}
-  for (const t of TAGS) {
-    m[t.n] = postStore.tags.find((item) => item.name === t.n)?.count ??
-      postStore.posts.filter((p) => p.tags.includes(t.n)).length
+const tags = computed(() => {
+  const counts = new Map()
+  for (const post of postStore.posts) {
+    for (const tag of post.tags) counts.set(tag, (counts.get(tag) || 0) + 1)
   }
-  return m
+  const source = postStore.tags.length
+    ? postStore.tags.map((tag) => ({ name: tag.name, count: Number(tag.count) || 0 }))
+    : [...counts].map(([name, count]) => ({ name, count }))
+  return source.map((tag, index) => ({ ...tag, color: colors[index % colors.length] }))
 })
 
 const rows = computed(() => {
-  const tag = TAGS.find((t) => t.n === filter.value)
+  const tag = tags.value.find((item) => item.name === filter.value)
   return {
-    color: tag.c,
+    color: tag?.color || 'var(--primary)',
     list: postStore.posts
-      .map((p, i) => ({ ...p, i }))
       .filter((p) => p.tags.includes(filter.value)),
   }
 })
 
+watch(tags, (items) => {
+  if (!items.some((item) => item.name === filter.value)) filter.value = items[0]?.name || ''
+}, { immediate: true })
+
 function openPost(p) {
-  router.push(`/read/${p.id ?? p.i + 1}`)
+  router.push(`/read/${p.id}`)
+}
+
+function reload() {
+  return Promise.all([postStore.fetchPosts(), postStore.fetchTags()]).catch(() => {})
 }
 </script>
 
@@ -45,37 +54,38 @@ function openPost(p) {
     <SectionHead title="光谱" more="点击任意波段，收听那个频率" />
     <p v-if="postStore.loading && !postStore.posts.length" class="state-text">正在读取光谱…</p>
     <p v-else-if="postStore.error && !postStore.posts.length" class="state-text error-text">
-      {{ postStore.error }} <button class="state-action" @click="postStore.fetchPosts()">重新读取</button>
+      {{ postStore.error }} <button class="state-action" @click="reload">重新读取</button>
     </p>
 
-    <div class="spectrum-bar reveal" style="--d:.08s">
+    <div v-if="tags.length" class="spectrum-bar reveal" style="--d:.08s">
       <i
-        v-for="t in TAGS" :key="t.n"
-        :title="'#' + t.n" :style="{ background: t.c, flexGrow: counts[t.n] }"
-        @click="filter = t.n"
+        v-for="tag in tags" :key="tag.name"
+        :title="`#${tag.name} · ${tag.count} 篇`"
+        :style="{ background: tag.color, flexGrow: tag.count }"
+        @click="filter = tag.name"
       ></i>
     </div>
 
-    <div class="spec-tags reveal" style="--d:.14s">
+    <div v-if="tags.length" class="spec-tags reveal" style="--d:.14s">
       <button
-        v-for="t in TAGS" :key="t.n"
-        class="spec-tag" :class="{ on: filter === t.n }"
-        :style="{ color: t.c }" @click="filter = t.n"
+        v-for="tag in tags" :key="tag.name"
+        class="spec-tag" :class="{ on: filter === tag.name }"
+        :style="{ color: tag.color }" @click="filter = tag.name"
       >
-        <i :style="{ background: t.c }"></i>#{{ t.n }}
-        <small style="color:var(--ink-faint)">{{ counts[t.n] }}</small>
+        <i :style="{ background: tag.color }"></i>#{{ tag.name }}
+        <small style="color:var(--ink-faint)">{{ tag.count }}</small>
       </button>
     </div>
 
     <div class="spec-list reveal" style="--d:.2s">
-      <div v-for="p in rows.list" :key="p.i" class="spec-row" @click="openPost(p)">
+      <div v-for="p in rows.list" :key="p.id" class="spec-row" @click="openPost(p)">
         <span class="dot" :style="{ background: rows.color }"></span>
         <h4>{{ p.title }}</h4>
         <AuthorBadge class="spec-author" :user-id="p.userId" compact />
         <small>{{ p.date }} · {{ fmt(p.words) }} 字</small>
       </div>
       <div v-if="!rows.list.length" class="spec-row" @click="router.push('/write')">
-        <h4 style="color:var(--ink-faint)">这个波段还没有星，去写一篇吧 →</h4>
+        <h4 style="color:var(--ink-faint)">{{ tags.length ? '这个波段还没有星，去写一篇吧 →' : '还没有可展示的标签。' }}</h4>
       </div>
     </div>
   </section>

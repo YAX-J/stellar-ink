@@ -1,13 +1,14 @@
 <script setup>
-import { computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { usePostStore } from '@/stores/posts'
+import { useStatsStore } from '@/stores/stats'
+import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
-const router = useRouter()
 const settings = useSettingsStore()
 const postStore = usePostStore()
+const statsStore = useStatsStore()
 
 const themes = [
   { key: 'night', name: '永夜', desc: '深夜书房 · 默认', sw: 'sw-night' },
@@ -16,26 +17,39 @@ const themes = [
 ]
 
 const RING_C = 2 * Math.PI * 64
-const goalOffset = computed(() => RING_C * (1 - settings.dailyGoal / 2000))
+const goalOffset = computed(() => RING_C * (1 - Math.min(settings.dailyGoal, 2000) / 2000))
 
 watch(() => [settings.penName, settings.signature], () => settings.persist())
 
-function exportMarkdown() {
+onMounted(() => Promise.all([
+  postStore.ensureLoaded(),
+  statsStore.fetchOverview(),
+]).catch(() => {}))
+
+function exportPostIndex() {
+  const generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
   const md = postStore.posts
     .map((p) => `# ${p.title}\n\n- 日期：${p.date}\n- 字数：${p.words}\n- 标签：${p.tags.map((t) => '#' + t).join(' ')}\n`)
     .join('\n')
-  download('stellar-ink-export.md', md)
+  download('stellar-ink-post-index.md', `# 星笺文章索引\n\n生成于：${generatedAt}\n\n${md}`)
+  emit(TOAST, { type: 'success', message: `已导出 ${postStore.posts.length} 篇文章的索引` })
 }
 function generateReport() {
-  const total = postStore.posts.reduce((a, p) => a + p.words, 0)
+  const overview = statsStore.overview
+  const brightest = [...postStore.posts]
+    .sort((a, b) => b.glow - a.glow || b.viewCount - a.viewCount || b.id - a.id)[0]
+  const date = new Date().toISOString().slice(0, 10)
   const md = [
-    '# 年度星座报告\n',
-    `- 文章数：${postStore.posts.length} 篇`,
-    `- 累计星尘：${total.toLocaleString()} 字`,
-    '- 连续写作：21 夜',
-    '- 最亮的星：在算法的洪流里，做一个缓慢的人\n',
+    '# 星笺站点概览\n',
+    `生成于：${date}\n`,
+    `- 已发布文章：${Number(overview?.totalPosts ?? postStore.posts.length).toLocaleString()} 篇`,
+    `- 累计星尘：${Number(overview?.totalWords ?? postStore.totalWords).toLocaleString()} 字`,
+    `- 连续写作：${Number(overview?.streakDays ?? 0)} 夜`,
+    `- 夜间写作占比：${Number(overview?.nightRatio ?? 0)}%`,
+    `- 当前列表最亮的星：${brightest ? `${brightest.title}（${brightest.glow} 次光芒）` : '尚未点亮'}\n`,
   ].join('\n')
-  download('stellar-ink-report.md', md)
+  download(`stellar-ink-overview-${date}.md`, md)
+  emit(TOAST, { type: 'success', message: '站点概览报告已生成' })
 }
 function download(name, text) {
   const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
@@ -45,17 +59,13 @@ function download(name, text) {
   a.click()
   URL.revokeObjectURL(a.href)
 }
-async function copyRss() {
-  try {
-    await navigator.clipboard.writeText(`${location.origin}/rss.xml`)
-  } catch {
-    /* 剪贴板不可用时静默 */
-  }
-}
-function wipeAll() {
-  if (confirm('确定要熄灭整片星图吗？本地演示数据与设置将被清空。')) {
+function resetLocalPreferences() {
+  if (confirm('确定恢复本机默认偏好吗？主题、阅读设置与阅读位置会被重置，线上内容不会受影响。')) {
     localStorage.removeItem('stellar-ink-settings')
-    location.reload()
+    sessionStorage.removeItem('stellar-ink-read-positions')
+    settings.$reset()
+    settings.persist()
+    emit(TOAST, { type: 'success', message: '本机偏好已恢复默认值' })
   }
 }
 </script>
@@ -125,10 +135,9 @@ function wipeAll() {
 
       <div class="panel p-data reveal" style="--d:.3s">
         <h3>数据舱</h3>
-        <div class="data-row"><span>导出全部星尘（Markdown）</span><button class="btn btn-ghost" @click="exportMarkdown">导出</button></div>
-        <div class="data-row"><span>生成年度星座报告</span><button class="btn btn-ghost" @click="generateReport">生成</button></div>
-        <div class="data-row"><span>RSS 订阅源</span><button class="btn btn-ghost" @click="copyRss">复制</button></div>
-        <div class="data-row danger"><span>熄灭整片星图（删除博客）</span><button class="btn btn-ghost danger" @click="wipeAll">慎用</button></div>
+        <div class="data-row"><span>导出当前文章索引（Markdown）</span><button class="btn btn-ghost" :disabled="postStore.loading" @click="exportPostIndex">导出</button></div>
+        <div class="data-row"><span>生成站点概览报告</span><button class="btn btn-ghost" :disabled="postStore.loading || statsStore.loading" @click="generateReport">生成</button></div>
+        <div class="data-row danger"><span>恢复本机默认偏好</span><button class="btn btn-ghost danger" @click="resetLocalPreferences">重置</button></div>
       </div>
     </div>
   </section>
@@ -191,6 +200,7 @@ function wipeAll() {
   border-bottom:1px dashed var(--line); font-size:13px; color:var(--ink-dim); gap:10px}
 .data-row:last-child{border:none}
 .data-row .btn{height:34px; padding:0 16px; font-size:12px}
+.data-row .btn:disabled{opacity:.5; cursor:not-allowed}
 .danger{color:var(--rose) !important}
 
 @media (max-width:980px){
