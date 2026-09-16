@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS `link` (
     `name`        VARCHAR(100) NOT NULL                COMMENT '站点名',
     `url`         VARCHAR(200) NOT NULL                COMMENT '站点地址',
     `description` VARCHAR(300)                          COMMENT '一句话介绍',
-    `status`      TINYINT      DEFAULT 0               COMMENT '0 待确认 / 1 已接入',
+    `status`      TINYINT      DEFAULT 0               COMMENT '0 待审核 / 1 已接入 / 2 已驳回',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '申请时间',
     PRIMARY KEY (`id`),
     KEY `idx_status` (`status`)

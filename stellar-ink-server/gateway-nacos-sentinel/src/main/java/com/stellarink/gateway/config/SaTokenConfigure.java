@@ -85,7 +85,7 @@ public class SaTokenConfigure {
                         return;
                     }
                     // 2) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
-                    if ("GET".equalsIgnoreCase(method) && "/user/list".equals(path)) {
+                    if (requiresAdminRead(method, path)) {
                         requireRole(Role.ADMIN);
                         return;
                     }
@@ -158,6 +158,12 @@ public class SaTokenConfigure {
         }
         return LINK_STATUS_PATH.matcher(path).matches()
                 || USER_ROLE_PATH.matcher(path).matches();
+    }
+
+    /** 管理端读接口必须在 GET 公开放行规则之前完成角色校验。 */
+    static boolean requiresAdminRead(String method, String path) {
+        return "GET".equalsIgnoreCase(method)
+                && ("/user/list".equals(path) || "/links/pending".equals(path));
     }
 
     private static void requireRole(Role required) {

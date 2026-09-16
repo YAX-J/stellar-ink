@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useLinkStore } from '@/stores/links'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -9,6 +10,7 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
+const links = useLinkStore()
 
 const user = computed(() => auth.user)
 const roleClass = computed(() => `role-${(user.value && user.value.role) || 'READER'}`.toLowerCase())
@@ -290,6 +292,25 @@ async function onRoleChange(u, role) {
   }
 }
 
+/* ---- 星链审核（ADMIN） ---- */
+const reviewingLinkId = ref(null)
+
+async function reviewLink(link, approved) {
+  if (reviewingLinkId.value !== null) return
+  reviewingLinkId.value = link.id
+  try {
+    await links.review(link.id, approved)
+    emit(TOAST, {
+      type: 'success',
+      message: approved ? `已接入星链：${link.n}` : `已驳回友链申请：${link.n}`,
+    })
+  } catch {
+    /* 面板展示 store 中的错误；会话失效仍由全局链路处理 */
+  } finally {
+    reviewingLinkId.value = null
+  }
+}
+
 /* 局部错误只落到面板里；会话失效由 client.js → bus → main.js 统一处理并跳登录 */
 function handleError(e, target) {
   target.value = e.message || '操作失败'
@@ -305,7 +326,9 @@ onMounted(async () => {
   }
   /* 底字输入框在拿到真实资料后才填值（localStorage 里的旧缓存可能没有该字段） */
   avatarText.value = auth.user?.avatarText || ''
-  if (auth.isAdmin) await loadUsers()
+  if (auth.isAdmin) {
+    await Promise.allSettled([loadUsers(), links.fetchPending()])
+  }
 })
 </script>
 
@@ -494,6 +517,40 @@ onMounted(async () => {
           通过后该用户需要重新登录，新角色才会生效（JWT 里带的角色是登录时签发的）。
         </p>
       </div>
+
+      <!-- 星链审核（仅站长）：与成员审核同属账号管理，不额外增加后台路由 -->
+      <div v-if="auth.isAdmin" class="panel reveal" style="--d:.3s">
+        <h3>
+          星链审核 · 站长
+          <span v-if="links.pending.length" class="pending-badge">{{ links.pending.length }} 条待审</span>
+        </h3>
+        <p v-if="links.pendingError" class="msg err">
+          {{ links.pendingError }}
+          <button class="state-action" @click="links.fetchPending().catch(() => {})">重新读取</button>
+        </p>
+        <p v-if="links.loadingPending" class="dim">正在接收友邻信号…</p>
+        <p v-else-if="!links.pending.length && !links.pendingError" class="dim">暂时没有待审核的友链。</p>
+        <div v-if="!links.loadingPending && links.pending.length" class="member-list">
+          <div v-for="link in links.pending" :key="link.id" class="member-row link-review-row">
+            <div class="member-id">
+              <b>{{ link.n }}</b>
+              <a class="link-url" :href="link.u" target="_blank" rel="noopener noreferrer">{{ link.u }}</a>
+              <p class="link-description">{{ link.d }}</p>
+              <span class="apply-time">申请于 {{ String(link.createdAt || '').replace('T', ' ').slice(0, 16) }}</span>
+            </div>
+            <div class="apply-buttons">
+              <button
+                class="review-btn ok" :disabled="reviewingLinkId !== null"
+                @click="reviewLink(link, true)"
+              >{{ reviewingLinkId === link.id ? '处理中…' : '通过' }}</button>
+              <button
+                class="review-btn no" :disabled="reviewingLinkId !== null"
+                @click="reviewLink(link, false)"
+              >驳回</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
   </section>
 </template>
@@ -567,6 +624,12 @@ onMounted(async () => {
 .review-btn.ok:hover{background:var(--surface-2)}
 .review-btn.no{color:var(--ink-faint)}
 .review-btn.no:hover{color:var(--rose); border-color:var(--rose)}
+.review-btn:disabled{opacity:.55; cursor:wait}
+.state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
+.link-review-row{align-items:flex-start}
+.link-url{display:block; margin-top:5px; color:var(--teal); font-family:var(--font-mono);
+  font-size:11px; overflow-wrap:anywhere}
+.link-description{max-width:62ch; margin:7px 0; color:var(--ink-dim); font-size:12px; line-height:1.8}
 .apply-foot{margin-top:14px; font-size:11px; line-height:1.8; color:var(--ink-faint)}
 .msg{font-size:12px; margin-bottom:12px; line-height:1.6}
 .msg.err{color:var(--rose)}

@@ -150,7 +150,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `AUTHOR 作者` = READER + 写/改/删文章、技术笔记、发射/删除流星；`ADMIN 站长` = AUTHOR + 友链审核 + 调整用户角色。
   角色在登录/注册时写入 JWT 的 `role` extra（`Role` 枚举见 shared-model，键 `Role.JWT_KEY`）；
   网关读 `StpUtil.getExtra(Role.JWT_KEY)` 做门槛（文章/笔记/流星写需 AUTHOR，`PUT /links/{id}/status`、
-  `PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /user/list`、`GET /posts/mine`、
+  `GET /links/pending`、`PUT /user/{id}/role`、`GET /user/list` 需 ADMIN；注意 `GET /links/pending`、`GET /user/list`、`GET /posts/mine`、
   `GET /notes/mine` 都是「读」但需更高角色，**必须在网关「GET 全放行」之前单独拦下**），
   角色不足返回 403；服务内用 `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。
   注册固定 READER，种子账号 stellar 为 ADMIN。
@@ -275,7 +275,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 搜索与分页已完成：前端 `/search` 聚合文章 `/search` 与公开笔记 `/notes?keyword=`，按类型分区并各自分页；
   星图、光谱、公开笔记、我的笔记均支持「继续加载」，作者摘要请求按 100 个 id 自动分批。
   尚未分页的边界：文章草稿恢复固定取最近 50 条，流星固定取最近 100 条。
-- 尚未做（待明确要求）：友链审核页（`PUT /links/{id}/status` 已就绪但前端未接）。
+- 友链审核闭环已完成：公开 `/links` 只返回已接入项，申请状态为待审核；ADMIN 在账号页通过
+  `/links/pending` 查看队列，并以 `PUT /links/{id}/status` 通过或驳回（状态 `0/1/2`）。
   （`PUT /user/profile` 已接：账号页可改笔名/签名/底字/每日目标，`/bridge` 舰桥页仍用 localStorage 草稿。）
 - 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
 - 技术笔记编辑器已完成：笔记编辑区换成 CodeMirror 6 的 Live Preview（`components/editor/MarkdownEditor.vue`）——

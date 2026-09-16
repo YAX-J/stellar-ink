@@ -183,9 +183,12 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| GET | `/links` | 友邻列表 | 公开 |
-| POST | `/links` | 申请接入 `{name, url, description?}` | 公开 |
-| PUT | `/links/{id}/status?status=1` | 站长确认/驳回 | ADMIN |
+| GET | `/links` | 已接入的友邻列表（仅返回 `status=1`） | 公开 |
+| GET | `/links/pending` | 待审核申请（仅返回 `status=0`） | ADMIN |
+| POST | `/links` | 申请接入 `{name, url, description?}`，初始为待审核 | 公开 |
+| PUT | `/links/{id}/status?status={status}` | 审核申请：`1` 通过 / `2` 驳回，仅允许审核待审记录 | ADMIN |
+
+友链状态：`0` 待审核、`1` 已接入、`2` 已驳回。待审核与已驳回记录不会出现在公开列表。
 
 ### content-service :8102 - 写作统计
 

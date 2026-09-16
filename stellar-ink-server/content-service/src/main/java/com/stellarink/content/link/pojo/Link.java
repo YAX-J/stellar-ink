@@ -23,7 +23,7 @@ public class Link {
 
     private String description;
 
-    /** 0 待确认 / 1 已接入 */
+    /** 0 待审核 / 1 已接入 / 2 已驳回 */
     private Integer status;
 
     private LocalDateTime createdAt;

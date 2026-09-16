@@ -25,6 +25,9 @@ export const useLinkStore = defineStore('links', {
     loading: false,
     error: '',
     initialized: false,
+    pending: [],
+    loadingPending: false,
+    pendingError: '',
   }),
   actions: {
     async fetchFriends() {
@@ -55,9 +58,41 @@ export const useLinkStore = defineStore('links', {
           method: 'POST',
           body: { name: name.trim(), url: url.trim() },
         })
-        await this.fetchFriends()
       } catch (error) {
         this.error = error.message
+        throw error
+      }
+    },
+
+    async fetchPending() {
+      this.loadingPending = true
+      this.pendingError = ''
+      try {
+        const data = await request('/links/pending', { silent: true })
+        this.pending = (data || []).map(normalizeLink)
+        return this.pending
+      } catch (error) {
+        this.pendingError = error.message
+        throw error
+      } finally {
+        this.loadingPending = false
+      }
+    },
+
+    async review(id, approved) {
+      this.pendingError = ''
+      try {
+        const reviewed = this.pending.find((item) => Number(item.id) === Number(id))
+        await request(`/links/${id}/status?status=${approved ? 1 : 2}`, {
+          method: 'PUT',
+          silent: true,
+        })
+        this.pending = this.pending.filter((item) => Number(item.id) !== Number(id))
+        if (approved && reviewed && this.initialized) {
+          this.friends.push(normalizeLink({ ...reviewed, status: 1 }, this.friends.length))
+        }
+      } catch (error) {
+        this.pendingError = error.message
         throw error
       }
     },

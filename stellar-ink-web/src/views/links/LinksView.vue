@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useLinkStore } from '@/stores/links'
+import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 import LinkSky from '@/components/canvas/LinkSky.vue'
 
@@ -25,12 +26,14 @@ function onSelect(i) {
 
 async function apply() {
   const n = name.value.trim()
-  if (!n || applying.value) return
+  const u = url.value.trim()
+  if (!n || !u || applying.value) return
   applying.value = true
   try {
-    await linkStore.apply(n, url.value.trim())
+    await linkStore.apply(n, u)
     name.value = ''
     url.value = ''
+    emit(TOAST, { type: 'success', message: '信号已送达，等待站长确认后接入星链' })
   } finally {
     applying.value = false
   }
@@ -64,8 +67,11 @@ async function apply() {
     <div class="side-card reveal" style="--d:.2s">
       <h5>申请接入星链 · 交换友链</h5>
       <div class="echo-form" style="margin-bottom:0">
-        <input v-model="name" class="in-name" placeholder="你的站点名">
-        <input v-model="url" class="in-msg" placeholder="站点地址，如 myblog.com" @keydown.enter="apply">
+        <input v-model="name" class="in-name" maxlength="100" placeholder="你的站点名">
+        <input
+          v-model="url" class="in-msg" type="url" maxlength="200"
+          placeholder="站点地址，如 https://myblog.com" @keydown.enter="apply"
+        >
         <button class="btn btn-ghost" :disabled="applying" @click="apply">
           {{ applying ? '发送中…' : '⬡ 发送信号' }}
         </button>

@@ -72,6 +72,8 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 - user-service 负责登录、注册和 JWT 签发。
 - 网关按路径和角色进行第一层校验；业务服务使用 `AuthHelper` 复核登录身份与角色。
 - `READER` 可读和公开互动，`AUTHOR` 可维护自己的文章与流星，`ADMIN` 可管理全部内容、友链状态和用户角色。
+- 友链使用 `0 待审核 / 1 已接入 / 2 已驳回` 三态；公开 `/links` 只返回已接入项，
+  `/links/pending` 在网关 GET 放行规则之前单独校验 ADMIN，内容服务再做一次角色复核。
 - JWT 无状态验签，网关与两个业务服务必须使用同一 `SA_TOKEN_JWT_SECRET`。
 - **笔记的私有隔离不在网关**：网关对所有 GET 放行，`PRIVATE` 笔记的可读性由 content-service 的
   `NoteServiceImpl#ensureReadable` 判定（非作者一律 404，ADMIN 也不能读他人私有笔记）；

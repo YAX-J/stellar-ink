@@ -1,0 +1,23 @@
+package com.stellarink.gateway.config;
+
+import cn.dev33.satoken.jwt.StpLogicJwtForStateless;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class SaTokenConfigureTest {
+
+    private final SaTokenConfigure configure = new SaTokenConfigure();
+
+    @Test
+    void shouldUseStatelessJwtLogic() {
+        assertThat(configure.getStpLogic()).isInstanceOf(StpLogicJwtForStateless.class);
+    }
+
+    @Test
+    void shouldProtectPendingLinksBeforePublicGetRule() {
+        assertThat(SaTokenConfigure.requiresAdminRead("GET", "/links/pending")).isTrue();
+        assertThat(SaTokenConfigure.requiresAdminRead("GET", "/links")).isFalse();
+        assertThat(SaTokenConfigure.requiresAdminRead("POST", "/links/pending")).isFalse();
+    }
+}
