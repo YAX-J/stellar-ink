@@ -19,6 +19,7 @@ import com.stellarink.sharedmodel.vo.user.AuthorVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.mapper.UserMapper;
 import com.stellarink.user.component.AvatarStorage;
+import com.stellarink.user.component.TokenRevocationService;
 import com.stellarink.user.pojo.User;
 import com.stellarink.user.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +59,7 @@ public class UserServiceImpl implements UserService {
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final AvatarStorage avatarStorage;
+    private final TokenRevocationService tokenRevocationService;
 
     /**
      * 登录失败状态存入 Redis，按<b>用户名</b>计数而非 IP：请求可能经 Nginx/网关转发，来源 IP 可被
@@ -286,8 +288,8 @@ public class UserServiceImpl implements UserService {
         }
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         userMapper.updateById(user);
+        tokenRevocationService.revokeCurrentToken();
         log.info("修改密码成功 userId={}", userId);
-        // 注意：JWT 无状态，改密后旧 token 仍有效（项目既有取舍，无法服务端吊销）
     }
 
     @Override

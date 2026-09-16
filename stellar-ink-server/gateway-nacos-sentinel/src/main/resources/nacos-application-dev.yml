@@ -16,3 +16,14 @@ sa-token:
   timeout: 604800
   is-concurrent: true
   is-share: true
+
+# 网关只用 Redis 检查 JWT 撤销列表；限流仍由 Nginx / Sentinel 承担。
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      connect-timeout: 3s

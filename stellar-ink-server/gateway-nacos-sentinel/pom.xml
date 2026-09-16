@@ -54,6 +54,11 @@
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-jwt</artifactId>
         </dependency>
+        <!-- JWT 撤销列表：网关使用响应式 Redis，避免阻塞 Netty 事件循环 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
         <!-- 公共模型（角色枚举 Role 等，供网关读 JWT 角色做门槛校验） -->
         <dependency>
             <groupId>com.stellarink</groupId>

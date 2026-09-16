@@ -69,6 +69,16 @@ spring:
       filter:
         enabled: true
 
+  # JWT 撤销列表由网关直接读取，使用响应式驱动避免阻塞 Netty。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      connect-timeout: 3s
+
 # 基础不可变配置
 sa-token:
   # token名称（同时也是cookie名称）

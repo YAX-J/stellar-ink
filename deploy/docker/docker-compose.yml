@@ -5,7 +5,7 @@
 #       全部 Java 服务经 host-gateway 注册/读配置到宿主机 Nacos(:8848)
 #
 # 服务器上已有的 Nacos(:8848/9848) 进程及 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器由宿主机维护，
-# 本编排不重复创建：业务服务经 host-gateway 访问宿主机上的 MySQL(:3306) 与 Redis(:6379)；
+# 本编排不重复创建：业务服务访问 MySQL，三个 Java 服务均访问 Redis；
 # Qdrant 现阶段业务未使用，后续接入 AI 时再纳入。
 #
 # 敏感配置统一放同目录 .env（参照 .env.example）；首次部署步骤见同目录 README.md
@@ -21,6 +21,10 @@ x-common-env: &common-env
   NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
   NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
   SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
+  REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_DATABASE: ${REDIS_DATABASE:-0}
   # 小内存服务器方案：显式限制堆并使用 SerialGC，避免 JVM 按容器上限预留大堆。
   JAVA_OPTS: >-
     -Xms32m
@@ -37,10 +41,6 @@ x-db-env: &db-env
   MYSQL_DB: ${MYSQL_DB:-stellar_ink}
   MYSQL_USER: ${MYSQL_USER:-root}
   MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
-  REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
-  REDIS_PORT: ${REDIS_PORT:-6379}
-  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-  REDIS_DATABASE: ${REDIS_DATABASE:-0}
 
 # —— 后端镜像：共用一个 Dockerfile，仅 JAR_PATH 不同（Maven 全量编译只执行一次）——
 x-server-build: &server-build

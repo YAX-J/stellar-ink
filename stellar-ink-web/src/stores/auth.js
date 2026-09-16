@@ -100,6 +100,8 @@ export const useAuthStore = defineStore('auth', {
 
     async changePassword({ oldPassword, newPassword }) {
       await request('/user/password', { method: 'PUT', body: { oldPassword, newPassword } })
+      /* 服务端已撤销当前 JWT；本地同步清理，避免下一次请求才被动发现失效。 */
+      this.clearSession()
     },
 
     /* ---- 头像图片 ---- */

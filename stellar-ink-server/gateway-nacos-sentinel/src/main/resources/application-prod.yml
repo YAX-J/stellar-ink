@@ -58,6 +58,15 @@ spring:
         # 无需动代码。若嫌日志吵，把下面 logging 里的 SentinelHealthIndicator 调成 ERROR（见文件末尾）。
         dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
 
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      connect-timeout: 3s
+
 sa-token:
   token-name: Authorization
   token-style: uuid

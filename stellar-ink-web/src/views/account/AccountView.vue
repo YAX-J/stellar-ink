@@ -144,11 +144,9 @@ const oldPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const pwLoading = ref(false)
-const pwMsg = ref('')
 const pwError = ref('')
 
 async function changePassword() {
-  pwMsg.value = ''
   pwError.value = ''
   if (!oldPassword.value || !newPassword.value) {
     pwError.value = '请填写原密码与新密码。'
@@ -165,8 +163,9 @@ async function changePassword() {
   pwLoading.value = true
   try {
     await auth.changePassword({ oldPassword: oldPassword.value, newPassword: newPassword.value })
-    pwMsg.value = '密码已更新。'
     oldPassword.value = newPassword.value = confirmPassword.value = ''
+    emit(TOAST, { type: 'success', message: '密码已更新，请重新登录' })
+    await router.replace({ name: 'login', query: { redirect: '/account' } })
   } catch (e) {
     handleError(e, pwError)
   } finally {
@@ -457,7 +456,6 @@ onMounted(async () => {
               <input v-model="confirmPassword" type="password" autocomplete="new-password" />
             </div>
             <p v-if="pwError" class="msg err">{{ pwError }}</p>
-            <p v-if="pwMsg" class="msg ok">{{ pwMsg }}</p>
             <button class="btn btn-ghost" type="submit" :disabled="pwLoading">
               {{ pwLoading ? '更新中…' : '更新密码' }}
             </button>

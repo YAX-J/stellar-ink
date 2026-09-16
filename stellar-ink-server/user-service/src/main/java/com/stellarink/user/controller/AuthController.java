@@ -6,6 +6,7 @@ import com.stellarink.sharedmodel.dto.user.RegisterDTO;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.user.LoginVO;
 import com.stellarink.sharedmodel.vo.user.UserVO;
+import com.stellarink.user.component.TokenRevocationService;
 import com.stellarink.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final UserService userService;
+    private final TokenRevocationService tokenRevocationService;
 
     /** 登录：Sa-Token JWT 无状态登录，返回 tokenName/tokenValue 供网关与各服务验签 */
     @PostMapping("/login")
@@ -37,12 +39,10 @@ public class AuthController {
         return Response.success(vo);
     }
 
-    /**
-     * 登出：JWT 无状态模式下无法在服务端吊销 token，
-     * 此处仅作语义收口（要求携带有效 token 到达，网关已校验），前端丢弃 token 即可。
-     */
+    /** 登出：将当前 JWT 写入 Redis 撤销列表，直到令牌自然过期。 */
     @PostMapping("/logout")
     public Response<Void> logout() {
+        tokenRevocationService.revokeCurrentToken();
         return Response.success();
     }
 }

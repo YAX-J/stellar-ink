@@ -6,7 +6,9 @@ import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.user.UserVO;
 import com.stellarink.user.component.AvatarStorage;
+import com.stellarink.user.component.TokenRevocationService;
 import com.stellarink.user.mapper.UserMapper;
+import com.stellarink.user.pojo.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,13 +44,16 @@ class UserServiceImplTest {
     private AvatarStorage avatarStorage;
     @Mock
     private RedisUtils redisUtils;
+    @Mock
+    private TokenRevocationService tokenRevocationService;
 
     private UserServiceImpl userService;
 
     @BeforeEach
     void setUp() {
         userService = new UserServiceImpl(
-                userMapper, passwordEncoder, avatarStorage, redisUtils, new RedisCache(redisUtils));
+                userMapper, passwordEncoder, avatarStorage, tokenRevocationService,
+                redisUtils, new RedisCache(redisUtils));
     }
 
     @Test
