@@ -2,6 +2,7 @@ package com.stellarink.sharedmodel.dto.note;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -24,7 +25,8 @@ public class NoteCreateDTO {
 
     /** 技术栈标签，逗号拼接后存入 VARCHAR(200) */
     @Size(max = 10, message = "标签最多 10 个。")
-    private List<@Size(max = 15, message = "单个标签最多 15 个字。") String> tags;
+    private List<@Size(max = 15, message = "单个标签最多 15 个字。")
+            @Pattern(regexp = "^[^,]*$", message = "标签不能包含逗号。") String> tags;
 
     /** FIX / PITFALL / TIL / SCRAP，缺省 FIX */
     private String noteType;

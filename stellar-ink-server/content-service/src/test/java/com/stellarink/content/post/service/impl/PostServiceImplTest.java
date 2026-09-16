@@ -2,7 +2,9 @@ package com.stellarink.content.post.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.redis.RedisCache;
 import com.stellarink.common.redis.RedisUtils;
@@ -13,6 +15,7 @@ import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.mapper.PostViewMapper;
 import com.stellarink.content.post.pojo.Post;
 import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
+import com.stellarink.sharedmodel.dto.post.PostQueryDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
@@ -24,6 +27,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -132,6 +136,24 @@ class PostServiceImplTest {
 
             verify(postMapper).updateById(any(Post.class));
         }
+    }
+
+    @Test
+    void shouldUseExactCsvMemberMatchForTagFilter() {
+        when(postMapper.selectPage(
+                Mockito.<Page<Post>>any(), Mockito.<LambdaQueryWrapper<Post>>any()))
+                .thenAnswer(invocation -> {
+                    LambdaQueryWrapper<Post> wrapper = invocation.getArgument(1);
+                    assertThat(wrapper.getSqlSegment()).contains("FIND_IN_SET");
+                    assertThat(wrapper.getParamNameValuePairs().values()).contains("java");
+                    Page<Post> result = new Page<>(1, 10);
+                    result.setRecords(List.of());
+                    return result;
+                });
+        PostQueryDTO query = new PostQueryDTO();
+        query.setTag(" java ");
+
+        assertThat(postService.page(query).getRecords()).isEmpty();
     }
 
     @Test

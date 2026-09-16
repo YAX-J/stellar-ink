@@ -70,13 +70,15 @@ class NoteServiceImplTest {
                 Mockito.<Page<Note>>any(), Mockito.<LambdaQueryWrapper<Note>>any()))
                 .thenAnswer(invocation -> {
                     LambdaQueryWrapper<Note> wrapper = invocation.getArgument(1);
-                    assertThat(wrapper.getSqlSegment()).contains("status", "visibility");
+                    assertThat(wrapper.getSqlSegment()).contains("status", "visibility", "FIND_IN_SET");
                     assertThat(wrapper.getParamNameValuePairs().values())
-                            .contains(1, NoteVisibility.PUBLIC.name());
+                            .contains(1, NoteVisibility.PUBLIC.name(), "java");
                     return new Page<Note>(1, 10);
                 });
 
-        assertThat(noteService.page(new NoteQueryDTO()).getRecords()).isEmpty();
+        NoteQueryDTO query = new NoteQueryDTO();
+        query.setTag(" java ");
+        assertThat(noteService.page(query).getRecords()).isEmpty();
     }
 
     @Test

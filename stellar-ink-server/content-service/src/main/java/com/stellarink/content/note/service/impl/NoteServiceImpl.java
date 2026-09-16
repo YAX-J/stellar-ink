@@ -125,7 +125,8 @@ public class NoteServiceImpl implements NoteService {
     }
 
     private void applyFilters(LambdaQueryWrapper<Note> wrapper, NoteQueryDTO query) {
-        wrapper.like(StringUtils.hasText(query.getTag()), Note::getTags, query.getTag());
+        String tag = StringUtils.trimWhitespace(query.getTag());
+        wrapper.apply(StringUtils.hasText(tag), "FIND_IN_SET({0}, tags) > 0", tag);
         NoteType type = NoteType.parse(query.getNoteType());
         if (type != null) {
             wrapper.eq(Note::getNoteType, type.name());

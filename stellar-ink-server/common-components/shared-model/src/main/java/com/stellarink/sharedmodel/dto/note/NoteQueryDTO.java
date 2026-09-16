@@ -16,7 +16,7 @@ public class NoteQueryDTO {
 
     private Integer size = 10;
 
-    /** 技术栈标签，子串匹配（与文章 tag 语义一致） */
+    /** 技术栈标签，按逗号分隔成员精确匹配（与文章 tag 语义一致） */
     private String tag;
 
     /** 笔记类型：FIX / PITFALL / TIL / SCRAP */

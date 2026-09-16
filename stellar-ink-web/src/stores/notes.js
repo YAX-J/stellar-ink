@@ -143,9 +143,7 @@ export const useNoteStore = defineStore('notes', {
         })
         const records = page?.records || page?.list || []
         if (sequence !== this.listSequence) return this.notes
-        const exactTag = (append ? this.listQuery : filters).tag
         const normalized = records.map((note) => normalizeNote(note))
-          .filter((note) => !exactTag || note.tags.includes(exactTag))
         if (append) {
           const known = new Set(this.notes.map((note) => note.id))
           this.notes.push(...normalized.filter((note) => !known.has(note.id)))

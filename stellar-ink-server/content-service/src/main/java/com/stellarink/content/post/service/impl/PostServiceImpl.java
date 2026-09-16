@@ -72,11 +72,12 @@ public class PostServiceImpl implements PostService {
     }
 
     private IPage<PostVO> loadPublicPage(PostQueryDTO query) {
+        String tag = StringUtils.trimWhitespace(query.getTag());
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                 .eq(query.isPublishedOnly(), Post::getStatus, 1)
                 .eq(query.getStatus() != null, Post::getStatus, query.getStatus())
                 .apply(query.getYear() != null, "YEAR(created_at) = {0}", query.getYear())
-                .like(StringUtils.hasText(query.getTag()), Post::getTags, query.getTag())
+                .apply(StringUtils.hasText(tag), "FIND_IN_SET({0}, tags) > 0", tag)
                 .and(StringUtils.hasText(query.getKeyword()), w -> w
                         .like(Post::getTitle, query.getKeyword())
                         .or()
