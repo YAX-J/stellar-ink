@@ -29,8 +29,10 @@
 redisUtils.set("post:summary:42", summary, Duration.ofMinutes(10));
 PostSummary cached = redisUtils.get("post:summary:42", PostSummary.class);
 long views = redisUtils.increment("post:views:42", 1);
+long failures = redisUtils.increment("login:failure:stellar", 1, Duration.ofMinutes(15));
 ```
 
 `get` 在键不存在时返回 `null`。`getExpire` 返回剩余秒数，`-1` 表示永久有效，`-2` 表示键不存在。
+带 TTL 的 `increment` 通过 Redis Lua 脚本保证自增与首次设置窗口原子完成，后续自增不会刷新窗口。
 
 修改公共基础设施会影响全部运行服务，提交前必须执行后端全量 `mvn package`。

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.time.Duration;
 import java.util.List;
@@ -17,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -83,12 +86,23 @@ class RedisUtilsTest {
     }
 
     @Test
+    @DisplayName("带有效期的计数器使用 Redis 原子脚本")
+    void incrementWithTtl() {
+        when(redisTemplate.execute(any(DefaultRedisScript.class), eq(List.of("login:failure")),
+                eq("1"), eq("900000"))).thenReturn(5L);
+
+        assertEquals(5L, redisUtils.increment("login:failure", 1L, Duration.ofMinutes(15)));
+    }
+
+    @Test
     @DisplayName("空键、空值和非正有效期会被拒绝")
     void rejectInvalidArguments() {
         assertThrows(IllegalArgumentException.class, () -> redisUtils.set(" ", "value"));
         assertThrows(NullPointerException.class, () -> redisUtils.set("key", null));
         assertThrows(IllegalArgumentException.class,
                 () -> redisUtils.set("key", "value", Duration.ZERO));
+        assertThrows(IllegalArgumentException.class,
+                () -> redisUtils.increment("key", 1L, Duration.ZERO));
     }
 
     private record SampleValue(Long id, String name) {

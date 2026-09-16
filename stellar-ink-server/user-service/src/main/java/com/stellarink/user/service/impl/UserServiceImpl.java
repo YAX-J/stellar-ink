@@ -5,6 +5,7 @@ import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
 import com.stellarink.sharedmodel.dto.user.LoginDTO;
 import com.stellarink.sharedmodel.dto.user.RegisterDTO;
@@ -27,12 +28,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -42,21 +42,21 @@ public class UserServiceImpl implements UserService {
     /** 连续失败次数达到该值即锁定 */
     private static final int MAX_FAILURES = 5;
     /** 失败计数窗口 */
-    private static final long FAILURE_WINDOW_MS = 15 * 60 * 1000L;
+    private static final Duration FAILURE_WINDOW = Duration.ofMinutes(15);
     /** 锁定时长 */
-    private static final long LOCK_MS = 15 * 60 * 1000L;
+    private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
+    private static final String LOGIN_FAILURE_KEY_PREFIX = "stellar-ink:user:login:failure:";
+    private static final String LOGIN_LOCK_KEY_PREFIX = "stellar-ink:user:login:lock:";
 
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final AvatarStorage avatarStorage;
 
     /**
-     * 登录失败计数器（进程内，单实例部署足够）。
-     * <p>按<b>用户名</b>计数而非 IP：请求可能经 Nginx/网关转发，来源 IP 可被 X-Forwarded-For 伪造，
-     * 按 IP 限流会形同虚设。按账号锁定至少能保护站长账号不被爆破。
-     * <p>注意：多实例部署时需换成 Redis 共享计数。
+     * 登录失败状态存入 Redis，按<b>用户名</b>计数而非 IP：请求可能经 Nginx/网关转发，来源 IP 可被
+     * X-Forwarded-For 伪造，按 IP 限流会形同虚设。按账号锁定至少能保护站长账号不被爆破，且多实例共享状态。
      */
-    private final Map<String, Attempt> loginAttempts = new ConcurrentHashMap<>();
+    private final RedisUtils redisUtils;
 
     @Override
     public UserVO login(LoginDTO dto) {
@@ -118,54 +118,47 @@ public class UserServiceImpl implements UserService {
 
     /** 已锁定则直接拒绝，避免继续付出 BCrypt 计算开销 */
     private void requireNotLocked(String key) {
-        Attempt attempt = loginAttempts.get(key);
-        if (attempt == null) {
+        String lockKey = lockKey(key);
+        if (!redisUtils.hasKey(lockKey)) {
             return;
         }
-        synchronized (attempt) {
-            long now = System.currentTimeMillis();
-            if (attempt.lockedUntil > now) {
-                long remainSeconds = (attempt.lockedUntil - now) / 1000;
-                throw new BusinessException(ErrorCode.FORBIDDEN,
-                        "尝试次数过多，账号已锁定 " + Math.max(1, remainSeconds / 60) + " 分钟，请稍后再试。");
-            }
+        long remainSeconds = redisUtils.getExpire(lockKey);
+        if (remainSeconds == -2) {
+            // 锁键可能恰好在 hasKey 与 getExpire 之间过期，不应把已解锁账号继续拦住。
+            return;
         }
+        long lockMinutes = Math.max(1, (remainSeconds > 0 ? remainSeconds : LOCK_DURATION.toSeconds()) / 60);
+        throw new BusinessException(ErrorCode.FORBIDDEN,
+                "尝试次数过多，账号已锁定 " + lockMinutes + " 分钟，请稍后再试。");
     }
 
     /** @return 本次触发的锁定剩余秒数；未触发锁定返回 0 */
     private long recordFailure(String key) {
-        Attempt attempt = loginAttempts.computeIfAbsent(key, k -> new Attempt());
-        synchronized (attempt) {
-            long now = System.currentTimeMillis();
-            if (now - attempt.windowStart > FAILURE_WINDOW_MS) {
-                attempt.count = 0;
-                attempt.windowStart = now;
-            }
-            attempt.count++;
-            if (attempt.count >= MAX_FAILURES) {
-                attempt.lockedUntil = now + LOCK_MS;
-                attempt.count = 0;
-                attempt.windowStart = now;
-                return LOCK_MS / 1000;
-            }
-            return 0;
+        long failures = redisUtils.increment(failureKey(key), 1, FAILURE_WINDOW);
+        if (failures >= MAX_FAILURES) {
+            redisUtils.set(lockKey(key), 1, LOCK_DURATION);
+            // 锁定状态单独保存，失败计数只负责达到阈值，避免锁解除后继承旧次数。
+            redisUtils.delete(failureKey(key));
+            return LOCK_DURATION.toSeconds();
         }
+        return 0;
     }
 
     private int remainingAttempts(String key) {
-        Attempt attempt = loginAttempts.get(key);
-        return attempt == null ? MAX_FAILURES : Math.max(0, MAX_FAILURES - attempt.count);
+        Integer failures = redisUtils.get(failureKey(key), Integer.class);
+        return failures == null ? MAX_FAILURES : Math.max(0, MAX_FAILURES - failures);
     }
 
     private void clearFailures(String key) {
-        loginAttempts.remove(key);
+        redisUtils.delete(failureKey(key));
     }
 
-    /** 可变计数单元，内部加锁访问 */
-    private static final class Attempt {
-        private int count;
-        private long windowStart = System.currentTimeMillis();
-        private long lockedUntil;
+    private String failureKey(String key) {
+        return LOGIN_FAILURE_KEY_PREFIX + key;
+    }
+
+    private String lockKey(String key) {
+        return LOGIN_LOCK_KEY_PREFIX + key;
     }
 
     @Override

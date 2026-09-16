@@ -101,7 +101,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 - `common-core` 通过 Spring Data Redis 提供 `RedisUtils`，版本由父 POM 的 Spring Boot 版本统一管理，供 user-service 与 content-service 注入使用；网关不依赖该阻塞式工具。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL 与原子整数计数。
-- 当前只完成连接与公共工具，尚未建立业务缓存、Redis 限流、分布式锁或会话状态，业务键应由后续具体功能定义。
+- 当前已将 user-service 登录失败计数与账号锁定迁移到 Redis；尚未建立通用业务缓存、Redis 限流、分布式锁或会话状态，其他业务键仍由后续具体功能定义。
 - 连接参数统一来自 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`，连接和命令超时均为 3 秒。
 - Actuator 会自动加入 Redis 健康项；Redis 不可达时两个业务服务的 `/actuator/health` 为 `DOWN`。
 

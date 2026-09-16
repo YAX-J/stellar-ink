@@ -118,6 +118,9 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | PUT | `/user/{id}/role` | 调整角色 `{role: READER/AUTHOR/ADMIN}`，返回更新后的 user；**同时清空该用户的待审申请** | ADMIN |
 | GET | `/user/list` | 用户列表（供角色管理页枚举）；**同时充当作者申请审核队列**，含 `roleAppliedAt`/`roleApplyNote` | ADMIN |
 
+登录防爆破：user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次后锁定账号 15 分钟；
+锁定与失败计数在多个服务实例之间共享，成功登录会清理失败计数。
+
 ### content-service :8102 - 文章
 
 | 方法 | 路径 | 说明 | 鉴权 |

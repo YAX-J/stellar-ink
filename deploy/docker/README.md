@@ -144,7 +144,7 @@ docker compose down                     # 停止并移除本项目容器，不�
 | Actuator | 已收敛 | 仅 `health,info,metrics,loggers`；`heapdump`/`env`/`configprops`/`beans`/`threaddump`/`shutdown` 已单独 `enabled: false`。**heapdump 可导出堆内存明文（含 JWT 密钥），脱敏无效，绝不可暴露** |
 | 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠 |
 | 头像上传 | 已加固 | 服务端重命名（不用客户端文件名，杜绝 `../` 与可执行后缀）、ImageIO 读魔数认格式、1MB 双拦（multipart + 业务层），Nginx `client_max_body_size 2m` 兜底；`/uploads/` 只读且由 nginx 单独转发到网关（不放静态目录，避免被长缓存规则截走） |
-| 登录防爆破 | 已启用 | user-service 按用户名计数，连续失败 5 次锁定 15 分钟（进程内实现，**多实例部署需换 Redis**） |
+| 登录防爆破 | 已启用 | user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次锁定 15 分钟，多实例共享状态 |
 | 容器权限 | 已加固 | 3 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
 | 网关端口 | 仅宿主机回环 | `127.0.0.1:${GATEWAY_PORT}:8080`。前端走容器内网 `gateway:8080`，无需对外发布端口 |
 | JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。本编排对 3 个 Java 服务统一注入 `SA_TOKEN_JWT_SECRET`，密钥弱时整体拒绝启动（fail-closed） |

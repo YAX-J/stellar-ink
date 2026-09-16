@@ -244,7 +244,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
   后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
 - Redis 基础接入已完成：`common-core` 提供 JSON Value/TTL/删除/存在判断/原子计数工具，
-  user/content 已接连接配置与健康检查；尚未绑定业务缓存、限流、锁或会话。
+  user/content 已接连接配置与健康检查；登录失败计数与账号锁定已迁移到 Redis，其他业务缓存、限流、锁或会话仍未绑定。
 - **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
   `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
