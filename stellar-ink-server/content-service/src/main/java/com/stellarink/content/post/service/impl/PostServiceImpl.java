@@ -34,7 +34,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
@@ -156,6 +155,7 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    @Transactional
     public boolean recordView(Long id) {
         Post post = postMapper.selectById(id);
         if (post == null || !Integer.valueOf(1).equals(post.getStatus())) {
@@ -164,15 +164,7 @@ public class PostServiceImpl implements PostService {
         boolean counted;
         if (StpUtil.isLogin()) {
             Long userId = AuthHelper.loginId();
-            /* 先读旧值再写：跨天或首次记为「今天这一次要计数」，同一天内重复访问不计数。
-             * 顺序必须是先读后写，先写会让判断恒为「今天已计」。 */
-            LocalDate lastCounted = postViewMapper.findViewedAt(userId);
-            counted = lastCounted == null || !lastCounted.equals(LocalDate.now());
-            if (lastCounted == null) {
-                postViewMapper.insertToday(userId);
-            } else if (counted) {
-                postViewMapper.touchToday(userId);
-            }
+            counted = postViewMapper.claimToday(userId);
         } else {
             /* 匿名为公开接口、无身份可依，按访问计数（文档已说明） */
             counted = true;
@@ -257,6 +249,7 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    @Transactional
     public GlowResultVO glow(Long id) {
         Post post = requirePost(id);
         if (!Integer.valueOf(1).equals(post.getStatus())) {

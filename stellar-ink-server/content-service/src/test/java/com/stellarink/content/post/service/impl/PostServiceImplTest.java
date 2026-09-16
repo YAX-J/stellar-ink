@@ -25,6 +25,7 @@ import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -131,6 +132,22 @@ class PostServiceImplTest {
 
             verify(postMapper).updateById(any(Post.class));
         }
+    }
+
+    @Test
+    void shouldIncrementViewOnlyAfterWinningDailyGate() {
+        when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, 1));
+        when(postViewMapper.claimToday(99L)).thenReturn(true);
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
+             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            token.when(StpUtil::isLogin).thenReturn(true);
+            auth.when(AuthHelper::loginId).thenReturn(99L);
+
+            assertThat(postService.recordView(1L)).isTrue();
+        }
+
+        verify(postMapper).update(Mockito.<Post>isNull(), any());
     }
 
     private Post post(Long id, Long userId, int status) {

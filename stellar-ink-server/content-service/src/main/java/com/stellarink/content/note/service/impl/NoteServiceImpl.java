@@ -27,9 +27,9 @@ import com.stellarink.sharedmodel.vo.note.NoteVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
@@ -152,23 +152,13 @@ public class NoteServiceImpl implements NoteService {
     @Override
     public NoteDetailVO detail(Long id) {
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "detail", id);
-        Long viewerId = currentLoginId();
         NoteDetailVO cached = cache.get(cacheKey, NoteDetailVO.class);
         if (cached != null) {
-            if (shouldRecordView(cached.getUserId(), viewerId) && recordView(id)) {
-                NoteDetailVO refreshed = toDetailVO(requireNote(id));
-                cache.put(cacheKey, refreshed, ContentCache.DEFAULT_TTL);
-                return refreshed;
-            }
             return cached;
         }
         Note note = requireNote(id);
         /* 私有笔记只有作者本人可读；其它人（含 ADMIN）一律 404，不暴露存在性 */
         ensureReadable(note);
-        if (isPublicPublished(note) && shouldRecordView(note.getUserId(), viewerId)
-                && recordView(note.getId())) {
-            note = requireNote(id);
-        }
         NoteDetailVO vo = toDetailVO(note);
         if (isPublicPublished(note)) {
             cache.put(cacheKey, vo, ContentCache.DEFAULT_TTL);
@@ -290,6 +280,7 @@ public class NoteServiceImpl implements NoteService {
     }
 
     @Override
+    @Transactional
     public boolean recordView(Long id) {
         Note note = noteMapper.selectById(id);
         /* 私有笔记与草稿不统计浏览量 */
@@ -302,14 +293,7 @@ public class NoteServiceImpl implements NoteService {
         }
         boolean counted;
         if (viewerId != null) {
-            /* 登录用户按天去重（与文章共用闸门表；先读后写，先写会让判断恒为「今天已计」） */
-            LocalDate lastCounted = postViewMapper.findViewedAt(viewerId);
-            counted = lastCounted == null || !lastCounted.equals(LocalDate.now());
-            if (lastCounted == null) {
-                postViewMapper.insertToday(viewerId);
-            } else if (counted) {
-                postViewMapper.touchToday(viewerId);
-            }
+            counted = postViewMapper.claimToday(viewerId);
         } else {
             counted = true;
         }
@@ -363,10 +347,6 @@ public class NoteServiceImpl implements NoteService {
     private boolean isPublicPublished(Note note) {
         return Integer.valueOf(PUBLISHED).equals(note.getStatus())
                 && NoteVisibility.PUBLIC.name().equals(note.getVisibility());
-    }
-
-    private boolean shouldRecordView(Long ownerId, Long viewerId) {
-        return viewerId == null || !viewerId.equals(ownerId);
     }
 
     /** 当前登录用户 id；未登录返回 null（不抛异常，供可选登录场景使用） */

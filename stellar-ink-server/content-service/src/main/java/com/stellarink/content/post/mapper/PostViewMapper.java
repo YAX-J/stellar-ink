@@ -5,17 +5,10 @@ import com.stellarink.content.post.pojo.PostView;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
-
-import java.time.LocalDate;
 
 @Mapper
 public interface PostViewMapper extends BaseMapper<PostView> {
-
-    /** 闸门里记的最近计数日期，没有记录时返回 null */
-    @Select("SELECT viewed_at FROM post_view WHERE user_id = #{userId}")
-    LocalDate findViewedAt(@Param("userId") Long userId);
 
     /** 建立今天的计数闸门（首次插入；已有行时不覆盖） */
     @Insert("""
@@ -24,11 +17,20 @@ public interface PostViewMapper extends BaseMapper<PostView> {
             """)
     int insertToday(@Param("userId") Long userId);
 
-    /** 把闸门推进到今天（跨天时补上） */
+    /** 仅当闸门日期早于今天时推进；并发请求中最多一个线程更新成功。 */
     @Update("""
             UPDATE post_view
             SET viewed_at = CURDATE()
             WHERE user_id = #{userId}
+              AND (viewed_at IS NULL OR viewed_at < CURDATE())
             """)
-    int touchToday(@Param("userId") Long userId);
+    int advanceToToday(@Param("userId") Long userId);
+
+    /**
+     * 原子抢占今天的浏览计数资格：已有旧记录先条件更新，无记录再 INSERT IGNORE。
+     * 两条语句都依赖行锁/主键唯一约束，因此多实例并发时也只有一个请求返回 true。
+     */
+    default boolean claimToday(Long userId) {
+        return advanceToToday(userId) > 0 || insertToday(userId) > 0;
+    }
 }

@@ -26,7 +26,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -138,52 +137,37 @@ class NoteServiceImplTest {
 
             assertThat(noteService.detail(1L).getId()).isEqualTo(1L);
             verify(noteMapper, never()).update(Mockito.<Note>isNull(), any());
-            verify(postViewMapper, never()).findViewedAt(any());
+            verify(postViewMapper, never()).claimToday(any());
             verify(redisUtils, never()).set(anyString(), any(), any());
         }
     }
 
     @Test
-    void shouldCountAnonymousViewAndReturnLatestPublicNote() {
-        Note before = note(1L, 10L, NoteVisibility.PUBLIC, 1);
-        Note after = note(1L, 10L, NoteVisibility.PUBLIC, 1);
-        after.setViewCount(1);
-        when(noteMapper.selectById(1L)).thenReturn(before, before, after);
+    void shouldNotCountAnonymousViewWhileReadingDetail() {
+        Note publicNote = note(1L, 10L, NoteVisibility.PUBLIC, 1);
+        when(noteMapper.selectById(1L)).thenReturn(publicNote);
 
         try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class)) {
             token.when(StpUtil::isLogin).thenReturn(false);
 
-            assertThat(noteService.detail(1L).getViewCount()).isEqualTo(1);
-            verify(noteMapper).update(Mockito.<Note>isNull(), any());
+            assertThat(noteService.detail(1L).getViewCount()).isZero();
+            verify(noteMapper, never()).update(Mockito.<Note>isNull(), any());
             verify(redisUtils).set(anyString(), any(), any());
         }
     }
 
     @Test
-    void shouldCountPublicNoteViewWhenDetailCacheHits() {
+    void shouldReturnCachedPublicNoteWithoutCountingView() {
         var cached = new NoteDetailVO();
         cached.setId(1L);
         cached.setUserId(10L);
         cached.setViewCount(4);
-        Note before = note(1L, 10L, NoteVisibility.PUBLIC, 1);
-        before.setViewCount(4);
-        Note after = note(1L, 10L, NoteVisibility.PUBLIC, 1);
-        after.setViewCount(5);
         when(redisUtils.get(anyString(), eq(NoteDetailVO.class)))
                 .thenReturn(cached);
-        when(noteMapper.selectById(1L)).thenReturn(before, after);
-        when(postViewMapper.findViewedAt(99L)).thenReturn(LocalDate.now().minusDays(1));
 
-        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
-             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
-            token.when(StpUtil::isLogin).thenReturn(true);
-            auth.when(AuthHelper::loginId).thenReturn(99L);
-
-            assertThat(noteService.detail(1L).getViewCount()).isEqualTo(5);
-            verify(postViewMapper).touchToday(99L);
-            verify(noteMapper).update(Mockito.<Note>isNull(), any());
-            verify(redisUtils).set(anyString(), any(), any());
-        }
+        assertThat(noteService.detail(1L).getViewCount()).isEqualTo(4);
+        verify(postViewMapper, never()).claimToday(any());
+        verify(noteMapper, never()).update(Mockito.<Note>isNull(), any());
     }
 
     @Test
@@ -201,7 +185,7 @@ class NoteServiceImplTest {
 
             assertThat(noteService.detail(1L)).isSameAs(cached);
             verify(noteMapper, never()).selectById(any());
-            verify(postViewMapper, never()).findViewedAt(any());
+            verify(postViewMapper, never()).claimToday(any());
         }
     }
 
@@ -237,7 +221,23 @@ class NoteServiceImplTest {
 
         assertThat(noteService.recordView(1L)).isFalse();
         verify(noteMapper, never()).update(Mockito.<Note>isNull(), any());
-        verify(postViewMapper, never()).findViewedAt(any());
+        verify(postViewMapper, never()).claimToday(any());
+    }
+
+    @Test
+    void shouldCountLoggedInPublicViewOnlyAfterWinningDailyGate() {
+        when(noteMapper.selectById(1L)).thenReturn(note(1L, 10L, NoteVisibility.PUBLIC, 1));
+        when(postViewMapper.claimToday(99L)).thenReturn(true);
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
+             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            token.when(StpUtil::isLogin).thenReturn(true);
+            auth.when(AuthHelper::loginId).thenReturn(99L);
+
+            assertThat(noteService.recordView(1L)).isTrue();
+        }
+
+        verify(noteMapper).update(Mockito.<Note>isNull(), any());
     }
 
     private void assertNotFound(ThrowingCall call) {
