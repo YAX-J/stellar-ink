@@ -119,17 +119,19 @@ class UserServiceImplTest {
     }
 
     @Test
-    @DisplayName("用户资料命中 Redis 时不再查询数据库")
-    void profileUsesRedisCache() {
-        UserVO cached = new UserVO();
-        cached.setId(7L);
-        cached.setNickname("缓存星籍");
-        when(redisUtils.get("stellar-ink:user:cache:profile:7", UserVO.class)).thenReturn(cached);
+    @DisplayName("完整用户资料不进入共享缓存")
+    void profileAlwaysReadsDatabase() {
+        User user = new User();
+        user.setId(7L);
+        user.setUsername("stellar");
+        user.setNickname("私有星籍");
+        when(userMapper.selectById(7L)).thenReturn(user);
 
         UserVO profile = userService.profile(7L);
 
-        assertEquals("缓存星籍", profile.getNickname());
-        verifyNoInteractions(userMapper);
+        assertEquals("私有星籍", profile.getNickname());
+        verify(userMapper).selectById(7L);
+        verifyNoInteractions(redisUtils);
     }
 
     private LoginDTO login(String username, String password) {

@@ -52,7 +52,6 @@ public class UserServiceImpl implements UserService {
     private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
     private static final String LOGIN_FAILURE_KEY_PREFIX = "stellar-ink:user:login:failure:";
     private static final String LOGIN_LOCK_KEY_PREFIX = "stellar-ink:user:login:lock:";
-    private static final String PROFILE_CACHE_KEY_PREFIX = "stellar-ink:user:cache:profile:";
     private static final String AUTHOR_CACHE_KEY_PREFIX = "stellar-ink:user:cache:author:";
     private static final Duration USER_CACHE_TTL = Duration.ofMinutes(5);
 
@@ -175,8 +174,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserVO profile(Long userId) {
-        return redisCache.getOrLoad(profileCacheKey(userId), UserVO.class, USER_CACHE_TTL,
-                () -> toVO(requireUser(userId)));
+        // 完整资料含登录名与申请理由，属于私有数据，不进入共享缓存。
+        return toVO(requireUser(userId));
     }
 
     @Override
@@ -392,19 +391,13 @@ public class UserServiceImpl implements UserService {
     }
 
     private void cacheUser(User user) {
-        redisCache.put(profileCacheKey(user.getId()), toVO(user), USER_CACHE_TTL);
         redisCache.put(authorCacheKey(user.getId()), toAuthorVO(user), USER_CACHE_TTL);
     }
 
     private void evictUserCache(Long userId, boolean authorChanged) {
-        redisCache.evict(profileCacheKey(userId));
         if (authorChanged) {
             redisCache.evict(authorCacheKey(userId));
         }
-    }
-
-    private String profileCacheKey(Long userId) {
-        return PROFILE_CACHE_KEY_PREFIX + userId;
     }
 
     private String authorCacheKey(Long userId) {
