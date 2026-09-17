@@ -57,8 +57,9 @@ onUnmounted(() => off && off())
 </template>
 
 <style scoped>
+/* top 让开 sticky 顶栏（64px），否则提示会压在导航上 */
 .toast-center{
-  position:fixed; top:22px; right:22px; z-index:200; display:flex; flex-direction:column;
+  position:fixed; top:78px; right:22px; z-index:200; display:flex; flex-direction:column;
   gap:10px; width:min(360px,calc(100vw - 44px)); pointer-events:none;
 }
 .toast{

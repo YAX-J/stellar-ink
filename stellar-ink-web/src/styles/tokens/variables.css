@@ -1,9 +1,14 @@
 /* ================= 设计 Token ================= */
+/* 对比度基线：正文与次要文字都按 WCAG AA（≥4.5:1）对 --bg 实测过，
+ * 改色值前请用同样的方式复算，别让「破晓主题下读不清」的回归再来一次。 */
 :root{
   --bg:#0A0A12; --bg-2:#10101C; --bg-3:#161628;
   --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
-  --ink:#EDEDF7; --ink-dim:#9B9BB4; --ink-faint:#5D5D76;
+  --ink:#EDEDF7; --ink-dim:#9B9BB4; --ink-faint:#8A8AA6;
   --primary:#8B7CFF; --primary-soft:rgba(139,124,255,.16);
+  /* 填充主色上的文字色：夜色的 --primary 偏亮，白字只有 3.3:1，
+   * 用深色字反而有 5.6:1；暮色同理（白字 2.2:1 / 深字 7.3:1）；破晓主色深，仍用白字 6.3:1。 */
+  --on-primary:#17102B;
   --amber:#FFB454; --teal:#4DC9D9; --rose:#FF6B9D;
   --line:rgba(255,255,255,.09);
   --font-display:'Space Grotesk','Noto Serif SC',serif;
@@ -16,19 +21,23 @@
   /* 正文可用宽度：详情页/深读页下发为 100%（整页铺满），这里只是兜底默认值 */
   --prose-max:100%;
 }
-body[data-theme="dusk"]{
+/* 主题选择器同时匹配 :root 与 body：index.html 的内联脚本在 body 解析前就把主题写到
+ * documentElement 上（消除刷新闪烁），App.vue 之后继续同步两处。 */
+:root[data-theme="dusk"], body[data-theme="dusk"]{
   --bg:#181022; --bg-2:#211531; --bg-3:#2B1B40;
   --surface:rgba(255,255,255,.05); --surface-2:rgba(255,255,255,.08);
-  --ink:#F4EAF6; --ink-dim:#B9A6C4; --ink-faint:#7A6488;
+  --ink:#F4EAF6; --ink-dim:#B9A6C4; --ink-faint:#9A86A8;
   --primary:#C99CFF; --primary-soft:rgba(201,156,255,.16);
+  --on-primary:#2A1B40;
   --amber:#FF9E6B; --teal:#7AD9C4; --rose:#FF7A9E;
   --line:rgba(255,255,255,.1);
 }
-body[data-theme="dawn"]{
+:root[data-theme="dawn"], body[data-theme="dawn"]{
   --bg:#F5F1E8; --bg-2:#FBF8F1; --bg-3:#FFFFFF;
   --surface:rgba(30,25,15,.045); --surface-2:rgba(30,25,15,.07);
-  --ink:#23201A; --ink-dim:#6E675A; --ink-faint:#A39B8C;
+  --ink:#23201A; --ink-dim:#574F44; --ink-faint:#6E675A;
   --primary:#5A4BD1; --primary-soft:rgba(90,75,209,.12);
-  --amber:#D9822B; --teal:#0E8C8C; --rose:#D94F7A;
+  --on-primary:#FFFFFF;
+  --amber:#8F4C10; --teal:#0A6E6E; --rose:#B23A5F;
   --line:rgba(30,25,15,.12);
 }

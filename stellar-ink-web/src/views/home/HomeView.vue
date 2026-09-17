@@ -20,7 +20,21 @@ onMounted(() => Promise.all([
   statsStore.fetchOverview(),
 ]).catch(() => {}))
 
-const tickerPosts = computed(() => postStore.posts.slice(0, 7))
+const now = new Date()
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+/** 时段问候：用真实时间替代原先写死的「第 128 夜 · 晴 · 宜书写」 */
+function partOfDay(hour) {
+  if (hour < 5) return '凌晨'
+  if (hour < 11) return '清晨'
+  if (hour < 14) return '午后'
+  if (hour < 18) return '傍晚'
+  if (hour < 23) return '夜里'
+  return '深夜'
+}
+const dateLine = computed(() => (
+  `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日 · ${WEEKDAYS[now.getDay()]} · ${partOfDay(now.getHours())}`
+))
+
 const recentPosts = computed(() => postStore.posts.slice(1, 5))
 /* 连续写作环：21/30 */
 const streakDays = computed(() => statsStore.overview?.streakDays ?? 0)
@@ -40,11 +54,11 @@ function openPost(post) {
   <section class="page">
     <div class="hero">
       <div>
-        <div class="kicker reveal" style="--d:.05s">第 128 夜 · 晴 · 宜书写</div>
+        <div class="kicker reveal" style="--d:.05s">{{ dateLine }}</div>
         <h1 class="reveal" style="--d:.12s">把思绪<br>挂成<em>星图</em></h1>
         <p class="hero-sub reveal" style="--d:.2s">
           这里不是又一个博客。每一篇文章都是一颗星，每一次书写都是一次发射。
-          今晚你已经写下 <b>{{ todayWords.toLocaleString() }}</b> 字 —— 星图上又多了一点微光。
+          今夜星笺上写下 <b>{{ todayWords.toLocaleString() }}</b> 字 —— 星图上又多了一点微光。
         </p>
         <div class="hero-actions reveal" style="--d:.28s">
           <RouterLink v-if="canWrite" class="btn btn-primary" to="/write">✎ 今晚写点什么</RouterLink>
@@ -54,15 +68,6 @@ function openPost(post) {
       <div class="hero-canvas-wrap reveal" style="--d:.34s">
         <MiniStarMap />
         <div class="hero-canvas-tag">LIVE · 你的思想星域</div>
-      </div>
-    </div>
-
-    <div class="ticker-band reveal" style="--d:.4s">
-      <div class="ticker">
-        <button
-          v-for="(p, i) in [...tickerPosts, ...tickerPosts]" :key="i"
-          class="ticker-item" :title="`深读《${p.title}》`" @click="openPost(p)"
-        >{{ p.title }}</button>
       </div>
     </div>
 
@@ -81,7 +86,7 @@ function openPost(post) {
       />
     </div>
 
-    <SectionHead title="写作脉搏">数据截至今夜 23:59</SectionHead>
+    <SectionHead title="写作脉搏">全站口径 · 截至此刻</SectionHead>
     <div class="pulse-grid reveal" style="--d:.06s">
       <div class="pulse-card ring-wrap">
         <svg width="150" height="150" viewBox="0 0 150 150">
@@ -104,7 +109,7 @@ function openPost(post) {
 
     <div class="foot">
       <span>© 2026 星笺 STELLAR INK</span>
-      <span>由 {{ todayWords.toLocaleString() }} 个今晚的字驱动</span>
+      <span>今夜全站写下 {{ todayWords.toLocaleString() }} 字</span>
       <span>星图 · 星链 · 关于</span>
     </div>
   </section>
@@ -133,21 +138,6 @@ function openPost(post) {
   position:absolute; left:16px; bottom:14px; font-family:var(--font-mono);
   font-size:10px; letter-spacing:.25em; color:var(--ink-faint);
 }
-
-/* 思绪走马灯 */
-.ticker-band{
-  margin:10px -999px 0; padding:14px 999px; border-top:1px solid var(--line);
-  border-bottom:1px solid var(--line); overflow:hidden; white-space:nowrap;
-  background:var(--surface);
-}
-.ticker{display:inline-block; animation:scroll 36s linear infinite}
-.ticker-item{
-  border:0; background:transparent; cursor:pointer; padding:0; font-family:var(--font-serif);
-  font-size:14px; color:var(--ink-dim); margin:0 34px; transition:color .25s;
-}
-.ticker-item:hover{color:var(--primary)}
-.ticker-item::before{content:'✦ '; color:var(--amber)}
-@keyframes scroll{to{transform:translateX(-50%)}}
 
 /* 星尘卡片流 */
 .stardust{display:grid; grid-template-columns:repeat(auto-fill,minmax(258px,1fr)); gap:18px}

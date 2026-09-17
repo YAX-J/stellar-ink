@@ -14,10 +14,38 @@ const yearAll = computed(() => [...new Set(postStore.posts.map((post) => post.ye
   .sort((a, b) => b - a))
 const activeYears = ref([])
 const view = ref('map')
-const visiblePosts = computed(() => postStore.posts.filter((post) => activeYears.value.includes(post.year)))
+/* 标签筛选从光谱页并进来：标签只是文章的一个筛选维度，不值得单占一个一级页面。
+   年份与标签是叠加关系（先挑年份，再挑星座）。 */
+const activeTag = ref('')
+const visiblePosts = computed(() => postStore.posts.filter((post) =>
+  activeYears.value.includes(post.year) && (!activeTag.value || post.tags.includes(activeTag.value))))
 const constellationCount = computed(() => new Set(visiblePosts.value.flatMap((post) => post.tags)).size)
 
-onMounted(() => postStore.ensureLoaded().catch(() => {}))
+/** 标签计数优先用 /tags 的全站口径，接口没接上时退化成「已加载文章里数一遍」 */
+const tagCounts = computed(() => {
+  if (postStore.tags.length) {
+    return postStore.tags
+      .map((tag) => ({ name: tag.name, count: Number(tag.count) || 0 }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }
+  const counts = new Map()
+  for (const post of postStore.posts) {
+    for (const tag of post.tags) counts.set(tag, (counts.get(tag) || 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+})
+
+onMounted(() => {
+  postStore.ensureLoaded().catch(() => {})
+  postStore.fetchTags().catch(() => {})
+})
+
+/* 标签可能因为文章被删/改而消失，选中项要跟着收敛，否则会停在「空白星座」上 */
+watch(tagCounts, (list) => {
+  if (activeTag.value && !list.some((tag) => tag.name === activeTag.value)) activeTag.value = ''
+})
 
 watch(yearAll, (years) => {
   const available = new Set(years)
@@ -33,6 +61,13 @@ function toggleYear(y) {
     activeYears.value.push(y)
   }
 }
+function toggleTag(tag) {
+  activeTag.value = activeTag.value === tag ? '' : tag
+}
+function resetFilter() {
+  activeTag.value = ''
+  activeYears.value = [...yearAll.value]
+}
 function openPost(p) {
   router.push(`/read/${p.id}`)
 }
@@ -40,30 +75,46 @@ function openPost(p) {
 
 <template>
   <section class="page">
-    <div class="kicker reveal">CONSTELLATION ARCHIVE · 不是列表，是星空</div>
-    <SectionHead title="思想星图" more="悬停查看 · 点击阅读" />
+    <SectionHead title="思想星图" kicker="CONSTELLATION ARCHIVE · 不是列表，是星空" more="悬停查看 · 点击阅读" />
 
     <div class="map-controls reveal" style="--d:.08s">
       <button
         v-for="y in yearAll" :key="y"
         class="year-chip" :class="{ on: activeYears.includes(y) }" @click="toggleYear(y)"
       >{{ y }}</button>
+      <button v-if="activeTag || activeYears.length !== yearAll.length" class="reset-chip" @click="resetFilter">
+        清除筛选 ×
+      </button>
       <div class="view-switch">
         <button :class="{ on: view === 'map' }" @click="view = 'map'">✧ 星图</button>
         <button :class="{ on: view === 'river' }" @click="view = 'river'">☰ 长卷</button>
       </div>
     </div>
+
+    <!-- 标签星座：原光谱页的筛选能力，宽度即文章条数（/tags 口径），与年份叠加 -->
+    <div v-if="tagCounts.length" class="tag-row reveal" style="--d:.1s">
+      <button
+        class="tag-chip" :class="{ on: !activeTag }" title="不限标签"
+        @click="activeTag = ''"
+      >全部星座</button>
+      <button
+        v-for="tag in tagCounts" :key="tag.name"
+        class="tag-chip" :class="{ on: activeTag === tag.name }"
+        :title="`#${tag.name} · ${tag.count} 篇`" @click="toggleTag(tag.name)"
+      >#{{ tag.name }}<small>{{ tag.count }}</small></button>
+    </div>
+
     <p v-if="postStore.loading && !postStore.posts.length" class="state-text">正在读取星图…</p>
     <p v-else-if="postStore.error && !postStore.posts.length" class="state-text error-text">
       {{ postStore.error }} <button class="state-action" @click="postStore.fetchPosts()">重新读取</button>
     </p>
 
     <div class="map-stage reveal" style="--d:.14s" :class="{ river: view === 'river' }">
-      <StarMapCanvas v-show="view === 'map'" :years="activeYears" @open="openPost" />
+      <StarMapCanvas v-show="view === 'map'" :years="activeYears" :tag="activeTag" @open="openPost" />
       <div class="map-legend">
         <i style="background:var(--amber)"></i>星体大小 = 字数 &nbsp;
         <i style="background:var(--primary)"></i>连线 = 相同标签<br>
-        共 {{ visiblePosts.length }} 颗星 · {{ constellationCount }} 个标签星座
+        共 {{ visiblePosts.length }} 颗星 · {{ constellationCount }} 个标签星座<template v-if="activeTag"> · 当前 #{{ activeTag }}</template>
       </div>
       <div v-if="view === 'river'" class="scroll-view">
         <div class="river-line"></div>
@@ -101,11 +152,29 @@ function openPost(p) {
 }
 .year-chip:hover{transform:translateY(-2px); color:var(--ink)}
 .year-chip.on{background:var(--amber); border-color:var(--amber); color:#1a1206; font-weight:600}
+.reset-chip{
+  border:1px solid var(--line); background:transparent; color:var(--ink-faint); cursor:pointer;
+  border-radius:99px; padding:8px 16px; font-family:var(--font-mono); font-size:11px;
+  letter-spacing:.1em; transition:all .25s var(--ease-spring);
+}
+.reset-chip:hover{color:var(--primary); border-color:var(--primary)}
+/* 标签星座（原光谱页）：一行可横向滚动的 chips，不与年份抢视觉重量 */
+.tag-row{display:flex; gap:8px; flex-wrap:wrap; margin:-8px 0 22px}
+.tag-chip{
+  display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+  border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
+  border-radius:99px; padding:7px 15px; font-size:13px; font-family:var(--font-body);
+  transition:all .25s var(--ease-spring);
+}
+.tag-chip small{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint)}
+.tag-chip:hover{transform:translateY(-2px); color:var(--ink)}
+.tag-chip.on{border-color:var(--primary); background:var(--primary-soft); color:var(--primary)}
+.tag-chip.on small{color:var(--primary)}
 .view-switch{margin-left:auto; display:flex; border:1px solid var(--line); border-radius:99px;
   overflow:hidden}
 .view-switch button{border:none; background:transparent; color:var(--ink-faint); padding:9px 20px;
   font-size:13px; cursor:pointer; transition:all .25s; font-family:var(--font-body)}
-.view-switch button.on{background:var(--primary); color:#fff}
+.view-switch button.on{background:var(--primary); color:var(--on-primary)}
 .map-stage{
   position:relative; border:1px solid var(--line); border-radius:var(--r-lg);
   background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;

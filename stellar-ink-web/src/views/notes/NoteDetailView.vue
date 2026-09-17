@@ -213,7 +213,8 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 </template>
 
 <style scoped>
-.read-progress{position:fixed; top:0; left:96px; right:0; height:3px; z-index:40}
+/* 阅读进度条：贴在视口最上沿、压在顶栏之上（z-index 高于顶栏的 50） */
+.read-progress{position:fixed; top:0; left:0; right:0; height:3px; z-index:52}
 .read-progress i{display:block; height:100%; width:0;
   background:linear-gradient(90deg,var(--teal),var(--primary),var(--amber))}
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.9}
@@ -221,7 +222,7 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 .state-link{color:var(--primary); text-decoration:none; margin-left:8px}
 .error-text{color:var(--rose)}
 
-/* 笔记详情：整页布局——页面铺满导航栏右侧，不再有居中或收窄的容器。
+/* 笔记详情：整页布局——页面铺满整幅视口宽度，不再有居中或收窄的容器。
  * 正文与标题/元信息/操作行/上下条统一由 --prose-max 限宽（阅读偏好换算），
  * 右边界因此是对齐的，宽屏下只是行尾余量变多，不会出现「窄正文 + 长横杠」。 */
 .read-layout{display:grid; grid-template-columns:minmax(0,1fr); gap:36px; align-items:start;
@@ -231,7 +232,7 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
   /* 长笔记（≥3 个小节）才铺开成「左目录 + 正文」双列；目录列与间距弹性伸缩 */
   .read-layout.has-toc{grid-template-columns:clamp(132px,16vw,190px) minmax(0,1fr);
     gap:clamp(20px,3vw,36px)}
-  .read-layout.has-toc .read-toc{display:block; position:sticky; top:64px}
+  .read-layout.has-toc .read-toc{display:block; position:sticky; top:80px}
 }
 .read-toc h6{font-family:var(--font-mono); font-size:10px; letter-spacing:.3em; color:var(--ink-faint);
   text-transform:uppercase; margin-bottom:14px}
@@ -245,8 +246,9 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 .toc-item.on{color:var(--teal); background:var(--surface-2); box-shadow:inset 2px 0 0 var(--teal)}
 
 .read-wrap{max-width:100%; min-width:0}
+/* 与深读页统一：返回按钮收在页面顶部，不给它单占一行还留一大截空白 */
 .read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
-  border-radius:99px; padding:9px 20px; font-size:13px; cursor:pointer; margin-bottom:30px;
+  border-radius:99px; padding:8px 18px; font-size:13px; cursor:pointer; margin-bottom:18px;
   transition:all .25s; font-family:var(--font-body)}
 .read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
 
@@ -310,6 +312,5 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 @media (max-width:720px){
   .page-wide{padding-left:20px; padding-right:20px}
   .read-nav{grid-template-columns:1fr}
-  .read-progress{left:0}
 }
 </style>

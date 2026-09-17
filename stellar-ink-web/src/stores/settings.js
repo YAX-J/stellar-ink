@@ -33,13 +33,19 @@ function clamp(value, { min, max }, fallback) {
   return Math.min(max, Math.max(min, n))
 }
 
+/** 没有存过偏好时跟随系统：浅色系统给「破晓」，其余给「永夜」。
+ * 与 index.html 里消除首屏闪烁的内联脚本必须保持一致。 */
+function systemTheme() {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'night'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'dawn' : 'night'
+}
+
 export const useSettingsStore = defineStore('settings', {
   state: () => {
     const saved = load()
     const read = saved.read || {}
     return {
-      theme: saved.theme || 'night',
-      dailyGoal: saved.dailyGoal || 500,
+      theme: saved.theme || systemTheme(),
       penName: saved.penName || '拾星人',
       signature: saved.signature || '在算法的洪流里，做一个缓慢的人。',
       /* 深读页阅读偏好（字号 / 行高）——正文宽度已改为整页铺满，不再存宽度偏好 */
@@ -47,15 +53,15 @@ export const useSettingsStore = defineStore('settings', {
         fontSize: clamp(read.fontSize, READ_LIMITS.fontSize, READ_DEFAULTS.fontSize),
         lineHeight: clamp(read.lineHeight, READ_LIMITS.lineHeight, READ_DEFAULTS.lineHeight),
       },
-      /* 深读页返回目标：记住最后一个非 read 页面 */
-      lastPageName: 'home',
-      lastPage: '/',
+      /* 深读页返回目标：记住最后一个非 read 页面（进 localStorage，刷新后仍能回去） */
+      lastPageName: saved.lastPageName || 'home',
+      lastPage: saved.lastPage || '/',
     }
   },
   actions: {
     persist() {
-      const { theme, dailyGoal, penName, signature, read } = this
-      localStorage.setItem(KEY, JSON.stringify({ theme, dailyGoal, penName, signature, read }))
+      const { theme, penName, signature, read, lastPage, lastPageName } = this
+      localStorage.setItem(KEY, JSON.stringify({ theme, penName, signature, read, lastPage, lastPageName }))
     },
     setTheme(theme) {
       this.theme = theme
@@ -64,6 +70,7 @@ export const useSettingsStore = defineStore('settings', {
     rememberPage(name, path) {
       this.lastPageName = name
       this.lastPage = path
+      this.persist()
     },
     /* ---- 阅读偏好 ---- */
     setRead(patch) {

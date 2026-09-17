@@ -201,39 +201,8 @@ onUnmounted(() => {
   <article v-if="post">
     <div class="read-progress"><i :style="{ width: barWidth + '%' }"></i></div>
 
-    <!-- 阅读设置：字号 / 行高 / 正文宽度，写入本地偏好 -->
-    <div class="read-tools">
-      <Transition name="fade">
-        <p v-if="restoreHint" class="restore-hint">✦ 已回到你上次读到的位置</p>
-      </Transition>
-      <button class="tool-btn" :class="{ on: showTools }" title="阅读设置" @click="showTools = !showTools">
-        ⚙ 阅读设置
-      </button>
-      <div v-if="showTools" class="tool-panel">
-        <label>
-          <span>字号 <b>{{ settings.read.fontSize }}</b></span>
-          <input
-            :value="settings.read.fontSize" type="range"
-            :min="READ_LIMITS.fontSize.min" :max="READ_LIMITS.fontSize.max" :step="READ_LIMITS.fontSize.step"
-            @input="settings.setRead({ fontSize: Number($event.target.value) })"
-          >
-        </label>
-        <label>
-          <span>行距 <b>{{ settings.read.lineHeight.toFixed(1) }}</b></span>
-          <input
-            :value="settings.read.lineHeight" type="range"
-            :min="READ_LIMITS.lineHeight.min" :max="READ_LIMITS.lineHeight.max" :step="READ_LIMITS.lineHeight.step"
-            @input="settings.setRead({ lineHeight: Number($event.target.value) })"
-          >
-        </label>
-        <button class="tool-reset" @click="settings.resetRead()">
-          恢复默认（{{ READ_DEFAULTS.fontSize }}px / {{ READ_DEFAULTS.lineHeight }}）
-        </button>
-      </div>
-    </div>
-
-    <!-- --prose-max 下在最外层：正文、标题、元信息、操作行、上下条、回声面板、
-         以及页面右上角的阅读设置入口都从同一个基线取宽度，右边界始终对齐 -->
+    <!-- --prose-max 下在最外层：顶部工具条、标题、元信息、正文、操作行、上下条、回声面板
+         都从同一个基线取宽度，左右边界始终对齐 -->
     <div class="read-layout" :class="{ 'has-toc': toc.length >= 3 }" :style="readStyle">
       <!-- 目录：仅长文（≥3 个小节）出现，滚动时高亮当前小节 -->
       <aside v-if="toc.length >= 3" class="read-toc">
@@ -248,9 +217,47 @@ onUnmounted(() => {
       </aside>
 
       <div class="read-wrap">
-        <button class="read-back" @click="router.push(settings.lastPage)">← 返回星域</button>
-        <div class="kicker reveal">DEEP READING · 深读舱</div>
-        <h1 class="read-title reveal" style="--d:.06s">{{ post.title }}</h1>
+        <!-- 顶部工具条：返回与阅读设置同一行（此前一个靠左、一个靠右各占一行，
+             中间是一整片空白，进页面先看到两个孤零零的按钮） -->
+        <div class="read-bar reveal">
+          <button class="read-back" @click="router.push(settings.lastPage)">← 返回星域</button>
+
+          <!-- 阅读设置：字号 / 行距，写入本地偏好；面板绝对定位，展开时不推动正文 -->
+          <div class="read-tools">
+            <Transition name="fade">
+              <p v-if="restoreHint" class="restore-hint">✦ 已回到你上次读到的位置</p>
+            </Transition>
+            <button class="tool-btn" :class="{ on: showTools }" title="阅读设置" @click="showTools = !showTools">
+              ⚙ 阅读设置
+            </button>
+            <div v-if="showTools" class="tool-panel">
+              <label>
+                <span>字号 <b>{{ settings.read.fontSize }}</b></span>
+                <input
+                  :value="settings.read.fontSize" type="range"
+                  :min="READ_LIMITS.fontSize.min" :max="READ_LIMITS.fontSize.max" :step="READ_LIMITS.fontSize.step"
+                  @input="settings.setRead({ fontSize: Number($event.target.value) })"
+                >
+              </label>
+              <label>
+                <span>行距 <b>{{ settings.read.lineHeight.toFixed(1) }}</b></span>
+                <input
+                  :value="settings.read.lineHeight" type="range"
+                  :min="READ_LIMITS.lineHeight.min" :max="READ_LIMITS.lineHeight.max" :step="READ_LIMITS.lineHeight.step"
+                  @input="settings.setRead({ lineHeight: Number($event.target.value) })"
+                >
+              </label>
+              <button class="tool-reset" @click="settings.resetRead()">
+                恢复默认（{{ READ_DEFAULTS.fontSize }}px / {{ READ_DEFAULTS.lineHeight }}）
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="title-row reveal" style="--d:.06s">
+          <h1 class="read-title">{{ post.title }}</h1>
+          <span class="kicker">DEEP READING · 深读舱</span>
+        </div>
         <div class="read-meta reveal" style="--d:.12s">
           <AuthorBadge :user-id="post.userId" />
           <span>{{ post.date }}</span>
@@ -292,7 +299,7 @@ onUnmounted(() => {
 
         <section class="comments-panel reveal" style="--d:.36s" aria-label="文章评论">
           <div class="comments-head">
-            <div><span class="kicker">ECHOES · 回声</span><h3>留下一句回声</h3></div>
+            <div class="title-row"><h3>留下一句回声</h3><span class="kicker">ECHOES · 回声</span></div>
             <span class="comments-count">{{ comments.length }} 条</span>
           </div>
           <div v-if="auth.isLoggedIn" class="comment-compose">
@@ -328,7 +335,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.read-progress{position:fixed; top:0; left:96px; right:0; height:3px; z-index:40}
+/* 阅读进度条：贴在视口最上沿、压在顶栏之上（z-index 高于顶栏的 50，
+ * 否则滚动后顶栏的毛玻璃与底色会把这条线糊掉） */
+.read-progress{position:fixed; top:0; left:0; right:0; height:3px; z-index:52}
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .error-text{color:var(--rose)}
@@ -336,7 +345,7 @@ onUnmounted(() => {
 .read-progress i{display:block; height:100%; width:0;
   background:linear-gradient(90deg,var(--primary),var(--rose),var(--amber))}
 
-/* 深读：整页布局——页面铺满导航栏右侧，不再有居中或收窄的容器。
+/* 深读：整页布局——页面铺满整幅视口宽度，不再有居中或收窄的容器。
  * 正文与标题/元信息/操作行/上下条/回声面板统一由 --prose-max 限宽（阅读偏好换算），
  * 右边界因此对齐，宽屏下只是行尾余量变多，不会出现「窄正文 + 长横杠」。 */
 .read-layout{display:grid; grid-template-columns:minmax(0,1fr); gap:36px; align-items:start;
@@ -346,7 +355,7 @@ onUnmounted(() => {
   /* 目录列与间距弹性伸缩，正文列吸收全部余量 */
   .read-layout.has-toc{grid-template-columns:clamp(132px,16vw,190px) minmax(0,1fr);
     gap:clamp(20px,3vw,36px)}
-  .read-layout.has-toc .read-toc{display:block; position:sticky; top:64px}
+  .read-layout.has-toc .read-toc{display:block; position:sticky; top:80px}
 }
 .read-toc h6{font-family:var(--font-mono); font-size:10px; letter-spacing:.3em; color:var(--ink-faint);
   text-transform:uppercase; margin-bottom:14px}
@@ -359,17 +368,24 @@ onUnmounted(() => {
 .toc-item:hover{color:var(--ink-dim); background:var(--surface)}
 .toc-item.on{color:var(--primary); background:var(--primary-soft); box-shadow:inset 2px 0 0 var(--primary)}
 
-/* 阅读设置入口：与正文同宽右对齐，整页布局下不会飘到页面最右边 */
-.read-tools{display:flex; align-items:flex-start; justify-content:flex-end; gap:12px;
-  flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:5;
-  max-width:var(--prose-max,100%)}
-.restore-hint{margin:0 auto 0 0; font-size:12px; color:var(--amber); letter-spacing:.04em;
-  font-family:var(--font-mono); align-self:center}
+/* 顶部工具条：返回 + 阅读设置同排，贴在一起，不再各占一行留出大片空白 */
+.read-bar{display:flex; align-items:center; justify-content:space-between; gap:16px;
+  flex-wrap:wrap; margin-bottom:18px; max-width:var(--prose-max,100%)}
+.read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
+  border-radius:99px; padding:8px 18px; font-size:13px; cursor:pointer;
+  transition:all .25s; font-family:var(--font-body)}
+.read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
+
+/* 阅读设置入口：挂在工具条右端，面板绝对定位，展开时不影响正文位置 */
+.read-tools{position:relative; display:flex; align-items:center; gap:12px; flex-wrap:wrap; z-index:5}
+.restore-hint{margin:0; font-size:12px; color:var(--amber); letter-spacing:.04em;
+  font-family:var(--font-mono)}
 .tool-btn{border:1px solid var(--line); background:var(--surface); color:var(--ink-faint);
   border-radius:99px; padding:8px 16px; font-size:12px; cursor:pointer; font-family:var(--font-body);
   transition:all .25s}
 .tool-btn:hover,.tool-btn.on{color:var(--primary); border-color:var(--primary)}
-.tool-panel{width:min(320px,100%); border:1px solid var(--line); border-radius:var(--r-md);
+.tool-panel{position:absolute; right:0; top:calc(100% + 10px); z-index:20; width:min(300px,78vw);
+  border:1px solid var(--line); border-radius:var(--r-md);
   background:var(--bg-3); padding:16px 18px; display:flex; flex-direction:column; gap:12px;
   box-shadow:0 12px 30px rgba(0,0,0,.22)}
 .tool-panel label{display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--ink-faint)}
@@ -380,10 +396,6 @@ onUnmounted(() => {
   transition:all .25s}
 .tool-reset:hover{color:var(--ink-dim); border-color:var(--primary)}
 
-.read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
-  border-radius:99px; padding:9px 20px; font-size:13px; cursor:pointer; margin-bottom:34px;
-  transition:all .25s; font-family:var(--font-body)}
-.read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
 .read-wrap{max-width:100%; min-width:0}
 .read-title{font-family:var(--font-serif); font-weight:900;
   font-size:clamp(30px,4.4vw,52px); line-height:1.3; margin:12px 0 20px;
@@ -397,8 +409,8 @@ onUnmounted(() => {
  * 行宽由其 --prose-max 统一控制，这里不再二次收窄 */
 .read-body{min-width:0}
 
-/* 操作行/上下条/回声面板与正文同一条右边界 */
-.read-actions{display:flex; align-items:center; gap:12px; margin:56px 0 30px; flex-wrap:wrap;
+/* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
+.read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;
   max-width:var(--prose-max,100%)}
 .glow-btn{border:1px solid var(--amber); background:rgba(255,180,84,.1); color:var(--amber);
   border-radius:99px; padding:14px 34px; font-size:15px; cursor:pointer;
@@ -419,10 +431,10 @@ onUnmounted(() => {
 .read-nav-cell h5{font-family:var(--font-serif); font-size:15px; margin-top:8px; line-height:1.6; font-weight:600}
 .read-nav-cell.next{text-align:right}
 
-.comments-panel{margin-top:72px; border-top:1px solid var(--line); padding-top:34px;
+.comments-panel{margin-top:56px; border-top:1px solid var(--line); padding-top:30px;
   max-width:var(--prose-max,100%)}
 .comments-head{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:24px}
-.comments-head .kicker{margin:0 0 8px}
+.comments-head .kicker{margin:0}
 .comments-head h3{font-family:var(--font-serif); font-size:26px; font-weight:900}
 .comments-count{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
 .comment-compose{border:1px solid var(--line); background:var(--surface); padding:16px; margin-bottom:26px}
@@ -455,8 +467,8 @@ onUnmounted(() => {
 @media (max-width:720px){
   .page-wide{padding-left:20px; padding-right:20px}
   .read-nav{grid-template-columns:1fr}
-  .read-progress{left:0}
-  .read-tools{margin-bottom:14px}
-  .read-back{margin-bottom:24px}
+  /* 窄屏工具条折两行：返回在上、阅读设置在右下 */
+  .read-bar{margin-bottom:16px}
+  .tool-panel{right:auto; left:0; width:min(300px,86vw)}
 }
 </style>

@@ -5,6 +5,7 @@ import { useNoteStore, NOTE_TYPES, VISIBILITY_OPTIONS, NOTE_TEMPLATE } from '@/s
 import { useAuthStore } from '@/stores/auth'
 import { emit, TOAST } from '@/utils/bus'
 import { countWords } from '@/utils/wordCount'
+import SectionHead from '@/components/common/SectionHead.vue'
 
 /* 编辑器懒加载：CodeMirror 6 只在本页下载，首屏与其它页面完全不受影响 */
 const MarkdownEditor = defineAsyncComponent(() => import('@/components/editor/MarkdownEditor.vue'))
@@ -25,6 +26,8 @@ const visibility = ref('PRIVATE')
 const published = ref(false)
 const savedAt = ref(nowTime())
 const saving = ref(false)
+/* 自动保存失败要显式可见（此前失败被吞掉，页脚照样显示「已保存」） */
+const saveFailed = ref(false)
 const publishing = ref(false)
 const loading = ref(false)
 const typeHintVisible = ref(false)
@@ -45,6 +48,7 @@ const ownNotes = computed(() => noteStore.mine.filter((n) => n.id !== noteId.val
 
 const saveLabel = computed(() => {
   if (saving.value) return '正在保存…'
+  if (saveFailed.value) return '未保存 · 点此重试'
   if (published.value) return '已发布 · 修改需再次发布'
   return noteId.value ? `草稿已保存 · ${savedAt.value}` : '等待保存'
 })
@@ -86,8 +90,11 @@ async function saveNow() {
     return
   }
   if (!title.value.trim() && !body.value.trim()) return
-  await saveDraft()
-  emit(TOAST, { type: 'success', message: `已保存 · ${savedAt.value}` })
+  const ok = await saveDraft()
+  /* 失败时不能再回「已保存」：Ctrl+S 的成功提示必须以真实结果为前提 */
+  emit(TOAST, ok
+    ? { type: 'success', message: `已保存 · ${savedAt.value}` }
+    : { type: 'warn', message: '保存失败，草稿还留在这一页，请重试' })
 }
 
 function scheduleSave() {
@@ -100,7 +107,7 @@ function scheduleSave() {
 
 async function saveDraft() {
   saveTimer = null
-  if (published.value || (!title.value.trim() && !body.value.trim()) || saving.value || publishing.value) return
+  if (published.value || (!title.value.trim() && !body.value.trim()) || saving.value || publishing.value) return false
   saving.value = true
   try {
     noteId.value = await noteStore.saveDraft({
@@ -112,9 +119,13 @@ async function saveDraft() {
       visibility: visibility.value,
     })
     savedAt.value = nowTime()
+    saveFailed.value = false
     await loadMine()
+    return true
   } catch {
-    /* 错误提示由 store + 全局 toast 承担 */
+    /* 失败要在页脚可见，否则用户以为存好了就关页 */
+    saveFailed.value = true
+    return false
   } finally {
     saving.value = false
   }
@@ -237,7 +248,7 @@ onUnmounted(() => {
 
 <template>
   <section class="page page-wide">
-    <div class="kicker reveal">NOTE STUDIO · 标本工作台</div>
+    <SectionHead title="写笔记" kicker="NOTE STUDIO · 标本工作台" />
 
     <div v-if="!canWrite" class="gate reveal" style="--d:.08s">
       <div class="gate-glyph" aria-hidden="true">❖</div>
@@ -307,7 +318,11 @@ onUnmounted(() => {
         />
 
         <div class="desk-foot">
-          <span class="save-dot"><i></i>{{ saveLabel }}</span>
+          <button
+            class="save-dot" :class="{ fail: saveFailed }" type="button"
+            :title="saveFailed ? '上一次自动保存失败了，点这里重试' : '草稿会自动保存'"
+            @click="saveFailed && saveDraft()"
+          ><i></i>{{ saveLabel }}</button>
           <span>{{ wordCount }} 字</span>
           <span v-if="published" class="pub-flag">已发布</span>
           <button class="btn btn-ghost mini" @click="newNote">＋ 新建</button>
@@ -401,8 +416,11 @@ onUnmounted(() => {
   border-radius:99px; padding:7px 14px; font-size:12px; cursor:pointer; font-family:var(--font-body);
   transition:all .25s}
 .ghost-mini:hover{color:var(--teal); border-color:var(--teal)}
-.save-dot{display:inline-flex; align-items:center; gap:7px}
+.save-dot{display:inline-flex; align-items:center; gap:7px; border:0; background:transparent;
+  padding:0; font:inherit; color:inherit; cursor:default}
 .save-dot i{width:7px; height:7px; border-radius:50%; background:var(--teal); animation:pulse 2.2s infinite}
+.save-dot.fail{color:var(--rose); cursor:pointer}
+.save-dot.fail i{background:var(--rose); animation:none}
 .pub-flag{color:var(--teal)}
 .desk-foot .grow{margin-left:auto}
 .desk-foot .grow:disabled{opacity:.6; cursor:wait}

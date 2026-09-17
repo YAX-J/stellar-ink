@@ -5,7 +5,11 @@ import { fitCanvas } from '@/utils/canvas'
 import { fmt } from '@/utils/format'
 import { useAuthorStore } from '@/stores/authors'
 
-const props = defineProps({ years: { type: Array, required: true } })
+const props = defineProps({
+  years: { type: Array, required: true },
+  /* 选中标签：光谱页并入星图后，标签与年份在画布上叠加筛选（空串 = 不限） */
+  tag: { type: String, default: '' },
+})
 const emit = defineEmits(['open'])
 const postStore = usePostStore()
 const authorStore = useAuthorStore()
@@ -17,7 +21,8 @@ let raf = 0
 let pts = []
 
 /* 过滤带坐标的 pts（而非原始 posts），否则 x/y/r 为 undefined 会导致绘制静默失败 */
-const visible = () => pts.filter((p) => props.years.includes(p.year))
+const visible = () => pts.filter((p) =>
+  props.years.includes(p.year) && (!props.tag || p.tags.includes(props.tag)))
 
 /* 命中判定在「位图坐标」下做（位图 = CSS × 2）。星星视觉半径只有 3~5px，
    原先外扩 13px 时整张星图仅约 2% 面积可点，用户点在空白处毫无反馈 →

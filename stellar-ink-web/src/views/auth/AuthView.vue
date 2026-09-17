@@ -10,7 +10,7 @@ const auth = useAuthStore()
 
 const isLogin = computed(() => props.mode === 'login')
 
-/* 登录/注册前想去的地方（router 守卫或 RailNav 写入），登录成功后回到原处 */
+/* 登录/注册前想去的地方（router 守卫或顶部导航写入），登录成功后回到原处 */
 const redirect = computed(() => {
   const raw = route.query.redirect
   return typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
@@ -134,7 +134,7 @@ function enterAsGuest() {
 
 .auth-badge{width:56px; height:56px; border-radius:50%; display:grid; place-items:center; margin:0 auto 22px;
   background:linear-gradient(135deg,var(--primary),var(--rose)); font-family:var(--font-mono);
-  font-size:22px; color:#fff; text-decoration:none;
+  font-size:22px; color:var(--on-primary); text-decoration:none;
   box-shadow:0 0 0 6px var(--primary-soft), 0 0 28px var(--primary-soft);
   transition:transform .3s var(--ease-spring)}
 .auth-badge:hover{transform:translateY(-2px) scale(1.04)}

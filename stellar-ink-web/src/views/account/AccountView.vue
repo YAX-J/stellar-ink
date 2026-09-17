@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLinkStore } from '@/stores/links'
+import { useSettingsStore } from '@/stores/settings'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -11,6 +12,7 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 const router = useRouter()
 const auth = useAuthStore()
 const links = useLinkStore()
+const settings = useSettingsStore()
 
 const user = computed(() => auth.user)
 const roleClass = computed(() => `role-${(user.value && user.value.role) || 'READER'}`.toLowerCase())
@@ -18,6 +20,21 @@ const createdAt = computed(() => {
   const t = user.value && user.value.createdAt
   if (!t) return '—'
   return String(t).replace('T', ' ').slice(0, 16)
+})
+/* ---- 星籍（原 /passport 页并入这里）----
+   星籍页真正独有的只有「编号 / 星历 / 加入天数」这三条个人档案；
+   它的印章、「全站口径」统计与首页「写作脉搏」重复，格言与信标是写死的占位内容，
+   合并时一并删掉，不再往账号页搬一份。 */
+const passportNo = computed(() => {
+  const id = user.value && user.value.id
+  return id ? `NO.ST-${String(id).padStart(4, '0')}` : '—'
+})
+const joinedDays = computed(() => {
+  const t = user.value && user.value.createdAt
+  if (!t) return '—'
+  const start = new Date(t)
+  if (Number.isNaN(start.getTime())) return '—'
+  return `${Math.max(1, Math.ceil((Date.now() - start.getTime()) / 86400000))} 天`
 })
 
 /* ---- 头像：上传图片 / 恢复底字 ---- */
@@ -179,6 +196,16 @@ async function logout() {
   router.replace('/')
 }
 
+/* ---- 本机偏好（原舰桥页的「恢复本机默认偏好」搬到这里，与账号设置同处） ---- */
+function resetLocalPreferences() {
+  if (!window.confirm('恢复本机默认偏好？主题、阅读字号与行距、阅读位置会被重置，线上内容不受影响。')) return
+  localStorage.removeItem('stellar-ink-settings')
+  sessionStorage.removeItem('stellar-ink-read-positions')
+  settings.$reset()
+  settings.persist()
+  emit(TOAST, { type: 'success', message: '本机偏好已恢复默认值' })
+}
+
 /* 当前角色能做什么：读者与作者之间缺的是站长授予，这里给出可操作的入口 */
 const canWrite = computed(() => auth.isAuthorOrAbove)
 /** 是否已提交待审的作者申请 */
@@ -333,8 +360,7 @@ onMounted(async () => {
 
 <template>
   <section class="page">
-    <div class="kicker reveal">ACCOUNT · 账号与星籍</div>
-    <SectionHead title="账号" more="你的身份与权限" />
+    <SectionHead title="账号" kicker="ACCOUNT · 账号与星籍" more="你的身份与权限" />
 
     <!-- 未登录：也覆盖「有 token 但没有用户资料」的残缺会话（localStorage 被清一半），
          否则下面的模板会读 user.nickname 直接抛异常、整页白屏 -->
@@ -392,8 +418,9 @@ onMounted(async () => {
             <p v-if="avatarTextMsg" class="avatar-ok">{{ avatarTextMsg }}</p>
           </div>
           <div class="pp-rows">
-            <div><span>星籍编号</span><b>NO.{{ user.id }}</b></div>
+            <div><span>星籍编号</span><b>{{ passportNo }}</b></div>
             <div><span>注册星历</span><b>{{ createdAt }}</b></div>
+            <div><span>加入星笺</span><b>{{ joinedDays }}</b></div>
           </div>
 
           <!-- 权限与作者申请：读者→作者需要站长授予，这里给出可操作的入口而不是让人自己猜 -->
@@ -463,12 +490,16 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 登出 -->
+      <!-- 会话与外观 -->
       <div class="panel reveal" style="--d:.18s">
-        <h3>会话</h3>
+        <h3>会话与外观</h3>
         <div class="row-between">
-          <span class="dim">退出当前登录（无状态 JWT，前端丢弃 token 即登出）。</span>
+          <span class="dim">退出当前登录（登出会立即撤销这张令牌，旧 token 不再可用）。</span>
           <button class="btn btn-ghost" @click="logout">登出</button>
+        </div>
+        <div class="row-between">
+          <span class="dim">恢复本机默认偏好（主题、阅读字号与行距、阅读位置；线上内容不受影响）。</span>
+          <button class="btn btn-ghost" @click="resetLocalPreferences">恢复默认</button>
         </div>
       </div>
 

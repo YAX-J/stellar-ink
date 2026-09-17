@@ -13,8 +13,7 @@
 
 ```
 stellar-ink/
-├── prototype/                      高保真原型（单文件 HTML，UI 的唯一视觉基准）
-├── stellar-ink-web/                前端：Vue 3 + Vite + Pinia + Vue Router（已跑通，尚未接后端）
+├── stellar-ink-web/                前端：Vue 3 + Vite + Pinia + Vue Router（已接网关）
 ├── stellar-ink-server/             后端：Spring Cloud Alibaba 微服务（已跑通）
 │   ├── common-components/          公共组件聚合（非独立运行）
 │   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO
@@ -58,7 +57,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 - **Git**：功能走 `feature/*` 分支；提交信息格式 `type(范围): 中文主题`，正文用 `-` 列要点。
   常用 type：feat / fix / docs / chore / refactor。
-  **代码一律由用户自行提交，AI 不执行 `git commit` / `push`**；AI 只按主题拆分改动并给出 commit message 供用户参考，实际提交由用户完成。
+  **代码一律由用户自行提交，AI 不执行 `push`**；AI 只按主题拆分改动并给出 commit message 供用户参考，实际提交由用户完成。
 - **禁止入库**：`node_modules/`、`dist/`、`target/`、`.vite/`、`.idea/`、`tools/`、`logs/`（见根 .gitignore）。
 - 新增依赖要克制：前端不加 UI 组件库；后端版本必须整体联动（见下），先在父 pom `dependencyManagement` 登记。
   **唯一例外**：技术笔记编辑器用 CodeMirror 6（`@codemirror/*` + `@lezer/*`，共 7 个包），
@@ -74,17 +73,46 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 目录职责固定：`views/<页面>/XxxView.vue`、`components/{canvas,common,post}/`、
   `stores/`（Pinia，业务数据统一从网关取数）、`api/mock.js`（仅保留视觉常量与写作提示）、`composables/`、`utils/`、`styles/`。
 - 组件**不直接请求后端**：数据一律进 store；将来接真实 API 时只改 store 的取数来源，不动视图。
-- 路由在 `router/index.js` 统一注册，页面组件懒加载；新页面必须同时在导航（RailNav）登记。
+- 路由在 `router/index.js` 统一注册，页面组件懒加载；新页面必须同时在导航（`components/common/TopNav.vue`）登记。
+
+### 导航（顶部横向，对齐原型 b12）
+- 全站唯一导航是 `components/common/TopNav.vue`：`position:sticky` 顶栏，未滚动时透明、
+  滚动超过 40px 才浮出底色与分隔线；结构为「品牌 ✦ 星笺 | 一级导航居中 | 搜索图标 + 执笔按钮 + 头像菜单」。
+- **一级导航只放「内容维度」，共 6 项**：此刻 / 星图 / 笔记 / 流星 / 回声 / 星链。
+  判断某页该不该进一级导航：它是不是一类内容的主入口？「筛选维度」（标签）、
+  「个人管理」（我的笔记、复核、星籍、账号）「一次性动作」（执笔、登出、换主题）都不占一级位——
+  前者并进所属内容页，后两者分别收进页面内视图切换与右上头像菜单。
+- 已合并/删除的入口（不要再新增回来）：光谱 → 星图（标签与年份叠加筛选）、
+  复核 → 我的笔记（`/notes/mine?view=review`）、星籍 → 账号（`/account` 的「我的星籍」面板）。
+  旧路径在 `router/index.js` 里保留 `redirect`，老书签不会撞 404。
+- 主区域样式在 `styles/base.css`：`.main` 不再给导航留左右边距（顶栏 sticky 自带占位），
+  页面宽度上限由 `.page`（1240px）/`.page-wide`（满宽）决定，别再写 `margin-left:96px` 这类旧偏移。
+- 需要 `position:fixed` 的页面浮件（阅读进度条、回到顶部、toast）要避开 64px 高的顶栏：
+  进度条 `z-index` 高于 50（否则会被顶栏毛玻璃糊掉），toast 的 `top` 用 78px。
 
 ### 样式（最重要）
 - **颜色/字体/圆角/缓动一律用 `styles/tokens/variables.css` 的 CSS 变量**
-  （`--primary/--amber/--teal/--rose/--ink*/--bg*/--line/--r-*/--ease-*`），禁止硬编码色值。
-- 全站三主题（night/dusk/dawn）靠 `body[data-theme]` 切变量实现；新组件必须保证在
-  破晓（浅色）主题下可读——即只用语义变量、不用固定深色。
+  （`--primary/--on-primary/--amber/--teal/--rose/--ink*/--bg*/--line/--r-*/--ease-*`），禁止硬编码色值。
+- 全站三主题（night/dusk/dawn）靠 `[data-theme]` 切变量实现（选择器同时匹配 `:root` 与 `body`：
+  `index.html` 的内联脚本在 body 解析前就把主题写到 `<html>` 上以消除首屏闪烁）；
+  新组件必须保证在破晓（浅色）主题下可读——即只用语义变量、不用固定深色。
+- **填充主色上的文字必须用 `--on-primary`，不要写 `#fff`**：夜色/暮色的 `--primary` 偏亮，
+  白字对比度只有 3.3:1 / 2.2:1，`--on-primary` 是各主题分别标定过的（5.6 / 7.3 / 6.3）。
+- **对比度基线**：`--ink-faint` 及以上都按 WCAG AA（对 `--bg` ≥4.5:1）实测过；改任何色值前先复算，
+  别让「破晓主题下读不清」的回归再来一次。
 - 共用元件类（.btn/.kicker/.section-head/.chip/.field/.side-card/.echo-form/.map-tip/.foot）
   放 `styles/components.css`；页面私有样式写各自 view 的 `<style scoped>`。
+- **标题与标签的版式**：`TECH NOTES · 程序员的标本册` 这类页面标签一律跟在标题**后面**
+  （不要另起一行压在标题上方），走 `SectionHead` 的 `kicker` 属性——它内部是 `.title-row`
+  （标题 + `.kicker` 同一基线）。自己画标题的页面（深读页、404）用
+  `<div class="title-row"><h1>…</h1><span class="kicker">…</span></div>` 保持同样版式。
+  例外：首页 hero 最上面那行是「日期问候」而不是页面标签，仍留在标题上方。
+  另外 `.page > .section-head:first-child` 会去掉区块标题的 72px 上边距——页面标题贴着页面顶部，
+  不要再给页面级 SectionHead 手动补 margin-top。
 - 字体：Space Grotesk / Noto Serif SC / Noto Sans SC / JetBrains Mono（index.html 引入），
   正文 300 字重、标题用衬线 900，等宽字体用于元数据。
+- 无障碍与动效是**全局基线**，写在 `styles/base.css`，新组件不要再各写一套：
+  `:focus-visible` 统一焦点环；`prefers-reduced-motion: reduce` 时关掉全部动画与过渡（星野/漂流瓶都要停）。
 
 ### 错误处理与提示
 - **会话失效判定必须 code/status 联合**：用 `api/client.js` 导出的 `isAuthError()`，它判定
@@ -113,6 +141,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 阅读偏好（字号/行距/正文宽度）存 `stores/settings.js` 的 `read`，通过 CSS 变量
   `--read-fs / --read-lh / --read-w` 下发给正文，组件里不要硬编码字号。
 - 阅读位置记忆用 sessionStorage（`settings.rememberPosition/positionOf`），只在进入文章时恢复一次。
+- 深读页顶部是**单行工具条** `.read-bar`：左「← 返回星域」、右「⚙ 阅读设置」（`.read-tools` 挂在右端，
+  设置面板 `position:absolute` 展开、不推动正文）。**不要再把这两个按钮拆成上下两行**——
+  那样进页面先看到两个孤零零的按钮，中间留一大片空白。笔记详情页的返回按钮同样贴着页面顶部。
 
 ### Canvas 惯例
 - 画布位图尺寸 = CSS 尺寸 × 2，用 `utils/canvas.js` 的 `fitCanvas`，别自己写。
@@ -193,7 +224,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
-- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端 prototype mock 对齐）；
+- DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端展示用的种子内容对齐）；
   已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
   `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
   `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
@@ -244,7 +275,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ## 6. 当前状态与边界（不要越界开发）
 
-- 已完成：前端 10 页 + 鉴权/账号页（登录/注册/账号，均已接网关 :8080）；
+- 已完成：前端内容页（此刻 / 执笔 / 星图 / 寻星 / 笔记 / 我的笔记 / 笔记详情与编辑 / 流星 / 回声 / 星链 /
+  深读 / 404）+ 鉴权与账号页（登录 / 注册 / 账号），均已接网关 :8080；
   后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
 - Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
@@ -266,11 +298,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 技术笔记一期已完成：独立 `note` 表与 `/notes` 接口（列表 / 我的 / 详情 / 增删改 / 标记已验证 / 浏览计数）、
   公开与私有两档可见性、正文用 `## 现象/环境/排查/结论/参考` 章节表达并由前端自动生成目录、
   列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、
-  `/note/:id`、`/note/edit`，导航符号 ❖（光谱改用 ▤）。
+  `/note/:id`、`/note/edit`，导航符号 ❖。
   正文渲染抽到 `components/common/MarkdownBody.vue`（文章与笔记共用，含代码块复制按钮）。
-- 技术笔记复核中心已完成：AUTHOR 通过 `/notes/review` 查看自己的已发布笔记，按
+- 技术笔记复核已完成：AUTHOR 在 `/notes/mine?view=review` 查看自己的已发布笔记，按
   `DUE / UNVERIFIED / EXPIRED / FRESH` 筛选；180 天时效由后端从 `verified_at` 实时派生，
-  前端 `/notes/review` 支持搜索、分页、编辑跳转和就地标记「仍然有效」。
+  该视图支持搜索、分页、编辑跳转和就地标记「仍然有效」（原独立页 `/notes/review` 已并入，
+  接口 `GET /notes/review` 不变）。
 - 作者申请已完成（读者 → 作者闭环）：`PUT /user/role-apply` 提交/覆盖申请（带可选理由）、
   `PUT /user/role-apply/cancel` 撤回、`GET /user/list` 兼作审核队列（含 `roleAppliedAt`/`roleApplyNote`）、
   站长在账号页「成员管理」一键通过/驳回。前端：账号页权限面板三态（可申请 / 审核中可撤回 / 已是作者）
@@ -280,19 +313,45 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   匿名读路由 + Docker 卷）与 `cos`（腾讯云对象存储）两种，由 `stellar.ink.storage.type` 切换。
   前端新增 `components/common/UserAvatar.vue`（降级链路：图片 → 底字 → 昵称首字 → 星），
   接入**导航身份入口、文章/笔记作者署名 AuthorBadge（`/user/authors` 已带 `avatarUrl`）、
-  账号页「我的星籍」（可上传/更换/恢复底字）、星籍页 PassportView**；
+  账号页「我的星籍」（可上传/更换/恢复底字）**；
   账号页可单独保存 `avatarText` 底字，未上传图片时全站显示底字。
   一期边界：无缩略图/CDN/对象存储迁移脚本、无历史头像保留。
 - 搜索与分页已完成：前端 `/search` 聚合文章 `/search` 与公开笔记 `/notes?keyword=`，按类型分区并各自分页；
-  星图、光谱、公开笔记、我的笔记、草稿恢复和流星均支持「继续加载」，作者摘要请求按 100 个 id 自动分批；
+  星图、公开笔记、我的笔记、草稿恢复和流星均支持「继续加载」，作者摘要请求按 100 个 id 自动分批；
   后端所有分页入口统一要求 `page >= 1`、`1 <= size <= 100`。
 - 友链审核闭环已完成：公开 `/links` 只返回已接入项，申请状态为待审核；ADMIN 在账号页通过
   `/links/pending` 查看队列，并以 `PUT /links/{id}/status` 通过或驳回（状态 `0/1/2`）。
-  （`PUT /user/profile` 已接：账号页可改笔名/签名/底字/每日目标，`/bridge` 舰桥页仍用 localStorage 草稿。）
+  （`PUT /user/profile` 已接：账号页可改底字与头像，以及「恢复本机默认偏好」。）
 - 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
 - 技术笔记编辑器已完成：笔记编辑区换成 CodeMirror 6 的 Live Preview（`components/editor/MarkdownEditor.vue`）——
   光标行显示源码、其余行渲染；支持 `Ctrl+B/I/K/S`、Tab 缩进、撤销重做、Markdown 语法着色，
   列表渲染成圆点；工具栏含「标准章节 / 提示卡（`> [!NOTE]`）/ 代码块 / 列表」四个插入按钮。
   **只改笔记编辑器**，文章的「留白写作舱」保持原样。
+- 导航与体验收口已完成（上一轮）：**删除了空转功能**——执笔页的「专注模式」（只藏导航、不影响写作）、
+  `/bridge` 舰桥页（实时预览是静态假图、笔名/签名只写 localStorage 而全站读服务端、每日目标无消费方）、
+  首页走马灯与写死的「第 128 夜」、光谱页 14px 彩条、星籍页的假档案段（坐标/职业/正在循环/今日摄入/大事记）；
+  **登出与主题切换收进导航头像菜单**（此前登出要点头像→账号页→第三个面板）；
+  新增 `views/notfound/NotFoundView.vue` 404 页（此前未知路径静默回首页）；
+  `scrollBehavior` 恢复 `savedPosition`、`settings.persist()` 带上返回目标；
+  写作页与笔记编辑页的**自动保存失败会显示「未保存 · 点此重试」**（此前失败被吞、页脚仍显示「已保存」）；
+  三个列表页（流星/回声/星链）的错误提示补 `&& !items.length`，翻页失败不再清空整屏。
+  **无障碍与色板**：`base.css` 增加全局 `:focus-visible` 与 `prefers-reduced-motion` 降级；
+  `index.html` 内联脚本先落主题（消除刷新闪烁）并跟随系统 `prefers-color-scheme`；
+  新增 `--on-primary`，夜色/暮色/破晓三主题的 `--ink-faint`、破晓的强调色全部调到 WCAG AA（≥4.5:1）。
+- 原型退场与顶栏导航已完成（本轮）：**删除整个 `prototype/`**（21 个 HTML 重设计提案与 b12 定稿都已并入实现，
+  从此以 `styles/tokens/variables.css` 的 Token + `components/common/TopNav.vue` 为唯一视觉基准，
+  不再有第二份需要同步的 UI 描述）；左侧竖栏 `RailNav.vue` 换成 b12 式顶栏——
+  顶部 sticky、未滚动透明、滚动 40px 后浮出底色与分隔线，品牌「✦ 星笺 STELLAR INK」在左、
+  一级导航居中、寻星（放大镜）/执笔（主色按钮，仅作者）/头像菜单（账号设置 · 我的笔记 · 外观 · 登出）在右，
+  窄屏折两行、导航横向滚动。**一级导航 11 → 6 项**：光谱并入星图（`/archive` 新增标签星座 chips，
+  与年份叠加筛选画布与长卷）、复核并入我的笔记（`/notes/mine?view=review` 视图切换，URL 可分享）、
+  星籍并入账号（星籍面板补「加入星笺」，编号统一 `NO.ST-0001`）；合并时顺手删掉星籍页的印章、
+  「全站口径」（与首页写作脉搏重复）、格言与三个占位「信标」链接。三个旧路径保留 `redirect`，
+  老书签不撞 404。布局侧：`.main` 去掉 96px 左侧留白、阅读进度条改贴视口顶并抬到顶栏之上、
+  toast 下移到 78px、阅读目录吸顶改为 80px。页面标签（`ACCOUNT · 账号与星籍` 这类）统一挪到
+  标题后面：`SectionHead` 新增 `kicker` 属性 + 全局 `.title-row`，深读页/404 等自绘标题的页面同样处理。
 - 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
   笔记间反向链接；AI 自动打标签/关联推荐需先明确解锁。
+- 前端结构化待办：**流星与回声合并**（流星是作者发射的碎片、回声是任何人投的漂流瓶，
+  两页受众不同，合并前要先定是「同页分栏」还是「视图切换」）；其余合并项（复核并入我的笔记、
+  星籍并入账号）已在本轮完成。

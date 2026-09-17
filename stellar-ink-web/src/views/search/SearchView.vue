@@ -43,8 +43,10 @@ watch(() => route.query.q, (value) => {
 
 <template>
   <section class="page page-wide">
-    <div class="kicker reveal">DEEP SPACE SEARCH · 穿过标题与正文</div>
-    <SectionHead title="寻星" :more="searchStore.searched && !searchStore.loading ? `${total} 条回声` : '文章与公开笔记'" />
+    <SectionHead
+      title="寻星" kicker="DEEP SPACE SEARCH · 穿过标题与正文"
+      :more="searchStore.searched && !searchStore.loading ? `${total} 条回声` : '文章与公开笔记'"
+    />
 
     <form class="search-bar reveal" style="--d:.06s" @submit.prevent="submit">
       <span class="search-glyph" aria-hidden="true">⌕</span>
@@ -63,7 +65,7 @@ watch(() => route.query.q, (value) => {
     </div>
 
     <p v-if="searchStore.loading" class="state-text">正在穿过星图…</p>
-    <p v-else-if="searchStore.error" class="state-text error-text">
+    <p v-else-if="searchStore.error && !total" class="state-text error-text">
       {{ searchStore.error }}
       <button class="state-action" @click="searchStore.search(keyword)">重新搜索</button>
     </p>

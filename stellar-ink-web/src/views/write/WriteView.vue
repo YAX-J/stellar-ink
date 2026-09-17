@@ -5,6 +5,8 @@ import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
 import { PROMPTS } from '@/api/mock'
 import { countWords } from '@/utils/wordCount'
+import { emit, TOAST } from '@/utils/bus'
+import SectionHead from '@/components/common/SectionHead.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,9 +28,10 @@ const body = ref('')
 const savedAt = ref(nowTime())
 const prompt = ref(PROMPTS[0])
 const promptFading = ref(false)
-const focused = ref(false)
 const publishing = ref(false)
 const saving = ref(false)
+/* 自动保存失败要立刻可见：此前失败被吞掉、页脚仍显示「已保存」，关页就丢稿 */
+const saveFailed = ref(false)
 const draftId = ref(null)
 const drafts = ref([])
 const draftPage = ref(0)
@@ -42,6 +45,7 @@ const wordCount = computed(() => countWords(body.value))
 const readTime = computed(() => Math.ceil(wordCount.value / 400))
 const saveLabel = computed(() => {
   if (saving.value) return '正在保存…'
+  if (saveFailed.value) return '未保存 · 点此重试'
   if (editingPublished.value) return '修改将在重新发射后生效'
   return draftId.value ? `已保存 · ${savedAt.value}` : '等待保存'
 })
@@ -64,7 +68,7 @@ function scheduleSave() {
 }
 async function saveDraft() {
   saveTimer = null
-  if (editingPublished.value || (!title.value.trim() && !body.value.trim()) || saving.value || publishing.value) return
+  if (editingPublished.value || (!title.value.trim() && !body.value.trim()) || saving.value || publishing.value) return false
   saving.value = true
   try {
     draftId.value = await postStore.saveDraft({
@@ -74,9 +78,13 @@ async function saveDraft() {
       tag: activeMood.value.tag,
     })
     savedAt.value = nowTime()
+    saveFailed.value = false
     await loadDrafts()
+    return true
   } catch {
-    /* 错误信息由 store 展示 */
+    /* 失败必须在页脚可见：否则用户以为已保存就关掉标签页 */
+    saveFailed.value = true
+    return false
   } finally {
     saving.value = false
   }
@@ -161,17 +169,16 @@ function refreshPrompt() {
     promptFading.value = false
   }, 300)
 }
-function toggleFocus() {
-  focused.value = !focused.value
-  document.body.classList.toggle('focus-mode', focused.value)
-}
 async function launch() {
   if (!body.value.trim()) return
   if (saveTimer) clearTimeout(saveTimer)
   publishing.value = true
   try {
     await postStore.publishDraft({ id: draftId.value, title: title.value, body: body.value, tag: activeMood.value.tag })
+    emit(TOAST, { type: 'success', message: editingPublished.value ? '这颗星已更新' : '已发射到星图' })
     router.push('/archive')
+  } catch {
+    /* 全局 toast 与页脚下方 .publish-error（读 postStore.error）都会展示失败原因 */
   } finally {
     publishing.value = false
   }
@@ -183,13 +190,12 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   if (saveTimer) clearTimeout(saveTimer)
-  document.body.classList.remove('focus-mode')
 })
 </script>
 
 <template>
   <section class="page">
-    <div class="kicker reveal">WRITING STUDIO · 留白写作舱</div>
+    <SectionHead title="执笔" kicker="WRITING STUDIO · 留白写作舱" />
 
     <!-- 读者 / 未登录：说明为什么进不来，并给出可走的路 -->
     <div v-if="!canWrite" class="gate reveal" style="--d:.08s">
@@ -224,10 +230,14 @@ onUnmounted(() => {
         <div class="quill-line"></div>
         <textarea
           v-model="body" class="body-input" @input="onInput"
-          placeholder="从这里开始。不追求完美，只追求诚实。&#10;&#10;提示：情绪会改变舱内的光，专注模式会熄灭整个世界。"
+          placeholder="从这里开始。不追求完美，只追求诚实。&#10;&#10;提示：情绪会改变舱内的光。"
         ></textarea>
         <div class="desk-foot">
-          <span class="save-dot"><i></i>{{ saveLabel }}</span>
+          <button
+            class="save-dot" :class="{ fail: saveFailed }" type="button"
+            :title="saveFailed ? '上一次自动保存失败了，点这里重试' : '草稿会自动保存'"
+            @click="saveFailed && saveDraft()"
+          ><i></i>{{ saveLabel }}</button>
           <span>星尘 <b style="color:var(--amber)">+{{ wordCount }}</b> 字</span>
           <span>约 {{ readTime }} 分钟读完</span>
           <button class="btn btn-primary grow" style="height:40px" :disabled="publishing || saving" @click="launch">
@@ -237,9 +247,6 @@ onUnmounted(() => {
         <p v-if="postStore.error" class="publish-error">{{ postStore.error }}</p>
       </div>
       <aside class="studio-side">
-        <button class="focus-toggle" @click="toggleFocus">
-          {{ focused ? '☀️ 退出专注模式' : '🌑 进入专注模式' }}
-        </button>
         <div class="side-card reveal" style="--d:.18s">
           <h5>灵感签</h5>
           <div class="prompt-card" :style="{ opacity: promptFading ? 0 : 1 }">{{ prompt }}</div>
@@ -318,16 +325,17 @@ onUnmounted(() => {
   display:flex; align-items:center; gap:22px; flex-wrap:wrap;
   font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
 }
-.save-dot{display:inline-flex; align-items:center; gap:8px}
+.save-dot{display:inline-flex; align-items:center; gap:8px; border:0; background:transparent;
+  padding:0; font:inherit; color:inherit; cursor:default}
 .save-dot i{width:8px; height:8px; border-radius:50%; background:var(--teal);
   animation:pulse 2.2s infinite; box-shadow:0 0 8px var(--teal)}
+/* 保存失败：红点常亮 + 整块可点重试（动画必须一并关掉，否则 opacity 归动画管） */
+.save-dot.fail{color:var(--rose); cursor:pointer}
+.save-dot.fail i{background:var(--rose); animation:none; box-shadow:0 0 8px var(--rose)}
 .desk-foot .grow{margin-left:auto}
 .desk-foot .grow:disabled{opacity:.6; cursor:wait}
 .publish-error{position:relative; margin-top:12px; color:var(--rose); font-size:12px}
 .studio-side{display:flex; flex-direction:column; gap:18px; transition:opacity .4s, filter .4s}
-/* 专注模式只压暗侧卡；reveal 动画的 fill 会钉住 opacity，需一并关闭动画 */
-body.focus-mode .studio-side{pointer-events:none}
-body.focus-mode .studio-side .side-card{opacity:.12; animation:none}
 .prompt-card{
   border-radius:var(--r-sm); padding:16px; background:var(--bg-3);
   border-left:3px solid var(--amber); font-family:var(--font-serif); font-size:14px;
@@ -357,16 +365,6 @@ body.focus-mode .studio-side .side-card{opacity:.12; animation:none}
 .draft-more{width:100%; margin-top:10px; border:0; background:transparent; color:var(--primary);
   font:11px var(--font-mono); cursor:pointer}
 .draft-more:disabled{color:var(--ink-faint); cursor:wait}
-.focus-toggle{
-  width:100%; height:52px; border-radius:var(--r-md); cursor:pointer; border:1px solid var(--line);
-  background:var(--surface); color:var(--ink-dim); font-size:14px; letter-spacing:.1em;
-  display:flex; align-items:center; justify-content:center; gap:10px;
-  transition:all .3s var(--ease-spring); font-family:var(--font-body);
-}
-.focus-toggle:hover{border-color:var(--primary); color:var(--primary)}
-body.focus-mode .focus-toggle{background:var(--primary); color:#fff; border-color:var(--primary);
-  position:fixed; right:28px; bottom:28px; width:auto; padding:0 24px; z-index:60;
-  box-shadow:0 10px 32px var(--primary-soft); pointer-events:auto}
 
 @media (max-width:980px){
   .studio{grid-template-columns:1fr}

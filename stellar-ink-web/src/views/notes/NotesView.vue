@@ -93,8 +93,7 @@ watch(() => route.query, (query) => {
 
 <template>
   <section class="page page-wide">
-    <div class="kicker reveal">TECH NOTES · 程序员的标本册</div>
-    <SectionHead title="技术笔记" more="不是文章，是能照着做的结论" />
+    <SectionHead title="技术笔记" kicker="TECH NOTES · 程序员的标本册" more="不是文章，是能照着做的结论" />
 
     <div class="notes-bar reveal" style="--d:.06s">
       <input
@@ -166,7 +165,7 @@ watch(() => route.query, (query) => {
 </template>
 
 <style scoped>
-/* 整页布局：宽度由全局 .page-wide 决定（铺满导航栏右侧），此处不再各自设上限 */
+/* 整页布局：宽度由全局 .page-wide 决定（铺满整幅视口宽度），此处不再各自设上限 */
 .notes-bar{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:20px}
 .notes-search{flex:1; min-width:240px; height:48px; border:1px solid var(--line);
   border-radius:var(--r-md); background:var(--surface); color:var(--ink); padding:0 18px;
@@ -175,7 +174,7 @@ watch(() => route.query, (query) => {
 .view-switch{display:flex; border:1px solid var(--line); border-radius:99px; overflow:hidden}
 .view-switch button{border:none; background:transparent; color:var(--ink-faint); padding:10px 18px;
   font-size:13px; cursor:pointer; transition:all .25s; font-family:var(--font-body)}
-.view-switch button.on{background:var(--primary); color:#fff}
+.view-switch button.on{background:var(--primary); color:var(--on-primary)}
 .write-note{height:48px}
 
 .spec-bar{display:flex; height:12px; border-radius:99px; overflow:hidden; margin-bottom:22px;

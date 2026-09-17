@@ -8,26 +8,28 @@ const routes = [
   { path: '/search', name: 'search', component: () => import('@/views/search/SearchView.vue'), meta: { title: '寻星' } },
   { path: '/notes', name: 'notes', component: () => import('@/views/notes/NotesView.vue'), meta: { title: '笔记' } },
   { path: '/notes/mine', name: 'notes-mine', component: () => import('@/views/notes/NotesMineView.vue'), meta: { title: '我的笔记', requiresAuth: true } },
-  { path: '/notes/review', name: 'notes-review', component: () => import('@/views/notes/NoteReviewView.vue'), meta: { title: '笔记复核', requiresAuth: true, requiresRole: 'AUTHOR' } },
   { path: '/note/edit', name: 'note-edit', component: () => import('@/views/notes/NoteEditView.vue'), meta: { title: '写笔记', requiresAuth: true } },
   { path: '/note/:id', name: 'note', component: () => import('@/views/notes/NoteDetailView.vue'), meta: { title: '笔记' } },
   { path: '/meteor', name: 'meteor', component: () => import('@/views/meteor/MeteorView.vue'), meta: { title: '流星' } },
-  { path: '/spectrum', name: 'spectrum', component: () => import('@/views/spectrum/SpectrumView.vue'), meta: { title: '光谱' } },
   { path: '/echo', name: 'echo', component: () => import('@/views/echo/EchoView.vue'), meta: { title: '回声' } },
   { path: '/links', name: 'links', component: () => import('@/views/links/LinksView.vue'), meta: { title: '星链' } },
-  { path: '/passport', name: 'passport', component: () => import('@/views/passport/PassportView.vue'), meta: { title: '星籍' } },
-  { path: '/bridge', name: 'bridge', component: () => import('@/views/bridge/BridgeView.vue'), meta: { title: '舰桥' } },
+  /* 三个被合并掉的页面保留旧路径跳转，老书签/分享链接不会撞到 404 */
+  { path: '/notes/review', redirect: { name: 'notes-mine', query: { view: 'review' } } },
+  { path: '/spectrum', redirect: { name: 'archive' } },
+  { path: '/passport', redirect: { name: 'account' } },
   { path: '/login', name: 'login', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'login' }, meta: { title: '登录', layout: 'auth' } },
   { path: '/register', name: 'register', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'register' }, meta: { title: '注册', layout: 'auth' } },
   { path: '/account', name: 'account', component: () => import('@/views/account/AccountView.vue'), meta: { title: '账号', requiresAuth: true } },
   { path: '/read/:id', name: 'read', component: () => import('@/views/read/ReadView.vue'), meta: { title: '深读' } },
-  { path: '/:pathMatch(.*)*', redirect: '/' },
+  /* 未知路径不再静默回首页（打错的链接、被删的文章会让用户以为自己点错了） */
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/notfound/NotFoundView.vue'), meta: { title: '星轨走失' } },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 }),
+  /* 返回上一页时恢复浏览器记录的滚动位置，其余情况回到顶部 */
+  scrollBehavior: (to, from, savedPosition) => savedPosition || { top: 0 },
 })
 
 /* 公开页面：未登录也能逛（与网关一致 —— 所有读接口本就公开）。

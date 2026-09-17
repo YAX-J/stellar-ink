@@ -42,14 +42,13 @@ async function apply() {
 
 <template>
   <section class="page">
-    <div class="kicker reveal">NEIGHBOR CONSTELLATION · 友链即友邻星座</div>
-    <SectionHead title="星链" more="悬停认识他们 · 点击降落" />
+    <SectionHead title="星链" kicker="NEIGHBOR CONSTELLATION · 友链即友邻星座" more="悬停认识他们 · 点击降落" />
 
     <div class="link-stage reveal" style="--d:.08s">
       <LinkSky @select="onSelect" />
     </div>
     <p v-if="linkStore.loading && !linkStore.friends.length" class="state-text">正在读取星链…</p>
-    <p v-else-if="linkStore.error" class="state-text error-text">
+    <p v-else-if="linkStore.error && !linkStore.friends.length" class="state-text error-text">
       {{ linkStore.error }} <button class="state-action" @click="linkStore.fetchFriends()">重新读取</button>
     </p>
 

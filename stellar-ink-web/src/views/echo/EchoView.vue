@@ -26,8 +26,7 @@ async function throwBottle() {
 
 <template>
   <section class="page">
-    <div class="kicker reveal">DRIFTING ECHOES · 留言板不在墙上，在海里</div>
-    <SectionHead title="回声">
+    <SectionHead title="回声" kicker="DRIFTING ECHOES · 留言板不在墙上，在海里">
       {{ echoStore.bottles.length }} 只瓶子正在海上漂
     </SectionHead>
 
@@ -39,7 +38,7 @@ async function throwBottle() {
       </button>
     </div>
     <p v-if="echoStore.loading && !echoStore.bottles.length" class="state-text">正在读取回声…</p>
-    <p v-else-if="echoStore.error" class="state-text error-text">
+    <p v-else-if="echoStore.error && !echoStore.bottles.length" class="state-text error-text">
       {{ echoStore.error }} <button class="state-action" @click="echoStore.fetchBottles()">重新读取</button>
     </p>
 

@@ -9,8 +9,21 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"></noscript>
+<script>
+/* 首屏主题：在任何样式与脚本执行之前落定主题，消除「选过暮色/破晓的用户刷新时先闪一层夜色」。
+   未设置过偏好的访客跟随系统（prefers-color-scheme）。与 stores/settings.js 的取值逻辑保持一致。 */
+(function () {
+  var theme = 'night'
+  try {
+    var saved = JSON.parse(localStorage.getItem('stellar-ink-settings') || '{}')
+    if (saved && saved.theme) theme = saved.theme
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) theme = 'dawn'
+  } catch (e) { /* 存储不可用时用默认夜色 */ }
+  document.documentElement.dataset.theme = theme
+})()
+</script>
 </head>
-<body data-theme="night">
+<body>
 <div id="app"></div>
 <script type="module" src="/src/main.js"></script>
 </body>

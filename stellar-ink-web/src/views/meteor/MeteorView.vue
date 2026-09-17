@@ -40,8 +40,7 @@ async function remove(meteor) {
 
 <template>
   <section class="page">
-    <div class="kicker reveal">METEOR MEMO · 流星备忘录</div>
-    <SectionHead title="流星" more="长文给星图，碎片给流星" />
+    <SectionHead title="流星" kicker="METEOR MEMO · 流星备忘录" more="长文给星图，碎片给流星" />
     <div v-if="canLaunch" class="meteor-launch reveal" style="--d:.08s">
       <input v-model="text" placeholder="此刻划过脑海的…（回车即发射）" @keydown.enter="launch">
       <button class="btn btn-primary" :disabled="launching" @click="launch">
@@ -53,7 +52,7 @@ async function remove(meteor) {
       <RouterLink to="/login">去登录</RouterLink>
     </p>
     <p v-if="meteorStore.loading && !meteorStore.items.length" class="state-text">正在读取流星…</p>
-    <p v-else-if="meteorStore.error" class="state-text error-text">
+    <p v-else-if="meteorStore.error && !meteorStore.items.length" class="state-text error-text">
       {{ meteorStore.error }} <button class="state-action" @click="meteorStore.fetchItems()">重新读取</button>
     </p>
     <MeteorSky ref="sky" class="reveal" style="--d:.14s" />

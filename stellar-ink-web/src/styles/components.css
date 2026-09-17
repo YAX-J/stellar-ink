@@ -12,14 +12,24 @@
   transition:all .2s var(--ease-standard); display:inline-flex; align-items:center; gap:8px;
   text-decoration:none;
 }
-.btn-primary{background:var(--primary); color:#fff; box-shadow:0 6px 24px var(--primary-soft)}
+.btn-primary{background:var(--primary); color:var(--on-primary); box-shadow:0 6px 24px var(--primary-soft)}
 .btn-primary:hover{filter:brightness(1.12); transform:translateY(-2px)}
 .btn-primary:active{transform:translateY(0) scale(.97)}
 .btn-ghost{background:var(--surface); color:var(--ink-dim); border:1px solid var(--line)}
 .btn-ghost:hover{color:var(--ink); background:var(--surface-2)}
 
+/* 标题行：标题 + 紧跟其后的英文标签（如「技术笔记 — TECH NOTES · 程序员的标本册」）。
+   .kicker 本身是自带短横的 flex 行，在标题后面时改成 inline，才能和标题共享同一条基线。 */
+.title-row{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; min-width:0}
+.title-row .kicker{margin:0; display:inline}
+.title-row .kicker::before{display:inline-block; vertical-align:middle; width:28px; margin-right:12px}
+
 .section-head{display:flex; align-items:baseline; justify-content:space-between;
   margin:72px 0 26px; gap:16px; flex-wrap:wrap}
+/* 页面最上面那个 SectionHead 是页面标题，不是区块标题：去掉 72px 的区块上边距。
+   标签挪到标题后面之后，这段空白就成了纯浪费（页面顶部会空出一整条）。 */
+.page > .section-head:first-child{margin-top:0}
+.section-head .title-row{flex:1 1 auto}
 .section-head h2{font-family:var(--font-serif); font-weight:900; font-size:clamp(26px,3vw,36px)}
 .section-head .more{font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
   letter-spacing:.15em; cursor:pointer; transition:color .2s}
@@ -65,7 +75,7 @@
 .map-tip p{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); line-height:1.8}
 
 .avatar{width:64px; height:64px; border-radius:22px; display:grid; place-items:center;
-  font-family:var(--font-serif); font-weight:900; font-size:26px; color:#fff;
+  font-family:var(--font-serif); font-weight:900; font-size:26px; color:var(--on-primary);
   background:conic-gradient(from 200deg,var(--primary),var(--rose),var(--amber),var(--primary));
   box-shadow:0 6px 20px var(--primary-soft)}
 
