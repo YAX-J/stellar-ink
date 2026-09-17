@@ -25,7 +25,6 @@ gateway-nacos-sentinel :8080
 
 | 目录 | 说明 |
 |---|---|
-| [`prototype/`](prototype/README.md) | 单文件高保真原型，UI 唯一视觉基准 |
 | [`stellar-ink-web/`](stellar-ink-web/README.md) | Vue 3 前端应用 |
 | [`stellar-ink-server/`](stellar-ink-server/README.md) | Spring Cloud Alibaba 后端 |
 | [`stellar-ink-ai/`](stellar-ink-ai/README.md) | Python AI 编排服务预留目录，尚未实施 |
@@ -88,7 +87,7 @@ cd ../stellar-ink-web && npm run build
 开始修改代码前先阅读 [`AGENTS.md`](AGENTS.md)。重点约束包括：
 
 - 回复、注释和提交信息使用中文，代码标识符使用英文。
-- 前端视觉以原型和设计 Token 为准，不引入 UI 组件库。
+- 前端视觉以 `styles/tokens/variables.css` 的语义变量为准，不引入 UI 组件库。
 - 业务数据通过 Pinia store 获取，组件不直接请求后端。
 - 后端接口统一返回 `Response<T>`，鉴权在网关和业务服务双重校验。
 - AI、评论、上传、全文检索和 Redis 限流等能力，未有明确任务时不提前开发。

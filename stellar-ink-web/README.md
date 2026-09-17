@@ -9,7 +9,7 @@
 - Vue Router
 - 原生 CSS 与 Canvas
 
-项目不使用第三方 UI 组件库。视觉基准见 [`../prototype/README.md`](../prototype/README.md)。
+项目不使用第三方 UI 组件库。视觉基准是 [`src/styles/tokens/variables.css`](src/styles/tokens/variables.css) 里的语义变量（三主题 night / dusk / dawn）。
 
 ## 运行
 
@@ -34,7 +34,7 @@ npm run preview
 | 目录 | 职责 |
 |---|---|
 | `src/views/` | 路由页面，每个页面独立子目录 |
-| `src/components/` | Canvas、通用组件和文章组件 |
+| `src/components/` | Canvas、通用组件（含顶部导航 TopNav）和文章组件 |
 | `src/stores/` | Pinia 业务状态与后端数据访问 |
 | `src/api/client.js` | Fetch 封装、token、超时和统一错误处理 |
 | `src/api/mock.js` | 仅保留视觉常量和写作提示 |

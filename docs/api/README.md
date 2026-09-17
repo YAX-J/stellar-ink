@@ -137,7 +137,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/posts/{postId}/comments` | 公开文章评论列表 | 公开 |
 | POST | `/posts/{postId}/comments` | 发表评论 `{content}`，返回评论 | 登录（READER） |
 | DELETE | `/posts/{postId}/comments/{commentId}` | 软删除评论 | 评论作者或 ADMIN |
-| GET | `/tags` | 标签计数（光谱） | 公开 |
+| GET | `/tags` | 标签计数（星图页的「标签星座」筛选用） | 公开 |
 | GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
 
 - `orderBy` 取值：`latest` 最新（默认）/ `hottest` 最受回望（按 `glow`）/ `longest` 篇幅最长；一律追加 `id` 倒序保证分页稳定
@@ -156,7 +156,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 |---|---|---|---|
 | GET | `/notes` | 公开笔记分页列表；`page/size/tag/noteType/keyword/orderBy`。**服务端强制「已发布 + 公开」，不接受可见性参数** | 公开 |
 | GET | `/notes/mine` | 我的笔记（含私有与草稿）；`status/visibility/noteType/keyword` | AUTHOR |
-| GET | `/notes/review` | 我的已发布笔记复核队列；`reviewState/visibility/noteType/keyword/page/size`，默认 `reviewState=DUE` | AUTHOR |
+| GET | `/notes/review` | 我的已发布笔记复核队列；`reviewState/visibility/noteType/keyword/page/size`，默认 `reviewState=DUE`。前端已并入 `/notes/mine?view=review` 视图，接口不变 | AUTHOR |
 | GET | `/notes/{id}` | 详情；**私有笔记仅作者本人可读，其他人一律 404** | 按可见性 |
 | POST | `/notes` | 新建 `{title, content, tags[], noteType, visibility, status}`；**缺省 `visibility=PRIVATE`、`status=0` 草稿** | AUTHOR |
 | PUT / DELETE | `/notes/{id}` | 更新 / 删除；**只有作者本人**（ADMIN 也不行） | AUTHOR |
@@ -233,7 +233,7 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - 未启用 Redis 令牌桶限流（需 Redis）；生产已有 Nginx 边缘限流（详见 `deploy/docker/nginx/default.conf`，注意 `^/(echos|links)$` 不分方法限流，`GET` 也在限流区内、超限 429）
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
 - 未做通用附件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
-- 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（光谱页目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
+- 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（星图页的「标签星座」目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
 - 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102
