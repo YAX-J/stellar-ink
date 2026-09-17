@@ -109,8 +109,19 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   例外：首页 hero 最上面那行是「日期问候」而不是页面标签，仍留在标题上方。
   另外 `.page > .section-head:first-child` 会去掉区块标题的 72px 上边距——页面标题贴着页面顶部，
   不要再给页面级 SectionHead 手动补 margin-top。
-- 字体：Space Grotesk / Noto Serif SC / Noto Sans SC / JetBrains Mono（index.html 引入），
-  正文 300 字重、标题用衬线 900，等宽字体用于元数据。
+- 字体：Space Grotesk / Noto Serif SC / Noto Sans SC / JetBrains Mono，
+  正文 300 字重、标题用衬线 900，等宽字体用于元数据。**分两路加载，不要合并成一路**：
+  - 拉丁（Space Grotesk 400/500/700、JetBrains Mono 400/600）**自托管**：
+    `public/fonts/*.woff2`（**4 片 / 82KB**：两个字族在 Google 上是变量字体，
+    400/500/700 返回的是同一个文件，因此按「字族 × latin/latin-ext 子集」各留一份，
+    再由 `src/styles/fonts.css` 按字重声明成多条 `@font-face`）+ `main.js` 里在 tokens 之前 import。
+    别按字重各存一份文件（曾存成 10 片，多出 123KB 纯重复），也别把拉丁字族挂回 Google。
+  - 中文（Noto Sans SC 300/400/500/700、Noto Serif SC 600/900）走 Google，
+    单字重 4.4-5.9MB 不进仓库。**域名用 `fonts.googleapis.cn` / `fonts.gstatic.cn`**（Google 自家中国域名，
+    CSS 与 .com 逐字节相同）：国内实测 0.25-0.28s vs .com 0.95-1.13s（偶发 20s 卡死），
+    字体分片两边都是 0.12-0.16s。`index.html` 里 preconnect 与 link/noscript 三处必须同时改域名。
+  - 系统 CJK 兜底写在 `variables.css` 的字体栈里（PingFang SC / Microsoft YaHei / 思源），
+    中文字体没到之前先用系统字体渲染，不要为此再加字体。
 - 无障碍与动效是**全局基线**，写在 `styles/base.css`，新组件不要再各写一套：
   `:focus-visible` 统一焦点环；`prefers-reduced-motion: reduce` 时关掉全部动画与过渡（星野/漂流瓶都要停）。
 
