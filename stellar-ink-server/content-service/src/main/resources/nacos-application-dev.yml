@@ -1,12 +1,77 @@
-# Nacos 动态配置文件模板 - 内容服务开发环境
-# 上传到 Nacos 后的 Data ID：content-service-dev.yaml
+# =============================================================
+# Nacos 动态配置模板 · 内容服务（开发环境）
+# 上传：Data ID = content-service-dev.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
+#       注意：线上命名空间里目前**没有**这个 Data ID（只有 user-service 与 gateway 那两份），
+#             所以 content-service 一直在用自己的本地配置兜底。
+#
+# 约定（三个服务一致）：
+#   · Nacos 上的键会覆盖本地 application-dev.yml 的同名键 → 本地那份是「Nacos 不可用时的兜底」，
+#     改这里请同时改本地文件。
+#   · 绝不放：sa-token.jwt-secret-key、MySQL 口令、actuator 高危端点开关。
+#   · 文章/笔记等读模型缓存版本键由服务自己推进，不在这里配置。
+# =============================================================
 
 spring:
   data:
     redis:
+      # 公开文章/笔记、标签、统计、评论、友链、流星、回声的读模型缓存
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      timeout: 500ms              # 缓存是旁路：超时到点即回源，不让网络抖动把接口挂住
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  datasource:
+    druid:
+      # 只放池子参数，url/账号仍由本地文件（环境变量）提供
+      initial-size: 5
+      min-idle: 5
+      max-active: 10
+      max-wait: 5000              # 拿不到连接最多等 5s
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      keep-alive: true
+      keep-alive-between-time-millis: 120000
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      remove-abandoned: true
+      remove-abandoned-timeout: 600
+      log-abandoned: true
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl   # dev 打印 SQL；生产配置里没有这一行
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+sa-token:
+  # 与网关、user-service 保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    com.zaxxer.hikari: WARN

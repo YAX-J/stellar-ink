@@ -1,45 +1,90 @@
-# Nacos 动态配置文件模板 - 用户服务开发环境
-# 上传到 Nacos 后的 Data ID：user-service-dev.yaml
-# 放在 Nacos 的内容在此维护（可动态调整项）
+# =============================================================
+# Nacos 动态配置模板 · 用户服务（开发环境）
+# 上传：Data ID = user-service-dev.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
 #
-# 安全：jwt-secret-key 绝不要写进本文件！
-#   Nacos 配置是共享的 —— 当前 NACOS_AUTH_ENABLE=false，任何能访问 8848 的客户端都能读到；
-#   密钥只走环境变量 SA_TOKEN_JWT_SECRET（见 application-dev.yml / application-prod.yml 中的占位符）。
-
-sa-token:
-  timeout: 604800
-  is-concurrent: true
-  is-share: true
+# 约定（三个服务一致）：
+#   · Nacos 上的键会覆盖本地 application-dev.yml 的同名键 → 本地那份是「Nacos 不可用时的兜底」，
+#     改这里请同时改本地文件。
+#   · 绝不放：sa-token.jwt-secret-key、MySQL 口令、COS 密钥、actuator 高危端点开关。
+#   · 数据源的 url/username/password 由环境变量在本地文件里拼装，不在这里重复。
+# =============================================================
 
 spring:
   data:
     redis:
+      # 登录失败计数、账号锁定、JWT 撤销、公开作者摘要缓存都走它
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      timeout: 500ms              # 缓存是旁路：超时到点即回源/返回，不跟着网络抖动弹十几秒
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  datasource:
+    druid:
+      # 只放池子参数，url/账号仍由本地文件（环境变量）提供
+      initial-size: 5
+      min-idle: 5
+      max-active: 10
+      max-wait: 5000              # 拿不到连接最多等 5s：宁可快速失败，也不要把线程挂到 60s
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      keep-alive: true
+      keep-alive-between-time-millis: 120000
+      validation-query: SELECT 1
+      validation-query-timeout: 3 # 保活探测也要有上限，否则抖动时 SELECT 1 自己先挂住
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      remove-abandoned: true
+      remove-abandoned-timeout: 600
+      log-abandoned: true
+  servlet:
+    multipart:
+      # 与 Nginx client_max_body_size 对齐；服务端另有 1MB 业务层双拦
+      max-file-size: 1MB
+      max-request-size: 2MB
 
-# SpringDoc 动态路径（如生产环境关闭 Swagger）
-springdoc:
-  swagger-ui:
-    enabled: true
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl   # dev 打印 SQL；生产配置里没有这一行
 
-# 头像上传可调项（改 Nacos 后需重启生效：@ConfigurationProperties 未开 refresh）
+# 头像存储：切换 local / cos 不需要改代码；密钥只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读
 stellar:
   ink:
     storage:
-      # local 本地磁盘 / cos 腾讯云对象存储 —— 换存储与回滚都只改这一个值
-      type: local
+      type: ${STORAGE_TYPE:local}
       cos:
-        bucket: stellar-ink-avatars-1459736092   # 必须带 APPID 后缀
-        region: ap-shanghai
-        # 对外基址填 CDN 域名；留空则用 COS 默认域名
-        public-base: ''
-        key-prefix: avatars/
-        # 密钥不写在这里：只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读
-    upload:
-      public-prefix: /uploads
-      avatar-sub-dir: avatars
-      avatar-max-bytes: 1048576
+        bucket: ${COS_BUCKET:}
+        region: ${COS_REGION:ap-shanghai}
+        public-base: ${COS_PUBLIC_BASE:}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+sa-token:
+  # 与网关、content-service 保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    com.zaxxer.hikari: WARN

@@ -1,29 +1,57 @@
-# Nacos 动态配置文件模板 - 网关开发环境
-# 上传到 Nacos 后的 Data ID：gateway-nacos-sentinel-dev.yaml
-# 放在 Nacos 的内容在此维护（限流阈值等可动态调整项）
+# =============================================================
+# Nacos 动态配置模板 · 网关（开发环境）
+# 上传：Data ID = gateway-nacos-sentinel-dev.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
+#
+# 约定（三个服务一致）：
+#   · Nacos 上的键会覆盖本地 application-dev.yml 的同名键 → 本地那份是「Nacos 不可用时的兜底」，
+#     改这里请同时改本地文件，否则读本地文件的人会被误导。
+#   · 绝不放：sa-token.jwt-secret-key、任何口令、actuator 高危端点开关。
+#     （Nacos 当前 NACOS_AUTH_ENABLE=false 且暴露在公网时，写进去就等于公开；密钥只走环境变量）
+#   · 路由与 CORS 属于对外契约，留在 application-dev.yml 走代码评审，不在这里下发。
+# =============================================================
 
-# 基于来源 IP 的限流阈值（参考；当前网关未启用 Redis 令牌桶过滤器）
+# 基于来源 IP 的限流阈值（参考值；当前网关未启用 Redis 令牌桶过滤器）
 rate-limit:
   permits-per-second: 500
   burst-capacity: 1000
 
-# Sa-Token 可动态调整项（与各业务服务保持一致）
-#
-# 安全：jwt-secret-key 绝不要写进本文件！
-#   Nacos 配置是共享的 —— 当前 NACOS_AUTH_ENABLE=false，任何能访问 8848 的客户端都能读到；
-#   密钥只走环境变量 SA_TOKEN_JWT_SECRET（各服务 application-dev/prod.yml 中的占位符）。
-sa-token:
-  timeout: 604800
-  is-concurrent: true
-  is-share: true
-
-# 网关只用 Redis 检查 JWT 撤销列表；限流仍由 Nginx / Sentinel 承担。
 spring:
   data:
     redis:
+      # 只用于 JWT 撤销列表校验：Redis 不可用时返回 503，不允许故障放行，
+      # 因此超时取得短（500ms），网络抖动时更快暴露问题，而不是把请求挂住
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      timeout: 500ms
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  cloud:
+    sentinel:
+      eager: true
+      # 本地没起 Sentinel dashboard 时，心跳失败只记 ERROR 级日志（见 logging 段）
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+      # 网关流控模式
+      filter:
+        enabled: true
+
+sa-token:
+  # 与两个业务服务保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR
