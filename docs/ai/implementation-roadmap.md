@@ -1,8 +1,29 @@
 # 星笺 AI 代码实施路线
 
-> 状态：编码前实施方案。本文规定开发顺序、模块边界和每阶段验收条件；实际接口落地时再同步 `docs/api/README.md`、`docs/architecture/README.md`、`AGENTS.md` 和部署文档。
+> 状态：方案已定，从 M0 开始实施。
 >
-> 上位技术地图见 [README.md](README.md)。本文结合 2026-09-13 可公开访问的国内 AI 应用开发 JD，对原路线进行了工程化调整。
+> 本文规定开发顺序、模块边界和每阶段验收条件；接口落地时同步 `docs/api/README.md`、
+> `docs/architecture/README.md`、`AGENTS.md` 和部署文档。
+>
+> 上位技术地图见 [README.md](README.md)；**每轮的节奏、分工、验证命令、红线与决策门见
+> [development-workflow.md](development-workflow.md)**。本文结合 2026-09-13 可公开访问的国内 AI 应用开发 JD，对原路线进行了工程化调整。
+
+## 0. 开发进度
+
+> 完成一个切片就勾选这里，并同步 `development-workflow.md` §9。
+
+- [ ] M0 契约与工程骨架
+- [ ] M1 Java/Python 安全调用链
+- [ ] M2 多模型网关与结构化生成
+- [ ] M3 Dense RAG 最小闭环
+- [ ] M4 Advanced RAG 与增量索引
+- [ ] M5 前端问答与写作 Copilot
+- [ ] M6 国产模型与私有化推理
+- [ ] M7 可控单 Agent
+- [ ] M8 MCP、观测和生产保护
+- [ ] M9 作者记忆和个性化
+- [ ] M10 GraphRAG 与 LLM Wiki
+- [ ] M11 多模态和微调实验
 
 ## 1. 对比后的结论
 
@@ -554,8 +575,8 @@ npm run build
 
 ## 17. 数据库和索引迁移顺序
 
-1. `04_ai-schema.sql`：仅创建 `ai_*` 表。
-2. `05_post-outbox.sql`：由 `content-service` 文章领域拥有的索引事件表。
+1. `10_ai-schema.sql`：仅创建 `ai_*` 表（`01`–`09` 已被现有功能占用，AI 脚本从 10 开始编号）。
+2. `11_post-outbox.sql`：由 `content-service` 文章领域拥有的索引事件表。
 3. Qdrant collection 使用版本后缀，如 `stellar_post_chunks_v1`。
 4. 新索引先全量构建并评测，完成后通过 alias 原子切换。
 5. 回滚只切回旧 alias，不在失败部署中删除旧 collection。
@@ -591,7 +612,8 @@ REDIS_PORT
 
 ## 19. 建议的提交拆分
 
-AI 改动跨度大，每个提交只包含一个可验证主题。提交由用户执行，建议格式：
+AI 改动跨度大，每个提交只包含一个可验证主题；提交信息格式见 `development-workflow.md` §6。
+AI 可以按主题执行 `git commit`，**`git push` 一律由用户完成**。建议格式：
 
 ```text
 feat(ai): 搭建 Python AI 服务与健康检查

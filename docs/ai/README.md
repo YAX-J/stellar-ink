@@ -1,8 +1,9 @@
 # 星笺 AI 技术路线与学习方案
 
-按仓库模块和代码提交顺序拆分的实施计划见 [implementation-roadmap.md](implementation-roadmap.md)。
+- 实施顺序、模块边界与每阶段验收：[implementation-roadmap.md](implementation-roadmap.md)
+- 每轮的节奏、分工、验证命令、红线与决策门：[development-workflow.md](development-workflow.md)
 
-> 状态：方案阶段，仅用于技术选型和学习规划，不代表已经实现。
+> 状态：路线与流程已定稿，从 M0「契约与工程骨架」开始实施（进度清单见 roadmap §0）。
 >
 > 本文面向星笺 STELLAR INK 的 AI 能力建设，覆盖检索、Agent、知识库、记忆、多模态、模型工程、安全和评测等方向。技术成熟度按 2024 至 2026 年的行业实践判断；具体模型名称、SDK 版本、价格和可用区域，应在实现前重新核对对应厂商的官方文档。
 
@@ -278,6 +279,10 @@ LLM Wiki 不只是“让模型总结文章”，而是一条知识 ETL 管道：
 - 暂不引入 Elasticsearch 或 Neo4j；只有在图查询复杂度确实超过 MySQL 后再评估。
 
 ## 9. 分阶段路线
+
+> 本节的「阶段 0–7」是按能力分组的学习视角；**实际编码顺序以 roadmap 的 M0–M11 为准**，
+> 两者对应关系：阶段 0 ≈ M0–M2，阶段 1 ≈ M3–M4，阶段 2 ≈ M5，阶段 3 ≈ M9，
+> 阶段 4 ≈ M7–M8，阶段 5 ≈ M10，阶段 6 ≈ M11，阶段 7 ≈ M6 与 M11 的微调部分。
 
 ### 阶段 0：AI 基础设施
 

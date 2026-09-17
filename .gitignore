@@ -21,6 +21,10 @@ data/
 # Docker 部署敏感配置
 deploy/docker/.env
 
+# 本地密钥文件（模型 API Key、AI 内部签名密钥等，任何位置都不入库；.env.example 保留）
+.env
+.env.local
+
 # 本地启动脚本（含服务器 IP/密码等连接信息，不入库）
 deploy/scripts/start-all.bat
 # 本地对象存储凭据（含 COS SecretId/SecretKey，绝不可入库）
