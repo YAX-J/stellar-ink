@@ -1,0 +1,49 @@
+/* =============================================================
+ * 拉丁字体自托管（Space Grotesk / JetBrains Mono）
+ *
+ * 为什么自托管：这两个字族只用拉丁字符，全套才 82 KB。它们原先由
+ * fonts.googleapis.com + fonts.gstatic.com 提供，国内访问又慢又不稳，
+ * 而且这两个字族撑的是全站的「界面骨架」（品牌名、等宽标签、日期、数字）。
+ * 自托管后由本站提供（生产环境经 Nginx 的 30 天长缓存 + CDN 边缘）。
+ *
+ * 文件来源：Google Fonts 官方 CSS 返回的同一批 woff2，连同 unicode-range
+ * 一起搬过来，浏览器只会下载页面真正用到的那几个子集。
+ * 两个子集：latin（U+0000-00FF…）与 latin-ext（U+0100-02BA…）；
+ * Google 还会给一份 vietnamese 子集，本站无越南语内容，已省略。
+ * 字体许可：Space Grotesk 与 JetBrains Mono 均为 SIL Open Font License 1.1。
+ *
+ * ⚠️ 这两个字族在 Google 上是**变量字体**：400/500/700（等宽是 400/600）
+ * 返回的是同一个文件（已用 SHA256 核对过）。因此这里 4 个文件按字重声明成
+ * 多条 @font-face —— 这正是 Google 官方 CSS 的输出形态，好处是**字重匹配行为
+ * 与迁移前完全一致**（同样是 400/500/700 三个候选面，不会因为写成一个
+ * `font-weight:400 700` 区间而让 600 之类的中间字重改变取到的实例）。
+ * 想要更细的中间字重（轴范围：Space Grotesk 300-700 / JetBrains Mono 100-800）时，
+ * 再把对应条目改成区间声明即可，无需换文件。
+ *
+ * 中文（Noto Sans SC / Noto Serif SC）不在这里：单字重 4.4-5.9 MB，
+ * 不适合进仓库，仍由 index.html 引入 Google Fonts（异步加载，不阻塞渲染）。
+ * ============================================================ */
+
+/* Space Grotesk 变量字体 · latin-ext · 18.5 KB */
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/space-grotesk-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;}
+
+/* Space Grotesk 变量字体 · latin · 21.8 KB */
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/space-grotesk-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/space-grotesk-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;}
+
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/space-grotesk-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/space-grotesk-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;}
+
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/space-grotesk-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+
+/* JetBrains Mono 变量字体 · latin-ext · 11.4 KB */
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/jetbrains-mono-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;}
+
+/* JetBrains Mono 变量字体 · latin · 30.7 KB */
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/jetbrains-mono-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
+
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/jetbrains-mono-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;}
+
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/jetbrains-mono-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}

@@ -11,10 +11,14 @@
   --on-primary:#17102B;
   --amber:#FFB454; --teal:#4DC9D9; --rose:#FF6B9D;
   --line:rgba(255,255,255,.09);
-  --font-display:'Space Grotesk','Noto Serif SC',serif;
-  --font-serif:'Noto Serif SC',serif;
-  --font-body:'Noto Sans SC',system-ui,sans-serif;
-  --font-mono:'JetBrains Mono',monospace;
+  /* 字体：拉丁字族由 styles/fonts.css 自托管（不再走 Google）；
+     中文 Noto 仍由 index.html 从 Google Fonts 异步加载，加载中或加载失败时
+     用系统字体渲染 —— 所以这里把各平台的系统中文字体逐个列出来，
+     避免回退到泛型 serif（Windows 会掉到 Times/宋体，观感差别很大）。 */
+  --font-display:'Space Grotesk','Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+  --font-serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+  --font-body:'Noto Sans SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --r-lg:24px; --r-md:16px; --r-sm:10px;
   --ease-spring:cubic-bezier(.34,1.56,.64,1);
   --ease-standard:cubic-bezier(.2,0,0,1);
