@@ -26,7 +26,7 @@ stellar-ink/
 ├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
 ├── docs/architecture/              微服务架构说明
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
-├── docs/ai/README.md               AI 技术路线、原理对比与分阶段学习方案
+├── docs/ai/                        AI：技术路线（README）/ 实施顺序（implementation-roadmap）/ 开发流程（development-workflow）
 ├── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
 └── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/2 服务/前端 Nginx，详见其 README）
 ```
@@ -221,6 +221,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
   （默认 public，config 与 discovery 必须同空间，3 个服务要一起设）；
   MySQL 用 `MYSQL_HOST/PORT/DB/USER/PASSWORD`；JWT 密钥用 `SA_TOKEN_JWT_SECRET`。
+- **网络超时必须显式配**（本地跨公网连服务器时尤其重要：曾因链路抖动十几秒 + 默认无限等，
+  把 `/tags` 挂到 23s）。约定：Redis `timeout` dev `500ms` / prod `1s`、`connect-timeout: 2s`
+  （缓存是旁路，超时到点即回源；网关撤销检查 fail-closed，缩短超时只是更快暴露 503，不放行）；
+  JDBC URL 必须带 `connectTimeout=3000&socketTimeout=15000`（Connector/J 默认 0 = 无限等，
+  只能等操作系统放弃，Windows 约 21s）；Druid `max-wait: 5000`、`validation-query-timeout: 3`。
+  改这些值时同步 `nacos-application-dev.yml` 模板，别只改本地文件。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
@@ -263,6 +269,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   且不得出现在公开列表、标签聚合与搜索里；`note` 的归属判定 `ensureOwned` **比文章更严格**
   —— 只有作者本人能改/删，ADMIN 也不能操作他人笔记。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
+- **种子数据的 id 必须与时间同向递增**：文章/笔记/流星/回声的默认列表是 `ORDER BY id DESC`
+  （见 `PostServiceImpl.applyOrder` 的 latest），id 与 `created_at` 反向排列会让首页「最近星尘」、
+  星图长卷、笔记「全部」视图出现时间倒挂。现有内容包（post 16+ / note 11+ / meteor 6+ /
+  echo 8+ / link 7+ / comment 3+ / user 4+）已按此约定排好，续写时沿用。
+- **直接写库（绕过服务）不会推进 Redis 缓存版本**：写完要清 `stellar-ink:content:cache:*`
+  （`KEYS` 后 `DEL`），否则 `/tags`、`/stats/overview` 和列表页仍是旧值；
+  **绝不要动 `stellar-ink:auth:revoked:*`**（那是 JWT 撤销列表，删掉等于让已登出的令牌复活）。
 
 ### 日志（slf4j + logback-spring.xml）
 - 一律 `@Slf4j`；关键业务动作 info，登录失败/未授权/业务异常 warn（不含敏感信息），未捕获 error。
@@ -281,8 +294,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
   草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
-- **AI 当前状态**：已进入方案阶段，技术路线见 `docs/ai/README.md`，尚未实现具体 AI 功能；
-  `ai-client`、`stellar-ink-ai` 不得在未明确拆分任务时自行扩展。文件上传、
+- **AI 当前状态**：技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
+  开发流程（`docs/ai/development-workflow.md`）均已定稿，**从 M0「契约与工程骨架」开始实施**：
+  一轮一个可验证切片、一个主题一个提交，M0 全程用 Fake Adapter 且不需要任何密钥；
+  M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调。`ai-client`、`stellar-ink-ai`
+  只实现路线中已列出的切片内容，不在未明确拆分任务时自行扩展。文件上传、
   全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
   AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
