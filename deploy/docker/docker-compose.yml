@@ -175,9 +175,17 @@ services:
     depends_on:
       - gateway
     ports:
+      # :80 只做健康检查与到 https 的 301；:443 是 Cloudflare 回源入口
+      # （Cloudflare Origin 证书 + Authenticated Origin Pulls，见同目录 README 第五节）
       - "${WEB_PORT:-80}:80"
+      - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      # Cloudflare Origin 证书（固定文件名 origin.pem / origin.key）；data/ 已被 .gitignore 忽略
+      # 特意挂到 /etc/nginx/origin，避免覆盖镜像里 /etc/nginx/cloudflare 的回源 CA
+      - ./data/certs:/etc/nginx/origin:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      # 走 :80 的 /healthz：不经过 TLS，也不受「回源必须带客户端证书」影响
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -17,6 +17,10 @@ ENV TZ=Asia/Shanghai
 COPY deploy/docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 # 反代公共指令片段（被 default.conf 中多个 location 通过 include 引用）
 COPY deploy/docker/nginx/api_proxy.inc /etc/nginx/conf.d/api_proxy.inc
+# Cloudflare 真实客户端 IP 还原（CF 全部网段 + CF-Connecting-IP），必须在边缘限流之前生效
+COPY deploy/docker/nginx/cloudflare_real_ip.inc /etc/nginx/conf.d/cloudflare_real_ip.inc
+# Cloudflare 回源客户端证书的 CA（公开证书、非密钥）：配合 default.conf 的 ssl_verify_client on
+COPY deploy/docker/nginx/cloudflare-origin-pull-ca.pem /etc/nginx/cloudflare/origin-pull-ca.pem
 COPY --from=build /web/dist /usr/share/nginx/html
 
-EXPOSE 80
+EXPOSE 80 443

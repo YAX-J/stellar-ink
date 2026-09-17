@@ -20,7 +20,7 @@ Docker Compose 一键编排：**网关 + 2 个业务服务 + 前端 Nginx**，�
 |---|---|---|---|
 | gateway | 8080 | **仅宿主机 `127.0.0.1`**（`GATEWAY_PORT`，默认 8080） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
 | user/content | 8101-8102 | 不暴露 | 网关经 Nacos 服务发现路由；content 内按领域分包；user-service 另挂载 `./data/uploads` 存头像 |
-| web（nginx） | 80 | `WEB_PORT`（默认 80） | 前端静态资源 + `/posts` 等 API 前缀反代到网关 |
+| web（nginx） | 80 / 443 | `WEB_PORT` / `WEB_HTTPS_PORT`（默认 80 / 443） | 前端静态资源 + API 前缀反代到网关；443 是 Cloudflare 回源入口（Origin 证书 + 回源校验），80 只做健康检查与 301 |
 
 ```
 浏览器 ──▶ web(:80)──静态 SPA；/auth|/posts|/meteors|/echos|/links|/stats|/uploads… ──▶ gateway(:8080)
@@ -132,17 +132,79 @@ docker compose down                     # 停止并移除本项目容器，不�
   两种实现的 `avatar_url` 形态不同（相对路径 / 绝对 URL），互相切换时对方的地址会被安全忽略、不会误删文件。
   详见 `docs/architecture/avatar-minio.md`。
 - **Knife4j 接口文档**：各服务在内部网络，未对外暴露；调试需要时可临时在 compose 给对应服务加 `ports` 映射。
-- **HTTPS**：建议由服务器上的宿主机 Nginx / Caddy / 云面板做 TLS 终结，反代到 `WEB_PORT`；如需直连网关，反代到 `127.0.0.1:GATEWAY_PORT`（网关端口只绑回环，见下条），本编排不做证书管理。
+- **HTTPS**：由 `web` 容器的 nginx 终结（Cloudflare Origin 证书 + SSL/TLS 模式 Full (strict) + Authenticated Origin Pulls），**详见第五节**；`:80` 只保留健康检查与到 https 的 301。
 - **网关端口**：`gateway` 的 `8080` 只绑宿主机 `127.0.0.1`。前端经 `web` 容器走容器内网 `http://gateway:8080`，不经过宿主机端口；若把 8080 暴露到公网，`/actuator/prometheus` 等内部指标会匿名可达，且可绕过 nginx 的边缘限流直连网关。需本机调试时用 SSH 隧道：`ssh -L 8080:127.0.0.1:8080 root@服务器`。
 
-## 五、安全配置要点（上线前请确认）
+## 五、HTTPS：Cloudflare + Origin 证书
+
+站点由 Cloudflare 代理，**TLS 在 `web` 容器的 nginx 里终结**（`:443`），证书用 Cloudflare Origin 证书，
+SSL/TLS 模式选 **Full (strict)**，并启用 **Authenticated Origin Pulls**（只有携带 Cloudflare 客户端证书的回源能握手）。
+
+```text
+浏览器 ──TLS(CF 边缘证书)──▶ Cloudflare ──TLS(Origin 证书 + 回源客户端证书)──▶ web:443 ──▶ gateway:8080
+```
+
+### 1. 放证书（不进仓库）
+
+nginx 配置里把文件名写死为 `origin.pem` / `origin.key`，所以从 Cloudflare 下载后要改名：
+
+```bash
+cd deploy/docker
+mkdir -p data/certs
+mv ~/stellar.ink.pem data/certs/origin.pem      # Origin 证书
+mv ~/stellar.ink.key data/certs/origin.key      # 私钥
+chmod 600 data/certs/origin.key
+```
+
+- `data/` 已被 `.gitignore` 忽略，证书不会入库；compose 以只读方式挂到 `/etc/nginx/origin`。
+- 回源 CA（`cloudflare-origin-pull-ca.pem`）**随镜像提供**，不需要你放；文件名见 `nginx/` 目录。
+
+### 2. Cloudflare 面板设置（按这个顺序做）
+
+| 顺序 | 位置 | 设置 |
+|---|---|---|
+| 1 | DNS | 站点域名加 A 记录指向源站 IP，代理状态**打开（橙云）** |
+| 2 | SSL/TLS → Overview | 模式选 **Full (strict)** |
+| 3 | SSL/TLS → Edge Certificates | 打开 **Always Use HTTPS** |
+| 4 | SSL/TLS → Origin Server | 打开 **Authenticated Origin Pulls**（用「全局」那个，不是 Per-Hostname） |
+| 5 | SSL/TLS → Edge Certificates | 需要时再开 HSTS（先 `max-age=15552000`，不要勾 preload） |
+| 6 | Caching → Cache Rules | 建议加一条：`/auth`、`/user`、`/posts`、`/notes`、`/tags`、`/search`、`/meteors`、`/echos`、`/links`、`/stats` 前缀 **Bypass cache**，别把带鉴权语义的响应缓存到边缘 |
+
+同时把 `.env` 的 `GATEWAY_CORS_ORIGINS` 改成实际域名（`https://你的域名`）并重启 gateway。
+
+### 3. 上线
+
+```bash
+docker compose build web          # default.conf 是构建进镜像的，改了配置必须重建
+docker compose up -d web
+docker compose exec web nginx -t  # 先验证语法，再放流量
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/healthz   # 应得 200（走 :80）
+```
+
+用 `https://源站IP` 直连会被拒（握手缺客户端证书）——**这是预期行为**，验证请走自己的域名（经 Cloudflare）。
+
+### 4. 三个容易踩的坑
+
+1. **顺序**：Authenticated Origin Pulls 必须**先在 Cloudflare 打开**，再上线带 `ssl_verify_client on` 的配置；
+   反过来会让所有请求在 TLS 握手阶段被拒（nginx 返回 400）。
+2. **真实 IP 必须还原**：Cloudflare 回源后 `$remote_addr` 会变成 CF 边缘 IP，而本编排的边缘限流正是按它做的
+   —— 所以 `nginx/cloudflare_real_ip.inc` 里列了 CF 全部网段并指定 `CF-Connecting-IP`。
+   **该文件要定期对齐**（每季度对一次 <https://www.cloudflare.com/ips-v4>）：漏了网段的表现为部分访客被当成
+   CF 的 IP，限流串号、日志里看不到真实来源。
+3. **Cloudflare 不保护非 HTTP 端口**：3306 / 6379 / 8848 该关还得关（安全组只放行自己的出口 IP，或走 SSH 隧道）。
+   站点放到 CF 后面不等于源站安全，源站真实 IP 也可能通过 DNS 历史或证书透明度日志被找到。
+
+> 以后接 SSE / AI 流式时注意：Cloudflare 免费版对代理请求有约 100 秒的无数据超时（超时返回 524），
+> 长连接需要心跳；nginx 侧还要对相应 location 关掉 `proxy_buffering`。
+
+## 六、安全配置要点（上线前请确认）
 
 | 项 | 现状 | 说明 |
 |---|---|---|
 | 网关自动路由 | **已关闭** | `spring.cloud.gateway.discovery.locator.enabled: false`。开启后会生成 `/{serviceId}/**` 自动路由（如 `/content-service/**`），该前缀不在鉴权白名单内，**可绕过网关鉴权直接读写下游**（含 `/internal/**`）。路由一律在 `routes` 中显式声明 |
 | 网关鉴权策略 | **默认拒绝 + 显式白名单** | 除登录、读请求、公开写接口外一律要求有效 token。新增路由默认受保护，不会因漏配置而裸奔 |
 | Actuator | 已收敛 | 仅 `health,info,metrics,loggers`；`heapdump`/`env`/`configprops`/`beans`/`threaddump`/`shutdown` 已单独 `enabled: false`。**heapdump 可导出堆内存明文（含 JWT 密钥），脱敏无效，绝不可暴露** |
-| 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠 |
+| 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠；**在 Cloudflare 后面时必须靠 `cloudflare_real_ip.inc` 还原真实 IP**，否则全站访客共用一个 CF 边缘 IP，会互相挤掉限额（见第五节第 4 条） |
 | 头像上传 | 已加固 | 服务端重命名（不用客户端文件名，杜绝 `../` 与可执行后缀）、ImageIO 读魔数认格式、1MB 双拦（multipart + 业务层），Nginx `client_max_body_size 2m` 兜底；`/uploads/` 只读且由 nginx 单独转发到网关（不放静态目录，避免被长缓存规则截走） |
 | 登录防爆破 | 已启用 | user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次锁定 15 分钟，多实例共享状态 |
 | JWT 撤销 | 已启用 | 登出或改密后，当前 JWT 摘要进入 Redis 直到自然过期；网关响应式检查，Redis 故障时返回 503 而不是放行撤销令牌 |
@@ -151,7 +213,7 @@ docker compose down                     # 停止并移除本项目容器，不�
 | 网关端口 | 仅宿主机回环 | `127.0.0.1:${GATEWAY_PORT}:8080`。前端走容器内网 `gateway:8080`，无需对外发布端口 |
 | JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。本编排对 3 个 Java 服务统一注入 `SA_TOKEN_JWT_SECRET`，密钥弱时整体拒绝启动（fail-closed） |
 
-## 六、内存预算（默认 mem_limit）
+## 七、内存预算（默认 mem_limit）
 
 | 服务 | 上限 | | 服务 | 上限 |
 |---|---|---|---|---|
@@ -162,7 +224,7 @@ docker compose down                     # 停止并移除本项目容器，不�
 Java 服务统一使用 `-Xms32m -Xmx128m` 和 `SerialGC`，适合低并发个人博客；`256m` 上限包含 JVM 堆外内存，不建议继续盲目下调。
 加上已有的 mysql/redis/qdrant，建议服务器至少 2G 内存；如果出现容器 `OOMKilled` 或 `OutOfMemoryError`，再把相关服务上限调到 320m。
 
-## 七、常见问题
+## 八、常见问题
 
 - **端口被占用**：改 `.env` 的 `WEB_PORT` / `GATEWAY_PORT`。
 - **业务服务起不来、报 MySQL 连接失败**：核对 `.env` 密码与账号；确认该账号允许从 Docker 网段连接（见上文建账号 SQL）；`docker compose logs user-service` 看详情。
