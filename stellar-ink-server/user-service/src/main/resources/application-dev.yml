@@ -11,35 +11,37 @@ spring:
       config:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
         file-extension: yaml
-        namespace: ${NACOS_NAMESPACE:}  # 命名空间（默认 public）
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}  # 命名空间（默认 public）
         group: DEFAULT_GROUP
         refresh-enabled: true
       # 服务发现
       discovery:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
         group: DEFAULT_GROUP
-        namespace: ${NACOS_NAMESPACE:}
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
 
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true
+    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路抖动时只能等操作系统放弃（Windows 约 21s）
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
     druid:
       initial-size: 5
       min-idle: 5
       max-active: 10
-      max-wait: 60000
+      max-wait: 5000                    # 拿不到连接最多等 5s：宁可快速失败，也不要把线程挂到 60s
       time-between-eviction-runs-millis: 60000
       min-evictable-idle-time-millis: 300000
       keep-alive: true
       keep-alive-between-time-millis: 120000
       validation-query: SELECT 1
+      validation-query-timeout: 3       # 保活探测也要有上限，否则抖动时 SELECT 1 自己先挂住
       test-while-idle: true
       test-on-borrow: false
       test-on-return: false
@@ -53,8 +55,12 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      # 缓存/登录锁定都是短路操作：读超时到点就该返回，不跟着网络抖动弹十几秒。
+      # dev 常连远端 Redis（本机 → 服务器），取 500ms；prod 见 application-prod.yml 的 1s。
+      timeout: 500ms
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
 
   # 头像上传：单文件 1MB（业务层同值再校验一次），整个请求 2MB 与 Nginx client_max_body_size 对齐
   servlet:

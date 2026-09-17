@@ -12,18 +12,18 @@ spring:
       config:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
         file-extension: yaml  # 明确指定为 yaml
-        namespace: ${NACOS_NAMESPACE:}  # 命名空间（默认 public）
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}  # 命名空间（默认 public）
         group: DEFAULT_GROUP
         refresh-enabled: true  # 开启配置动态刷新
       # 服务发现
       discovery:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
         group: DEFAULT_GROUP
-        namespace: ${NACOS_NAMESPACE:}
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
 
     # 网关配置
     gateway:
@@ -76,8 +76,12 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      # 撤销检查是 fail-closed：超时缩短只是让「Redis 不可达」更快暴露成 503，
+      # 不会放行任何已撤销令牌；dev 取 500ms（本机常连远端 Redis），prod 用 1s。
+      timeout: 500ms
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
 
 # 基础不可变配置
 sa-token:

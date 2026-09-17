@@ -23,15 +23,17 @@ spring:
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true
+    # 连接/读超时必须显式给：默认 0 = 无限等，链路异常时只能等操作系统放弃
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD}
     druid:
       initial-size: 5
       min-idle: 5
       max-active: 20
-      max-wait: 60000
+      max-wait: 5000
       validation-query: SELECT 1
+      validation-query-timeout: 3
       test-while-idle: true
 
   data:
@@ -40,8 +42,10 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      timeout: 1s
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
 
   # 头像上传：单文件 1MB，整个请求 2MB 与 Nginx client_max_body_size 对齐
   servlet:

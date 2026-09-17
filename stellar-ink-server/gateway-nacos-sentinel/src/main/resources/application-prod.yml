@@ -64,8 +64,10 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
-      timeout: 3s
-      connect-timeout: 3s
+      timeout: 1s
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
 
 sa-token:
   token-name: Authorization
