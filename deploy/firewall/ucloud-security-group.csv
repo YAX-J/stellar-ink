@@ -1,0 +1,47 @@
+﻿策略,协议,端口,来源IP,优先级,备注
+Accept,TCP,22,<改成你的固定公网IP>/32,100,SSH 管理入口；本地连库的 SSH 隧道也走它
+Accept,TCP,443,173.245.48.0/20,100,Cloudflare 回源
+Accept,TCP,443,103.21.244.0/22,100,Cloudflare 回源
+Accept,TCP,443,103.22.200.0/22,100,Cloudflare 回源
+Accept,TCP,443,103.31.4.0/22,100,Cloudflare 回源
+Accept,TCP,443,141.101.64.0/18,100,Cloudflare 回源
+Accept,TCP,443,108.162.192.0/18,100,Cloudflare 回源
+Accept,TCP,443,190.93.240.0/20,100,Cloudflare 回源
+Accept,TCP,443,188.114.96.0/20,100,Cloudflare 回源
+Accept,TCP,443,197.234.240.0/22,100,Cloudflare 回源
+Accept,TCP,443,198.41.128.0/17,100,Cloudflare 回源
+Accept,TCP,443,162.158.0.0/15,100,Cloudflare 回源
+Accept,TCP,443,104.16.0.0/13,100,Cloudflare 回源
+Accept,TCP,443,104.24.0.0/14,100,Cloudflare 回源
+Accept,TCP,443,172.64.0.0/13,100,Cloudflare 回源
+Accept,TCP,443,131.0.72.0/22,100,Cloudflare 回源
+Accept,TCP,443,2400:cb00::/32,100,Cloudflare 回源
+Accept,TCP,443,2606:4700::/32,100,Cloudflare 回源
+Accept,TCP,443,2803:f800::/32,100,Cloudflare 回源
+Accept,TCP,443,2405:b500::/32,100,Cloudflare 回源
+Accept,TCP,443,2405:8100::/32,100,Cloudflare 回源
+Accept,TCP,443,2a06:98c0::/29,100,Cloudflare 回源
+Accept,TCP,443,2c0f:f248::/32,100,Cloudflare 回源
+Accept,TCP,80,173.245.48.0/20,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,103.21.244.0/22,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,103.22.200.0/22,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,103.31.4.0/22,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,141.101.64.0/18,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,108.162.192.0/18,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,190.93.240.0/20,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,188.114.96.0/20,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,197.234.240.0/22,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,198.41.128.0/17,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,162.158.0.0/15,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,104.16.0.0/13,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,104.24.0.0/14,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,172.64.0.0/13,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,131.0.72.0/22,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2400:cb00::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2606:4700::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2803:f800::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2405:b500::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2405:8100::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2a06:98c0::/29,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,TCP,80,2c0f:f248::/32,100,可选：只有 CF 走 80 才需要，不加也行
+Accept,ICMP,-,0.0.0.0/0,100,保留路径 MTU 发现，避免大包被丢
