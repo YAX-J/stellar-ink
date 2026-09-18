@@ -1,14 +1,16 @@
 # =============================================================================
-# 星笺 STELLAR INK 生产部署编排（Docker Compose v2，需 Docker 20.10+ 支持 host-gateway）
+# 星笺 STELLAR INK 生产部署编排（Docker Compose v2）
 #
-# 拓扑：web(nginx:80，唯一对公网入口) → gateway(:8080，仅容器内网) → 业务服务(8101-8102，仅内部网络)
-#       全部 Java 服务经 host-gateway 注册/读配置到宿主机 Nacos(:8848)
+# 拓扑（一台机器整栈自洽，不再依赖宿主机预装任何东西）：
+#   web(nginx:80/443，唯一对公网入口) → gateway(:8080，容器内网) → 业务服务(8101-8102)
+#   全部 Java 服务 → nacos(:8848/9848 注册与配置) / redis(:6379) ；业务服务 → mysql(:3306)
+#   qdrant(:6333) 目前业务未使用，为 AI 阶段（M3 起）预留
 #
-# 服务器上已有的 Nacos(:8848/9848) 进程及 mysql(:3306)/redis(:6379)/qdrant(:6333-6334) 容器由宿主机维护，
-# 本编排不重复创建：业务服务访问 MySQL，三个 Java 服务均访问 Redis；
-# Qdrant 现阶段业务未使用，后续接入 AI 时再纳入。
+# 三个环境（生产 / 测试 / 本地开发）的关系与网络限制见同目录 README.md 第一节。
 #
-# 敏感配置统一放同目录 .env（参照 .env.example）；首次部署步骤见同目录 README.md
+# 敏感配置统一放同目录 .env（模板见 .env.example）；首次部署步骤见同目录 README.md。
+# 数据落盘：MySQL/Redis/Qdrant/Nacos 用 Docker 具名卷（避免 bind mount 的属主问题），
+#          日志/头像/证书用 ./logs、./data/*（都在仓库目录下，已 gitignore）。
 # =============================================================================
 name: stellar-ink
 
@@ -16,16 +18,17 @@ name: stellar-ink
 x-common-env: &common-env
   TZ: Asia/Shanghai
   SPRING_PROFILES_ACTIVE: prod
-  # Nacos 运行在宿主机，Linux 通过 extra_hosts 将该别名解析到 host-gateway。
-  NACOS_ADDR: ${NACOS_ADDR:-host.docker.internal:8848}
+  # Nacos 与 Redis 都在本编排内，直接用服务名访问（改回宿主机服务时填 host.docker.internal）
+  NACOS_ADDR: ${NACOS_ADDR:-nacos:8848}
   NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
   NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
   SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
-  REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+  REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
   REDIS_DATABASE: ${REDIS_DATABASE:-0}
   # 小内存服务器方案：显式限制堆并使用 SerialGC，避免 JVM 按容器上限预留大堆。
+  # 8G 机器上如需放宽，改这里即可（三处共用）：-Xmx256m 起步、上限 mem_limit 到 384m/512m。
   JAVA_OPTS: >-
     -Xms32m
     -Xmx128m
@@ -36,10 +39,10 @@ x-common-env: &common-env
 # —— 业务服务的数据基础设施配置 ——
 x-db-env: &db-env
   <<: *common-env
-  MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+  MYSQL_HOST: ${MYSQL_HOST:-mysql}
   MYSQL_PORT: ${MYSQL_PORT:-3306}
   MYSQL_DB: ${MYSQL_DB:-stellar_ink}
-  MYSQL_USER: ${MYSQL_USER:-root}
+  MYSQL_USER: ${MYSQL_USER:-stellar}
   MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
 
 # —— 后端镜像：共用一个 Dockerfile，仅 JAR_PATH 不同（Maven 全量编译只执行一次）——
@@ -47,7 +50,7 @@ x-server-build: &server-build
   context: ../..
   dockerfile: stellar-ink-server/Dockerfile
 
-# —— 从容器内访问宿主机服务（Linux 需 host-gateway）——
+# —— 从容器内访问宿主机服务（仅当把 MySQL/Redis/Nacos 换回宿主机进程时才需要）——
 x-extra-hosts: &extra-hosts
   - "host.docker.internal:host-gateway"
 
@@ -58,14 +61,115 @@ x-health: &health-defaults
   retries: 6
   start_period: 90s
 
-# —— 日志轮转 ——
+# —— 日志轮转（防止容器日志写满磁盘）——
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: "20m"
     max-file: "3"
 
+# —— 数据卷（具名卷由 Docker 管理，避免 bind mount 后容器内用户无写权限）——
+volumes:
+  mysql-data:
+  redis-data:
+  qdrant-data:
+  nacos-data:
+
 services:
+  # ------------------------------------------------------- 注册/配置中心 Nacos
+  nacos:
+    image: nacos/nacos-server:v2.4.3
+    container_name: stellar-ink-nacos
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MODE: standalone
+      # 单机模式用内置 Derby，无需外部数据库；数据落在 nacos-data 卷
+      NACOS_AUTH_ENABLE: "true"
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-SecretKey012345678901234567890123456789012345678901234567890123456789}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-serverIdentity}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-security}
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+    volumes:
+      - nacos-data:/home/nacos/data
+    ports:
+      # 仅绑宿主机回环，方便用 SSH 隧道开控制台：ssh -L 8848:127.0.0.1:8848 <服务器>
+      # 容器之间走服务名 nacos:8848 / nacos:9848，不经宿主机端口。
+      # ⚠️ 绝不要把 8848/9848 暴露到公网（Nacos 未授权访问是常见入侵入口）。
+      - "127.0.0.1:${NACOS_PORT:-8848}:8848"
+    mem_limit: 900m
+    logging: *default-logging
+
+  # -------------------------------------------------------------------- MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: stellar-ink-mysql
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # root 只用于运维（备份/导入）；业务服务用下面的专用账号
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DB:-stellar_ink}
+      MYSQL_USER: ${MYSQL_USER:-stellar}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 个人博客规模：256M 缓冲池足够；数据量上来后可调到 512M（8G 机器还有余量）
+      - --innodb-buffer-pool-size=256M
+      - --max-connections=100
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动（数据卷为空时）自动按文件名顺序执行，建库由 MYSQL_DATABASE 完成。
+      # ⚠️ 只挂 01/02：01_schema.sql 已是「当前完整表结构」，03-09 是给早期库做增量升级的，
+      #    在全新库上重复执行会报列已存在。
+      - ../sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ../sql/02_init-data.sql:/docker-entrypoint-initdb.d/02_init-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    # 不发布端口：只有本编排网络内的服务能连，公网与宿主机都不可达
+    mem_limit: 1g
+    logging: *default-logging
+
+  # -------------------------------------------------------------------- Redis
+  redis:
+    image: redis:7-alpine
+    container_name: stellar-ink-redis
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    # appendonly：JWT 撤销列表、登录失败计数需要跨重启保留
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "192mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      # 若给 Redis 设了密码，改为：redis-cli -a "$REDIS_PASSWORD" ping
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 256m
+    logging: *default-logging
+
+  # ------------------------------------------------------------------- Qdrant
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: stellar-ink-qdrant
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - qdrant-data:/qdrant/storage
+    # 目前业务未使用（AI 阶段 M3 起接入向量检索）；不发布端口，仅在编排网络内可达
+    mem_limit: 512m
+    logging: *default-logging
+
   # -------------------------------------------------------------------- 网关
   gateway:
     build:
@@ -75,6 +179,11 @@ services:
     image: stellar-ink/gateway:latest
     container_name: stellar-ink-gateway
     restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       <<: *common-env
       # 必填、无默认值：避免漏配时默认放开通配 "*"
@@ -110,6 +219,13 @@ services:
     image: stellar-ink/user-service:latest
     container_name: stellar-ink-user-service
     restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       <<: *db-env
       # 头像存储：local 用下方卷目录；cos 用腾讯云对象存储（此时卷不再使用，可保留以备回滚）
@@ -146,6 +262,13 @@ services:
     image: stellar-ink/content-service:latest
     container_name: stellar-ink-content-service
     restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       <<: *db-env
     extra_hosts: *extra-hosts
@@ -176,15 +299,13 @@ services:
       - gateway
     ports:
       # :80 只做健康检查与到 https 的 301；:443 是 Cloudflare 回源入口
-      # （Cloudflare Origin 证书 + Authenticated Origin Pulls，见同目录 README 第五节）
+      # （Cloudflare Origin 证书；安全组只放行你的 IP + Cloudflare 网段，见 README 第五节）
       - "${WEB_PORT:-80}:80"
       - "${WEB_HTTPS_PORT:-443}:443"
     volumes:
       # Cloudflare Origin 证书（固定文件名 origin.pem / origin.key）；data/ 已被 .gitignore 忽略
-      # 特意挂到 /etc/nginx/origin，避免覆盖镜像里 /etc/nginx/cloudflare 的回源 CA
       - ./data/certs:/etc/nginx/origin:ro
     healthcheck:
-      # 走 :80 的 /healthz：不经过 TLS，也不受「回源必须带客户端证书」影响
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
       interval: 30s
       timeout: 5s

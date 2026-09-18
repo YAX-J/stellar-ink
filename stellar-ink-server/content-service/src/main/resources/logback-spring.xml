@@ -2,9 +2,10 @@
 <configuration>
     <property name="LOG_HOME" value="./logs"/>
     <property name="APP_NAME" value="content_service"/>
-    <property name="MAX_FILE_SIZE" value="200MB"/>
-    <property name="TOTAL_SIZE_CAP" value="20GB"/>
-    <property name="MAX_HISTORY" value="30"/>
+    <!-- 单台机器磁盘有限：单文件 100MB × 保留 7 天 × 总上限 2G（原 200MB / 30 天 / 20G） -->
+    <property name="MAX_FILE_SIZE" value="100MB"/>
+    <property name="TOTAL_SIZE_CAP" value="2GB"/>
+    <property name="MAX_HISTORY" value="7"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
