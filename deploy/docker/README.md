@@ -190,17 +190,40 @@ docker compose up -d web                      # 或首次 build 后直接 up
 
 同时把 `.env` 的 `GATEWAY_CORS_ORIGINS` 改成实际域名（`https://你的域名`）并重启 gateway。
 
-### 3. 源站保护：安全组白名单（不用 mTLS）
+### 3. 源站保护：安全组白名单 + 主机防火墙（不用 mTLS）
 
-nginx **没有**启用 Authenticated Origin Pulls（`ssl_verify_client`），保护交给云安全组：
+nginx **没有**启用 Authenticated Origin Pulls（`ssl_verify_client`），保护交给网络层，共两道。
 
-- 入站 `443`：只放行 **Cloudflare 全部网段**（列表见 `nginx/cloudflare_real_ip.inc`，15×IPv4 + 7×IPv6）+ 你自己的 IP；
-- 入站 `22`：只放行你自己的固定 IP；
-- `80`：可只放行 Cloudflare 网段（容器健康检查走内部回环，不受影响）；
-- MySQL / Redis / Nacos / Qdrant 端口**一个都不要开**（它们在编排内网，宿主机端口也没发布）。
+**第一道：云安全组**（拦得住 Docker，最重要）
+
+| 方向 | 协议 | 端口 | 来源 | 说明 |
+|---|---|---|---|---|
+| 入站 | TCP | 22 | 你的固定 IP `/32` | 唯一管理入口；本地连库走的 SSH 隧道也用它 |
+| 入站 | TCP | 443 | Cloudflare 全部网段（15×IPv4 + 7×IPv6，见 `nginx/cloudflare_real_ip.inc`） | CF 回源 |
+| 入站 | TCP | 80 | 同上（也可以完全不开） | 只有 CF 走 80 时才需要；容器健康检查走内部回环，不依赖它 |
+| 入站 | ICMP | — | `0.0.0.0/0` | 保留路径 MTU 发现，避免大包被丢导致 TLS 握手偶发失败 |
+| 入站 | 其他 | 全部 | — | **一律拒绝**（3306/6379/6333/8848 没发布端口，这里再兜一层） |
+| 出站 | ALL | ALL | `0.0.0.0/0` | 拉镜像、调云 API、依赖下载 |
+
+**第二道（可选）：主机防火墙 `deploy/scripts/firewall.sh`**
+
+⚠️ 坑在这里：**ufw 拦不住 Docker 发布的端口**——Docker 会往 `FORWARD` 链插自己的 ACCEPT 规则，
+绕过 ufw 的 `INPUT` 规则。要真正限制容器端口，必须往 `DOCKER-USER` 链写规则，脚本已经做了：
+
+```bash
+sudo bash deploy/scripts/firewall.sh --dry-run            # 先看会加哪些规则，不改动
+sudo bash deploy/scripts/firewall.sh                      # 应用（SSH 来源自动识别）
+sudo bash deploy/scripts/firewall.sh --install-systemd    # 应用并装成开机自启（Docker 重启会重建 DOCKER-USER）
+```
+
+- Cloudflare 网段从 `nginx/cloudflare_real_ip.inc` 读取，**单一来源**，不用两处维护；
+- 只放行 22（管理 IP）、80/443（CF 网段）与 ICMP，其余入站拒绝；
+  `127.0.0.1` 发布的服务不受影响，SSH 隧道照常用；
+- 🔴 **锁死自救**：脚本会先放行当前 SSH 来源，但从本地控制台运行时务必带 `--ssh-source <你的IP>`；
+  真把自己关在门外了，用云控制台的 VNC（网页终端）登录执行 `ufw disable`。
 
 为什么不用 mTLS：生产与测试共用同一份 nginx 配置，测试机要能直接用 IP 访问（mTLS 会让直连在握手后被判 400）；
-安全组白名单效果相同、却不依赖 Cloudflare 面板开关，也少一个「先开开关再上线」的顺序坑。
+上面两层效果相同，却不依赖 Cloudflare 面板开关，也少一个「先开开关再上线」的顺序坑。
 
 ### 4. 上线与验证
 
