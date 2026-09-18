@@ -1,0 +1,43 @@
+# =============================================================
+# Nacos 动态配置模板 · 内容服务（生产环境）
+#
+# 上传：Data ID = content-service-prod.yaml，Group = DEFAULT_GROUP，格式 = YAML
+#       入口：Nacos 控制台 → 配置管理 → 配置列表 → 「+」
+#             （控制台只绑宿主机回环，用 SSH 隧道开：ssh -L 8848:127.0.0.1:8848 ubuntu@<服务器>）
+#
+# ⚠️ 可选文件：application-prod.yml 用的是 optional:nacos:... 导入，不建也能启动。
+#
+# 约定（与网关一致，详见 gateway 的 nacos-application-prod.yml 注释）：
+#   · 不放密钥、不放 actuator 端点开关、不放路由、不放部署拓扑；
+#   · SQL 日志开关（mybatis-plus.configuration.log-impl）刻意不放这里：
+#     生产是 NoLoggingImpl，排查时应该在 application-prod.yml 改并重新构建，
+#     避免有人从配置中心一键把线上 SQL 全打到日志里（含正文与参数，量大且涉隐私）；
+#   · 本文件的值 = 当前 application-prod.yml 的同类取值，发布不改变行为，只是搬到可热更新的位置。
+# =============================================================
+
+spring:
+  data:
+    redis:
+      # 公开文章/笔记读模型、标签/统计聚合、评论与友链缓存的载体
+      timeout: 1s
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  datasource:
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 5000
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    # 临时排查时按需放开：
+    # com.stellarink.content: DEBUG

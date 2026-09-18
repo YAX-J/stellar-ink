@@ -221,14 +221,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 所有接口统一返回 `Response<T>`（code/msg/data/traceId）；业务校验失败抛 `BusinessException`
   （用 `BusinessExceptionHelper.of(...)`），全局处理器带 traceId 并写 MDC。
 
-### 配置文件风格（照参考工程，每个服务统一 5 件）
+### 配置文件风格（照参考工程，每个服务统一 6 件）
 | 文件 | 内容 |
 |---|---|
 | `application.yml` | 极简：port + 应用名 + `profiles.active: dev` |
 | `application-dev.yml` | `spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator 全暴露 + 日志降噪 |
 | `application-prod.yml` | 生产：敏感项全走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
-| `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放敏感/可调项 |
-| `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天+200MB 滚动，30 天） |
+| `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放可调项 |
+| `nacos-application-prod.yml` | 生产模板（Data ID：`<app>-prod.yaml`）。**只放可调项，绝不放密钥**：Nacos 上的同名键会覆盖 `application-prod.yml` 的占位符，写进去等于把生产密钥搬进配置中心。prod 是 `optional:` 导入，**不建也能启动** |
+| `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天 + 100MB 滚动，保留 7 天，总上限 2G） |
 
 - Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
   （默认 public，config 与 discovery 必须同空间，3 个服务要一起设）；

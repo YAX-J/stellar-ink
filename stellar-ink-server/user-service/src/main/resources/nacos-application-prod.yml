@@ -1,0 +1,47 @@
+# =============================================================
+# Nacos 动态配置模板 · 用户服务（生产环境）
+#
+# 上传：Data ID = user-service-prod.yaml，Group = DEFAULT_GROUP，格式 = YAML
+#       入口：Nacos 控制台 → 配置管理 → 配置列表 → 「+」
+#             （控制台只绑宿主机回环，用 SSH 隧道开：ssh -L 8848:127.0.0.1:8848 ubuntu@<服务器>）
+#
+# ⚠️ 可选文件：application-prod.yml 用的是 optional:nacos:... 导入，不建也能启动。
+#
+# 约定（与网关一致，详见 gateway 的 nacos-application-prod.yml 注释）：
+#   · 不放密钥（jwt-secret-key / MySQL 口令 / COS 密钥）、不放 actuator 端点开关、不放路由、不放部署拓扑；
+#   · **头像存储开关故意不放在这里**：它与 .env 的 STORAGE_TYPE 是同一项，放两处只会互相打架；
+#   · 本文件的值 = 当前 application-prod.yml 的同类取值，发布不改变行为，只是搬到可热更新的位置。
+# =============================================================
+
+spring:
+  data:
+    redis:
+      # 登录失败计数、账号锁定、JWT 撤销、公开作者摘要缓存的载体
+      timeout: 1s
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  datasource:
+    druid:
+      # 只放池子参数；url / 账号 / 口令仍由 application-prod.yml + .env 提供
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 5000                 # 拿不到连接最多等 5s：宁可快速失败，也不要把线程挂到 60s
+      validation-query: SELECT 1
+      validation-query-timeout: 3    # 保活探测也要有上限，否则抖动时 SELECT 1 自己先挂住
+      test-while-idle: true
+  servlet:
+    multipart:
+      # 与 Nginx client_max_body_size 对齐；服务端另有 1MB 业务层双拦
+      max-file-size: 1MB
+      max-request-size: 2MB
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    # 临时排查时按需放开：
+    # com.stellarink.user: DEBUG

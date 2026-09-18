@@ -1,0 +1,57 @@
+# =============================================================
+# Nacos 动态配置模板 · 网关（生产环境）
+#
+# 上传：Data ID = gateway-nacos-sentinel-prod.yaml
+#       Group   = DEFAULT_GROUP
+#       格式    = YAML（spring.cloud.nacos.config.file-extension=yaml）
+#       命名空间 = 与 config/discovery 共用的那个
+#       入口    = Nacos 控制台 → 配置管理 → 配置列表 → 「+」
+#                 （控制台只绑宿主机回环：ssh -L 8848:127.0.0.1:8848 ubuntu@<服务器>
+#                   然后浏览器打开 http://localhost:8848/nacos）
+#
+# ⚠️ 这个文件是**可选**的：application-prod.yml 里是 optional:nacos:... 导入，
+#    不建也能正常启动（必需项全部来自 .env 与 application-prod.yml）。
+#    它的作用是「把可变参数搬到不需要重新构建镜像的位置」。
+#
+# 约定（三个服务一致）：
+#   · **不放密钥**：sa-token.jwt-secret-key、MySQL/Redis 口令、COS 密钥只走 .env。
+#     Nacos 上的同名键会覆盖 application-prod.yml（导入的配置优先级更高），
+#     把密钥写进来等于把生产密钥搬进了配置中心。
+#   · **不放 actuator 端点开关**：误开 heapdump 能导出堆内存明文（含 JWT 密钥），脱敏无效。
+#   · **不放路由与 CORS**：属对外契约，留在 application-prod.yml 走代码评审。
+#   · **不放部署拓扑**：MYSQL_HOST / REDIS_HOST / NACOS_ADDR / UPLOAD_DIR 这类地址与挂载点
+#     属于「这套部署」，只走 .env；Nacos 里只放「调优参数」。
+#   · 正式的环境变量（SPRING_* 形式）优先级仍高于 Nacos，两者不要放同一项。
+#
+# 本文件的值 = 当前 application-prod.yml 的同类取值，发布它不会改变行为，
+# 只是把这些键搬到可热更新的位置；以后想调就直接改这里并发布。
+# =============================================================
+
+spring:
+  data:
+    redis:
+      # 只用于 JWT 撤销列表校验：Redis 不可用时返回 503，不允许故障放行（fail-closed）。
+      # 同机同网下 1s 足够；若将来 Redis 挪到别的机器，再放宽到 2s。
+      timeout: 1s
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+  cloud:
+    sentinel:
+      eager: true
+      filter:
+        enabled: true
+      transport:
+        # 未部署 Sentinel dashboard 时这里连不上，客户端每 15s 打一条 WARN——
+        # 属刻意接受的无害噪音，下面 logging 已把它压到 ERROR。
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR
+    # 临时排查时按需放开的示例（改完发布即生效，Spring Cloud 的 LoggingRebinder 会重绑级别）：
+    # com.stellarink.gateway: DEBUG
