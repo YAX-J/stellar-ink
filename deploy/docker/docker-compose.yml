@@ -11,6 +11,13 @@
 # 敏感配置统一放同目录 .env（模板见 .env.example）；首次部署步骤见同目录 README.md。
 # 数据落盘：MySQL/Redis/Qdrant/Nacos 用 Docker 具名卷（避免 bind mount 的属主问题），
 #          日志/头像/证书用 ./logs、./data/*（都在仓库目录下，已 gitignore）。
+#
+# ⚠️ mem_limit 的取值规则（踩过一次坑）：**mem_limit ≈ JVM 堆上限 + 300MB 左右的堆外开销**。
+#   堆外包括 Metaspace（Spring Boot 3 + MyBatis-Plus + Druid 通常 100MB 上下）、Code Cache、
+#   线程栈、直接内存、GC 结构。之前把 Java 服务设成 256m（堆只有 -Xmx128m），结果容器被 cgroup
+#   OOM SIGKILL 后由 restart 策略重启，**日志里看不到任何 Java 异常栈**（只有反复启动的记录），
+#   极难判断。现在统一 512m；Redis 取同一数值是为 AOF 重写时的 fork + copy-on-write 留余量
+#   （其数据仍由 maxmemory 192mb 兜住）。实际占用看 docker stats，8G 机器仍有充足余量。
 # =============================================================================
 name: stellar-ink
 
@@ -160,7 +167,7 @@ services:
     ports:
       # 只绑宿主机回环，供本地开发经 SSH 隧道访问：ssh -L 6379:127.0.0.1:6379 ubuntu@<服务器>
       - "127.0.0.1:${REDIS_BIND_PORT:-6379}:6379"
-    mem_limit: 256m
+    mem_limit: 512m
     logging: *default-logging
 
   # ------------------------------------------------------------------- Qdrant
@@ -216,7 +223,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 256m
+    mem_limit: 512m
     logging: *default-logging
 
   # ---------------------------------------------------------------- 业务服务
@@ -260,7 +267,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 256m
+    mem_limit: 512m
     logging: *default-logging
 
   content-service:
@@ -293,7 +300,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 256m
+    mem_limit: 512m
     logging: *default-logging
 
   # -------------------------------------------------------------------- 前端

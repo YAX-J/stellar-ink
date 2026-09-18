@@ -288,12 +288,24 @@ curl -skI --max-time 8 --resolve www.baidu.com:443:<源站IP> https://www.baidu.
 | mysql | 1g | `innodb-buffer-pool-size=256M`；数据量上来后可调到 512M |
 | nacos | 900m | 单机模式，`JVM_XMX=512m` |
 | qdrant | 512m | 尚未使用（M3 起接入） |
-| redis | 256m | `maxmemory 192mb` + `noeviction`（宁可写失败，也不静默丢弃 JWT 撤销记录） |
-| gateway | 256m | `-Xmx128m` + SerialGC |
-| user-service | 256m | 同上 |
-| content-service | 256m | 同上 |
+| redis | 512m | `maxmemory 192mb` + `noeviction`（宁可写失败，也不静默丢弃 JWT 撤销记录）；限额留给 AOF 重写的 fork |
+| gateway | 512m | `-Xmx128m` + SerialGC |
+| user-service | 512m | 同上 |
+| content-service | 512m | 同上 |
 | web | 64m | nginx 静态与反代 |
-| **合计上限** | **≈3.5G** | 实际占用通常 2–3G，8G 机器跑完 M0–M11（AI 走云 API）仍有余量 |
+| **合计上限** | **≈4.5G** | 实际占用通常 2–3G，8G 机器跑完 M0–M11（AI 走云 API）仍有余量 |
+
+> ⚠️ **mem_limit 不能贴着堆设**：`mem_limit ≈ JVM 堆上限 + 300MB 左右堆外开销`
+> （Metaspace、Code Cache、线程栈、直接内存、GC 结构）。
+> 曾经把 Java 服务设成 `256m` 而堆是 `-Xmx128m`，容器被 cgroup OOM **SIGKILL** 后由
+> `restart: unless-stopped` 反复拉起——**日志里只有反复的启动记录，没有任何 Java 异常栈**，极易误判成
+> 「服务起不来」。判断方法：
+>
+> ```bash
+> docker inspect stellar-ink-user-service \
+>   --format 'OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}} Restarts={{.RestartCount}}'
+> docker stats --no-stream      # 看真实 RSS，再按上面规则反推合适的 mem_limit
+> ```
 
 三个 Java 服务统一 `-Xms32m -Xmx128m` + SerialGC，适合低并发个人博客；`256m` 上限已包含堆外内存。
 若出现 `OOMKilled` 或 `OutOfMemoryError`，把对应服务的 `mem_limit` 调到 384m 并同步 `-Xmx256m`。
