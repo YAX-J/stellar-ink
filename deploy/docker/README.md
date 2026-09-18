@@ -70,6 +70,23 @@ vi .env
 
 库名取自 `MYSQL_DB`，业务账号由容器按 `MYSQL_USER` / `MYSQL_PASSWORD` 自动创建并授权。
 
+> ⚠️ **中文变乱码的坑（已修，但你若在此之前初始化过就要重建）**：Docker 的 mysql 镜像自动执行
+> `/docker-entrypoint-initdb.d/*.sql` 时**不带** `--default-character-set`，而容器内 locale 是 POSIX/C，
+> mysql 客户端默认的 `auto` 就退回 `latin1` —— UTF-8 的中文被当 latin1 读入再转存，网页上显示成
+> 「æ×–â®¹」这类乱码（前端自己的文案正常，只有接口数据乱）。现在 `01_schema.sql` 与
+> `02_init-data.sql` 开头都加了 `SET NAMES utf8mb4;` 兜底。
+> **如果数据是在修复前导入的，必须删掉数据卷让它重跑**（此时库里的乱码无法靠改配置恢复）：
+>
+> ```bash
+> docker compose down
+> docker volume rm stellar-ink_mysql-data     # 卷名 = <项目名>_mysql-data
+> git pull                                     # 拿到带 SET NAMES 的 SQL
+> docker compose up -d
+> # 验证中文正常（能正确显示「拾星人」这类中文才算对）：
+> docker compose exec mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 \
+>   stellar_ink -e "SELECT id, LEFT(title,20) AS title FROM post ORDER BY id DESC LIMIT 3;"
+> ```
+
 **只挂这两个文件是刻意的**：`01_schema.sql` 已包含全部历史变更（`post_glow`、`post_view`、`post_comment`、
 `note`、`user.avatar_url`、`user.role_applied_at` 都在里面），而 `03`–`09` 是给**早期已有库**做增量升级的，
 在全新库上重复执行会报「列已存在」。
