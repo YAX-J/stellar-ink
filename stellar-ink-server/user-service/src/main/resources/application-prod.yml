@@ -10,14 +10,16 @@ spring:
       config:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:103.14.33.78:8848}
+        namespace: ${NACOS_NAMESPACE:140e3d39-2520-4d07-a08a-f4b2451109c8}  # 命名空间（默认 public）
         file-extension: yaml
         group: DEFAULT_GROUP
         refresh-enabled: true
       discovery:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        server-addr: ${NACOS_ADDR:103.14.33.78:8848}
+        namespace: ${NACOS_NAMESPACE:140e3d39-2520-4d07-a08a-f4b2451109c8}  # 命名空间（默认 public）
         group: DEFAULT_GROUP
 
   datasource:
