@@ -28,7 +28,7 @@ stellar-ink/
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
 ├── docs/ai/                        AI：技术路线（README）/ 实施顺序（implementation-roadmap）/ 开发流程（development-workflow）
 ├── deploy/sql|scripts/             数据库初始化脚本 / 一键启动脚本
-└── deploy/docker/                  生产 Docker Compose 部署（Nacos/网关/2 服务/前端 Nginx，详见其 README）
+└── deploy/docker/                  生产 Docker Compose 部署（Nacos/MySQL/Redis/Qdrant + 网关/2 服务/前端 Nginx 整栈自洽）
 ```
 
 ## 2. 常用命令与端口
@@ -44,9 +44,10 @@ cd stellar-ink-server && mvn -DskipTests package       # 2. 构建
 deploy\scripts\start-all.bat                           # 3. 一键起全部（或按模块手动 java -jar）
                                                        #    注：该脚本为本地私有文件（含服务器连接信息），已 gitignore 不入库
 
-# 生产部署（Linux 服务器 Docker Compose；MySQL/Redis/Qdrant 复用服务器已有容器）
-cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET
+# 生产部署（境外 Linux 服务器 Docker Compose；Nacos/MySQL/Redis/Qdrant 全部由编排拉起）
+cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET / GATEWAY_CORS_ORIGINS
 docker compose up -d --build                           # 2. 构建 + 启动（步骤详见 deploy/docker/README.md）
+                                                       #    ⚠️ 源站必须放境外：大陆源站 + 未备案域名会被按 SNI 重置入站 443，CF 报 525
 ```
 
 - 提交前必须验证：前端 `npm run build` 通过；后端 `mvn package` 通过，且启动后通过网关（:8080）curl 过改动到的接口。
