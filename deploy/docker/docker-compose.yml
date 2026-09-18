@@ -132,7 +132,10 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
-    # 不发布端口：只有本编排网络内的服务能连，公网与宿主机都不可达
+    ports:
+      # 只绑宿主机回环：公网/安全组都碰不到，仅供本地开发经 SSH 隧道访问：
+      #   ssh -L 3306:127.0.0.1:3306 ubuntu@<服务器>
+      - "127.0.0.1:${MYSQL_BIND_PORT:-3306}:3306"
     mem_limit: 1g
     logging: *default-logging
 
@@ -154,6 +157,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    ports:
+      # 只绑宿主机回环，供本地开发经 SSH 隧道访问：ssh -L 6379:127.0.0.1:6379 ubuntu@<服务器>
+      - "127.0.0.1:${REDIS_BIND_PORT:-6379}:6379"
     mem_limit: 256m
     logging: *default-logging
 
@@ -166,7 +172,10 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - qdrant-data:/qdrant/storage
-    # 目前业务未使用（AI 阶段 M3 起接入向量检索）；不发布端口，仅在编排网络内可达
+    # 目前业务未使用（AI 阶段 M3 起接入向量检索）
+    ports:
+      # 只绑宿主机回环，供本地开发/AI 调试经 SSH 隧道访问：ssh -L 6333:127.0.0.1:6333 ubuntu@<服务器>
+      - "127.0.0.1:${QDRANT_BIND_PORT:-6333}:6333"
     mem_limit: 512m
     logging: *default-logging
 

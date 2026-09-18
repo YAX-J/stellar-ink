@@ -13,9 +13,9 @@ Docker Compose 一键编排：**Nacos + MySQL + Redis + Qdrant + 网关 + 2 个�
 | gateway | 8080 | 仅宿主机 `127.0.0.1`（`GATEWAY_PORT`） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
 | user / content | 8101-8102 | 不暴露 | 网关经 Nacos 服务发现路由；user-service 另挂载 `./data/uploads` 存头像 |
 | nacos | 8848 / 9848 | 仅宿主机 `127.0.0.1:8848`（控制台） | 单机模式 + 内置 Derby；容器间走服务名 `nacos:8848` |
-| mysql | 3306 | **不发布** | 首次启动自动导入 `deploy/sql/01_schema.sql` + `02_init-data.sql` |
-| redis | 6379 | **不发布** | 开启 AOF：JWT 撤销列表与登录失败计数需跨重启保留 |
-| qdrant | 6333 | **不发布** | 业务暂未使用，AI 阶段（M3 起）接入 |
+| mysql | 3306 | 仅宿主机 `127.0.0.1`（`MYSQL_BIND_PORT`） | 首次启动自动导入 `deploy/sql/01_schema.sql` + `02_init-data.sql` |
+| redis | 6379 | 仅宿主机 `127.0.0.1`（`REDIS_BIND_PORT`） | 开启 AOF：JWT 撤销列表与登录失败计数需跨重启保留 |
+| qdrant | 6333 | 仅宿主机 `127.0.0.1`（`QDRANT_BIND_PORT`） | 业务暂未使用，AI 阶段（M3 起）接入 |
 
 ```
 浏览器 ──TLS(CF 边缘证书)──▶ Cloudflare ──TLS(Origin 证书)──▶ web:443
@@ -254,7 +254,7 @@ curl -skI --max-time 8 --resolve www.baidu.com:443:<源站IP> https://www.baidu.
 | JWT 撤销 | 已启用 | 登出或改密后，当前 JWT 摘要进入 Redis 直到自然过期；网关响应式检查，Redis 故障时返回 503 而不是放行撤销令牌。Redis 已开 AOF，重启不丢撤销记录 |
 | Redis 业务缓存 | 已启用 | 公开文章/笔记及聚合读模型采用 30 秒至 5 分钟 TTL，写后按命名空间失效；完整用户资料、JWT 原文与持久业务明细不进 Redis |
 | 容器权限 | 已加固 | 3 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
-| 中间件暴露面 | **全部不发布端口** | MySQL / Redis / Qdrant 不发布端口，Nacos 与网关只绑 `127.0.0.1`。公网只有一个入口：web 的 80/443 |
+| 中间件暴露面 | **只绑回环** | MySQL / Redis / Qdrant / Nacos 与网关都只绑宿主机 `127.0.0.1`（公网与安全组均不可达），本地开发经 SSH 隧道访问（第十节）。公网入口只有一个：web 的 80/443 |
 | 源站保护 | 安全组白名单 | 443 只放行 Cloudflare 网段 + 你的 IP（见第五节第 3 条）。
 | JWT 密钥 | 启动即校验 | prod 下若密钥为空、少于 32 字符，或等于仓库中 dev 默认值，**直接拒绝启动**（common-core `SecretGuard`）。本编排对 3 个 Java 服务统一注入 `SA_TOKEN_JWT_SECRET`，密钥弱时整体拒绝启动（fail-closed） |
 
@@ -330,3 +330,48 @@ docker compose up -d                                      # 起其余服务
   `docker system df`（构建缓存），定期 `docker builder prune`。
 - **Sentinel dashboard 未部署**：网关会尝试上报 `localhost:8858`，连接失败只是无害告警。
 - **Qdrant 接入**：业务暂未使用；M3 起直接在编排网络内以 `qdrant:6333` 访问。
+
+## 十、本地怎么连服务器上的数据库与 Nacos
+
+两条通路，别混：
+
+**① 打开站点**：浏览器直接访问 `https://你的域名/`，走 Cloudflare，任何网络都能开，
+**不需要**在安全组里放行你本机 IP（你本机的请求在 CF 边缘就终结了，源站只认 Cloudflare 网段）。
+
+**② 本地连服务器上的 MySQL / Redis / Nacos / Qdrant**：这些服务只绑宿主机 `127.0.0.1`，
+所以走 **SSH 隧道**——不用开任何端口，也不受你家里公网 IP 变动影响：
+
+```bash
+# 一条命令把网关、Nacos 控制台、MySQL、Redis、Qdrant 全部映射到本地
+ssh -L 8080:127.0.0.1:8080 \
+    -L 8848:127.0.0.1:8848 \
+    -L 3306:127.0.0.1:3306 \
+    -L 6379:127.0.0.1:6379 \
+    -L 6333:127.0.0.1:6333 \
+    ubuntu@<服务器IP>
+```
+
+> **本地端口被占用**（比如你本机已经装了 MySQL 占着 3306）时，把左侧端口换掉即可，
+> 例如 `-L 13306:127.0.0.1:3306`，然后本地就连 `127.0.0.1:13306`。
+> 隧道命令用 Git Bash / PowerShell 跑都一样；配好密钥登录后不会每次问密码。
+
+连上之后，本地等价于：
+
+| 本地地址 | 对应服务 | 连接参数 | 用途 |
+|---|---|---|---|
+| `localhost:3306` | MySQL | 用户 `stellar` / 密码＝`.env` 的 `MYSQL_PASSWORD` / 库 `stellar_ink`。⚠️ **不要用 root**：官方镜像的 root 默认只允许容器内 `localhost` 登录（`mysqladmin` 健康检查与备份脚本都走容器内，不受影响），本地工具请用 `stellar`（它在建库时被授予了 `stellar_ink.*` 的全部权限） | Navicat、DBeaver、HeidiSQL 连库；导入导出；排查数据 |
+| `localhost:6379` | Redis | 无密码（容器内网才可达） | `redis-cli -h 127.0.0.1 -p 6379`；看缓存与 JWT 撤销列表 |
+| `http://localhost:8848/nacos` | Nacos 控制台 | `nacos` / `nacos`（或你在 `.env` 里改的值） | 看服务注册、改配置 |
+| `localhost:6333` | Qdrant | 无鉴权 | `http://localhost:6333/dashboard`；AI 阶段（M3 起）本地调检索 |
+| `http://localhost:8080` | 网关 | — | 本地前端 `npm run dev` 会把 `/auth`、`/posts` 等前缀代理到这里（见 `stellar-ink-web/vite.config.js`），所以本地跑前端时**先开隧道就能直接连生产后端** |
+
+**本地开发要用哪套数据，务必分清**：
+
+| 目的 | 连哪台 | 原因 |
+|---|---|---|
+| 只读排查线上数据 | 生产（香港） | 只查不改；改数据请走接口或后台 |
+| 写代码、跑测试、造数据 | **测试机（腾讯云那台）** | 本地 dev 直连生产库会把测试数据写进线上；测试机的库随便折腾 |
+| 完全隔离 | 本地 Docker 起一套 | 见仓库根 `AGENTS.md` 的本地启动方式 |
+
+**不要为了本地连库而放开安全组**：32/3306/6379/6333/8848 一个都不要对公网开，
+隧道走 22（已限制只放行你的固定 IP）。真要临时直连源站排查，就把自己**当前**出口 IP 加进 443/80，用完立刻删。
