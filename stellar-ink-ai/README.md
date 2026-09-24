@@ -3,8 +3,8 @@
 Python AI 服务，**仅内网可达**：模型网关、RAG、Agent 与知识管道。浏览器不直连本服务，
 对外协议、鉴权与 `Response<T>` 由 Java `ai-service :8107` 提供。
 
-当前进度：**M0-1 工程骨架、M0-2 跨语言契约已完成**（可构建、可测试，全程 Fake Adapter，无任何密钥）。
-实施顺序见 [`../docs/ai/implementation-roadmap.md`](../docs/ai/implementation-roadmap.md)，
+当前进度：**M0-1/M0-2 骨架与契约、A1-3 模型供应商层已完成**（可构建、可测试，无密钥也能全绿）。
+实施顺序见 [`../docs/ai/fast-track-plan.md`](../docs/ai/fast-track-plan.md)（A→E 阶段），
 每轮节奏见 [`../docs/ai/development-workflow.md`](../docs/ai/development-workflow.md)。
 
 ## 目录结构
@@ -14,9 +14,9 @@ stellar-ink-ai/
 ├── pyproject.toml           依赖、ruff / mypy / pytest 配置（requires-python >= 3.11；本机实测 3.13）
 ├── app/
 │   ├── main.py              应用工厂 + uvicorn 入口
-│   ├── api/v1/              HTTP 路由（M0 只有探活）
-│   ├── core/                配置、日志、traceId、错误模型
-│   ├── providers/           模型供应商适配（M2）
+│   ├── api/v1/              HTTP 路由（目前只有探活）
+│   ├── core/                配置、日志、traceId、密钥加解密
+│   ├── providers/           模型供应商层（A1-3）：Chat/Embedding/Rerank + 按角色路由
 │   ├── embedding/           Embedding 适配（M2/M3）
 │   ├── rag/                 切块 / 检索 / 重排 / 生成（M3/M4）
 │   ├── agents/              受控 Agent（M7）
@@ -60,6 +60,24 @@ curl -i http://127.0.0.1:8200/health                      # 期望 200 + X-Trace
 
 样例放 [`tests/fixtures/`](tests/fixtures/)，Java 契约测试（M0-4）与 Python Schema 测试
 读**同一组 JSON**，路径约定见 [`tests/fixtures/README.md`](tests/fixtures/README.md)。
+
+## 模型供应商层（app/providers）
+
+业务代码只说「我需要 chat / embedding / rerank」，由配置决定背后是哪家：
+
+| 模块 | 职责 |
+|---|---|
+| `base.py` | 三类接口（`ChatModel` / `EmbeddingModel` / `RerankModel`）—— 刻意不合成一个万能类 |
+| `openai_compatible.py` | 一套 OpenAI 兼容实现，覆盖 DeepSeek / 硅基流动 bge-m3 / vLLM / SGLang |
+| `fake.py` | 确定性假实现，`provider: fake` 启用：无密钥跑通链路，也是评测台的可复现基线 |
+| `registry.py` | 角色 → 能力映射与实例缓存；能力不匹配时**取实例即报错** |
+| `errors.py` | 分类错误（超时/限流/鉴权/上游不可用），区分「可重试」与「必须改配置」 |
+
+- 配置来自 ai-service 的 `/ai/admin/providers/runtime`（面板写库、Java 解密）；
+  本层**不读环境变量、不读数据库**，便于测试与替换来源
+- 换模型＝改配置：`base_url` + `model` + `apiKey`，业务代码与 Prompt 都不用动
+- 密钥只出现在 `Authorization` 头里，不进日志；`ProviderConfig.fingerprint()` 刻意不含密钥，
+  可安全用作缓存键与审计标识
 
 ## 安全边界
 
