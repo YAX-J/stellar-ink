@@ -11,7 +11,7 @@ Python AI 服务，**仅内网可达**：模型网关、RAG、Agent 与知识管
 
 ```text
 stellar-ink-ai/
-├── pyproject.toml           依赖、ruff / mypy / pytest 配置（>= Py3.11）
+├── pyproject.toml           依赖、ruff / mypy / pytest 配置（requires-python >= 3.11；本机实测 3.13）
 ├── app/
 │   ├── main.py              应用工厂 + uvicorn 入口
 │   ├── api/v1/              HTTP 路由（M0 只有探活）

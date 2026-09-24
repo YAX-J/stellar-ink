@@ -12,7 +12,7 @@
 
 > 完成一个切片就勾选这里，并同步 `development-workflow.md` §9。
 
-- [ ] M0 契约与工程骨架
+- [x] M0 契约与工程骨架（2026-09-24 完成：Python 骨架 / 跨语言契约 + fixture / ai-client / ai-service:8107 / 文档）
 - [ ] M1 Java/Python 安全调用链
 - [ ] M2 多模型网关与结构化生成
 - [ ] M3 Dense RAG 最小闭环
@@ -24,6 +24,18 @@
 - [ ] M9 作者记忆和个性化
 - [ ] M10 GraphRAG 与 LLM Wiki
 - [ ] M11 多模态和微调实验
+
+M0 的落地结果与本文 §4 的差异（以实际代码为准）：
+
+- Python 侧落地了 `app/schemas/`（问答 / 写作 / 索引任务契约）与
+  `stellar-ink-ai/tests/fixtures/*.json`，Java 侧 `AiContractTest` 与 Python `test_schemas.py`
+  读**同一批** fixture，形成两侧互为对侧的一致性回归。
+- `/ai/health` 的**公开**出口落在 `ai-service`，响应为 `AiHealthVO`（能力状态 + 可读原因，
+  不含内网地址与密钥）；Python 侧的 `/health` 只在编排网络内可达。
+- M0 未建立任何 `ai_*` 表，也未引入 Qdrant/Redis 依赖：ai-service 显式排除数据源与
+  公共 MyBatis-Plus/Redis Bean，等 M1（配额 / nonce）与 M3（ai_* 表）再按切片放开。
+- `stellar-ink-ai-client` 的 Feign 契约已冻结但**尚未接线**（`ai-service` 无 `@EnableFeignClients`），
+  M1 打通签名与 SSE 时启用。
 
 ## 1. 对比后的结论
 

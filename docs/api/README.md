@@ -21,6 +21,8 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` `/uploads/**` | user |
 | content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / note / meteor / echo / link |
+| ai-service | 8107 | `/ai/**`（M1 接入网关；M0 只能直连本机 8107 验证 `/ai/health`） | 无（不拥有业务表） |
+| stellar-ink-ai（Python） | 8200 | **不配网关路由、不对外暴露**，仅 ai-service 在编排网络内调用 | ai_*（M3 起） |
 
 ## 鉴权（Sa-Token，网关统一）
 
@@ -210,6 +212,27 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/stats/overview` | 写作脉搏：totalPosts / totalWords / todayWords / streakDays / nightRatio / tagDistribution（**全站统计，不区分用户**） | 公开 |
 
 公开评论、回声使用 30 秒缓存；公开流星分页使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
+
+### ai-service :8107 - AI（M0：只有探活）
+
+> M0 阶段不对外暴露 AI 能力：网关尚未配 `/ai/**` 路由（M1 接），
+> 验证只能直连 `http://127.0.0.1:8107/ai/health`。其余 AI 接口（问答 / 写作建议 / 索引任务）
+> 的路径与契约已在 `stellar-ink-ai-client` 与 `stellar-ink-ai` 中冻结，落地时逐条补进本文档。
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/health` | AI 能力可用性探活：`service` / `version` / `env` / `available` / `reason` / `downstreamAvailable` / `checkedAt`。**公开**，只回能力状态，不含内网地址、端口、模型名或密钥信息 | 公开 |
+
+```bash
+# 直连本机 ai-service（M0 验证方式；M1 起改走网关 /ai/health）
+curl -s http://127.0.0.1:8107/ai/health
+# => {"code":0,"msg":"成功","data":{"service":"ai-service","available":false,
+#     "reason":"下游 AI 编排服务未就绪","downstreamAvailable":false,...}}
+```
+
+- `available=false` 不等于故障：M0 的下游是 Fake 探活，会**如实上报未接线**（假装健康比暴露未接线更危险）
+- 失败形态沿用全局约定：鉴权类错误由网关给出 HTTP 401/403；`/ai/**` 的服务端错误按 `code` 判定
+- `stellar-ink-ai`（Python, 8200）**没有对外接口**：它只提供 `/health` 等内部路由，仅供 ai-service 调用
 
 ### 各服务通用
 

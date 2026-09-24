@@ -73,8 +73,9 @@ cd stellar-ink-web && npm run build
 ```
 
 改到真实接口后，还要按顺序起服务再验一次：
-`Nacos → 三个 Java 服务（含 ai-service）→ stellar-ink-ai → 前端`，
+`Nacos → 四个 Java 服务（含 ai-service）→ stellar-ink-ai → 前端`，
 经网关（不是直连服务）跑通改动路径；中文请求体写成 UTF-8 文件或用 Node Fetch（git-bash 的 curl 会发 GBK）。
+M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:8107` 验证（M1-1 接上后再改走网关）。
 
 ## 6. 分支与提交
 
@@ -102,19 +103,46 @@ cd stellar-ink-web && npm run build
 - **M7 → M8**：Agent 有预算？Tool Schema、权限、参数都有服务端校验？Interrupt/Resume 不重复副作用？
 - **M8 → M9/M10**：每次调用可追踪？用户数据可完整删除？已有真实数据证明需要记忆或知识图？
 
-## 9. 当前切片：M0（契约与工程骨架）
+## 9. 当前切片：M1（Java/Python 安全调用链）
 
-M0 全程用 Fake Adapter，**不需要任何密钥**，可以立刻开始。按以下五刀提交：
+**M0（契约与工程骨架）已于 2026-09-24 完成并验收**：五刀全部提交在 `feature/ai-m0-contract`，
+`mvn test` 9 个模块与 `uv run ruff/mypy/pytest` 全绿，`/ai/health` 实测 200。完成情况：
+
+| 切片 | 结果 |
+|---|---|
+| M0-1 | `stellar-ink-ai` 工程骨架 + `GET /health` + traceId；`ruff/mypy/pytest` 全绿 |
+| M0-2 | `app/schemas/` 契约模型 + `tests/fixtures/*.json`（Java/Python 共用同一组） |
+| M0-3 | `stellar-ink-ai-client`：Feign 契约 + 内部 DTO + 签名头常量 + 503 降级 |
+| M0-4 | `ai-service :8107`：公开 `/ai/health`（Fake 探活如实上报）+ 配置模板 |
+| M0-5 | 文档同步：`docs/api`、`docs/architecture`、`AGENTS.md`、roadmap 进度 |
+
+M1 开工前先读 roadmap §5 与本文 §5/§7；建议按下列顺序切片（每刀 ≲ 300 行、可独立验证）：
 
 | 切片 | 内容 | 验收 |
 |---|---|---|
-| M0-1 | `stellar-ink-ai` 工程骨架：`pyproject.toml`（Py 3.11+、ruff/mypy/pytest 配置）、`app/` 分层、`/health`、更新目录 README | `ruff check . && mypy app && pytest` 全绿 |
-| M0-2 | Python 侧契约：`app/schemas/` 的问答 / 写作 / 索引任务请求响应模型 + `tests/fixtures/*.json` | Schema 测试通过，fixture 可被 Java 复用 |
-| M0-3 | `stellar-ink-ai-client`：`pom.xml` 并登记进 `stellar-ink-server/pom.xml`，内部 DTO、HMAC 头常量、Fallback | `mvn -DskipTests package` 通过 |
-| M0-4 | `ai-service`：8107、统一启动模板、`/ai/health`、`AuthHelper` 防御性复核、Fake 下游客户端、契约测试（Java DTO ↔ 同一组 fixture） | `mvn test` 通过，契约测试命中同一 JSON |
-| M0-5 | 文档同步：`docs/api` 加 `/ai/health`、`docs/architecture` 加模块与端口、`AGENTS.md` 目录树与状态、roadmap 进度清单 | 文档与实际端口/路径一致 |
+| M1-1 | `ai-service` 网关化：网关 dev/prod 增加 `/ai/** → lb://ai-service`，`/ai/health` 公开、其余 `/ai/**` 需登录、写作建议需 AUTHOR、`/ai/admin/**` 需 ADMIN | 经网关 `curl /ai/health` 通；未登录访问受保护路径被拒 |
+| M1-2 | 内网签名：`stellar-ink-ai-client` 实现 `X-AI-*` HMAC-SHA256 签名（方法+路径+时间戳+nonce+body 摘要），密钥 `AI_INTERNAL_SECRET` 无默认值 | 签名单测含过期/篡改/nonce 重放全部被拒 |
+| M1-3 | Python 侧验签中间件：时间窗 + nonce（Redis 或进程内 LRU，先定方案）+ 拒绝重放 | pytest 覆盖过期、篡改、重放 |
+| M1-4 | 首次真实调用：`ai-service` 用 Feign 调 Python（Fake 回显亦可），`X-Trace-Id` 贯穿两侧日志 | 一次调用在两侧日志里能用同一个 traceId 串起来 |
+| M1-5 | SSE：打通 `meta / delta / citation / done / error` 心跳与取消，浏览器取消即终止下游 | 取消后下游任务停止，不继续消耗资源 |
 
-迁移脚本编号提醒：`deploy/sql/` 的 `01`–`09` 已被现有功能占用，AI 相关脚本从 **`10_ai-schema.sql`**、
+> M1 需要 Redis 做 nonce 防重放时，同时放开 `AiServiceApplication` 里对 `RedisUtils`/`RedisCache`
+> 的排除，并在此处与 `AGENTS.md` 的 AI 模块口径里同步说明。
+
+### M0 期间的实测经验（M1 起沿用）
+
+- **macOS/Windows 编码坑**：MockMvc 默认用 ISO-8859-1 解码响应体，中文断言会莫名其妙失败，
+  必须 `getContentAsString(StandardCharsets.UTF_8)`；Python 写入的模板文件带 BOM 会让 `javac`
+  报「非法字符 '\ufeff'」。
+- **契约测试的假红灯**：比较 JSON 时不要直接比 `Map`/`JsonNode` 的数字节点（`12` 可能是
+  Integer 或 Long、时间可能是 `+08:00` 或 `Z`，同一时刻字面量不同）——
+  统一按 Long 读无类型整数，并把 ISO 时间归一到 UTC 瞬时再比。
+- **公开接口只给结论**：`/ai/health` 的 `reason` 是「下游 AI 编排服务未就绪」，
+  真实地址与异常留在服务端日志；字段白名单有测试守着，新增字段会被测试拦下。
+
+### 迁移脚本编号提醒（沿用）
+
+`deploy/sql/` 的 `01`–`09` 已被现有功能占用，AI 相关脚本从 **`10_ai-schema.sql`**、
 **`11_post-outbox.sql`** 开始（roadmap §17 里的 04/05 是旧编号，已修正）。
 
 ## 10. 待确认的选型（不阻塞 M0，M2 之前必须定）

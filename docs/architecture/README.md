@@ -11,18 +11,26 @@
                        │ Sa-Token 鉴权 / CORS / 限流   │
                        └──────────────┬───────────────┘
                                       │ 显式路由（lb://）
-                         ┌────────────┴────────────┐
-                         ▼                         ▼
-                  user-service :8101       content-service :8102
-                  用户、认证、角色          post / comment / note / meteor
-                         │                  echo / link / stats
-                         └────────────┬────────────┘
-                              ┌───────┴───────┐
-                              ▼               ▼
-                  MySQL（共享 stellar_ink 库） Redis（公共基础设施）
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+             user-service :8101  content-service :8102  ai-service :8107
+             用户、认证、角色     post / comment / note   对外 /ai/** 出口
+                    │            meteor / echo / link   （鉴权复核、配额、审计）
+                    │            stats                        │
+                    └────────────┬────────────┘              │ HMAC 内网签名（M1）
+                          ┌──────┴──────┐                     ▼
+                          ▼             ▼            stellar-ink-ai :8200
+              MySQL（共享 stellar_ink） Redis          Python：模型网关 / RAG / Agent
+                                                     （仅内网可达，浏览器不直连）
 
-  三个 Java 服务均注册到 Nacos :8848（注册中心 + 配置中心）
+  四个 Java 服务均注册到 Nacos :8848（注册中心 + 配置中心）；
+  Python 不注册 Nacos，地址由 ai-service 的 python-base-url 固定配置
 ```
+
+> **AI 当前进度（M0 已完成）**：`ai-service :8107` 与 Python `stellar-ink-ai :8200` 的
+> 工程骨架、跨语言契约与 `/ai/health` 已落地，全程 Fake Adapter、无任何密钥。
+> 网关的 `/ai/**` 路由、HMAC 签名与真实调用属 **M1**；M0 不对外暴露 AI 能力，
+> 因此上面拓扑里的 `/ai/**` 路由与 HMAC 已按目标态画出但尚未接线。
 
 ## 模块结构
 
@@ -30,25 +38,37 @@
 stellar-ink-server/
 ├── pom.xml
 ├── common-components/
-│   ├── shared-model/          Response、异常、跨模块 DTO/VO
+│   ├── shared-model/          Response、异常、跨模块 DTO/VO（含 ai 子包）
 │   └── common-core/           异常处理、TraceId、MyBatis-Plus、鉴权辅助、Redis 工具
 ├── gateway-nacos-sentinel/    API 网关（8080）
 ├── user-service/              用户与认证（8101）
-└── content-service/           内容聚合服务（8102）
-    └── com.stellarink.content/
-        ├── post/              文章、标签、搜索
-        ├── comment/           文章评论（公开读取、登录发表评论）
-        ├── note/              技术笔记（结构化 / 可私有 / 可验证）
-        ├── meteor/            流星备忘录
-        ├── echo/              回声漂流瓶
-        ├── link/              星链友链
-        └── stats/             写作脉搏
+├── content-service/           内容聚合服务（8102）
+│   └── com.stellarink.content/
+│       ├── post/              文章、标签、搜索
+│       ├── comment/           文章评论（公开读取、登录发表评论）
+│       ├── note/              技术笔记（结构化 / 可私有 / 可验证）
+│       ├── meteor/            流星备忘录
+│       ├── echo/              回声漂流瓶
+│       ├── link/              星链友链
+│       └── stats/             写作脉搏
+├── stellar-ink-ai-client/     Java → Python 内部客户端契约（Feign 接口 / DTO / 降级，M0-3 起）
+└── ai-service/                AI 业务服务（8107，M0-4 起）
+    └── com.stellarink.ai/{controller,client,config,service}
+
+stellar-ink-ai/                Python AI 编排服务（8200，M0-1 起；仅内网可达）
+├── app/{main.py,api/v1,core,schemas,providers,embedding,rag,agents,vectorstore}
+└── tests/{test_*.py,fixtures/}   fixtures 与 Java 契约测试共用同一组 JSON
 ```
 
 > `post`（星/文章）与 `note`（标本/技术笔记）是两张独立表：文章重文笔、天然公开；
 > 笔记结构化、**可私有**（`visibility`）、会过期（`verified_at`）。两者边界不同，因此不合并为一张表。
 
-AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)。当前 AI 目录仍处于方案阶段，未纳入后端 Maven 模块和 Docker 编排。
+**AI 边界**（与其它两个业务服务的区别）：ai-service 不拥有任何业务表，
+**没有数据源与 Redis 依赖**（`DataSourceAutoConfiguration` 与公共模块的 MyBatis-Plus/Redis Bean 被显式排除），
+也不直接读写 `post`/`user`。文章数据将来由 content-service 的内部契约提供（M3），
+草稿只随当前作者请求临时传输。AI 技术路线与实施顺序见
+[docs/ai/README.md](../ai/README.md) 与 [docs/ai/implementation-roadmap.md](../ai/implementation-roadmap.md)，
+每轮开发流程见 [docs/ai/development-workflow.md](../ai/development-workflow.md)。
 
 ## 为什么收敛为两个业务服务
 
@@ -63,10 +83,13 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 |---|---|
 | user-service | `/auth/**`、`/user/**`、`/uploads/**` |
 | content-service | `/posts/**`、`/notes/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
+| ai-service | `/ai/**`（M1 接入；M0 只有直连 8107 的 `/ai/health`） |
 
 网关关闭 discovery locator，只允许显式路由，防止通过 `/{serviceId}/**` 绕过鉴权。`/internal/**` 不对外路由。
 `/uploads/**` 是 `user-uploads` 路由（指向 user-service 的静态资源映射），用于头像等上传文件的**匿名读**；
 上传/删除本身走 `/user/avatar`，受网关鉴权保护。
+`/ai/**` 是唯一进 Python 的路径：Python 的 8200 端口**不配网关路由、不暴露公网**，
+只能由 ai-service 在编排网络内调用（M1 起带 HMAC 签名头）。
 
 ## 鉴权
 

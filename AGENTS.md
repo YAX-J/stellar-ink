@@ -16,13 +16,14 @@ stellar-ink/
 ├── stellar-ink-web/                前端：Vue 3 + Vite + Pinia + Vue Router（已接网关）
 ├── stellar-ink-server/             后端：Spring Cloud Alibaba 微服务（已跑通）
 │   ├── common-components/          公共组件聚合（非独立运行）
-│   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO
-│   │   ├── common-core/            基础设施：全局异常/TraceId/MP配置/健康检查/Redis工具
+│   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO（含 ai 子包）
+│   │   └── common-core/            基础设施：全局异常/TraceId/MP配置/健康检查/Redis工具
 │   ├── gateway-nacos-sentinel/     网关 :8080（WebFlux：路由/CORS/Sa-Token 鉴权/Sentinel）
 │   ├── user-service/   :8101       登录认证、站长资料（表 user）
 │   ├── content-service/:8102       文章/流星/回声/星链/写作统计（按领域分包）
-│   └── stellar-ink-ai-client/      Java → Python AI 客户端契约（按 AI 实施任务逐步建设）
-├── stellar-ink-ai/                 Python AI 编排服务（按 AI 实施任务逐步建设）
+│   ├── stellar-ink-ai-client/      Java → Python 内部客户端契约（Feign/DTO/降级，M0-3）
+│   └── ai-service/     :8107       对外 /ai/** 出口（鉴权复核/配额/审计，M0-4）
+├── stellar-ink-ai/                 Python AI 编排服务 :8200（仅内网可达，M0-1）
 ├── tools/nacos/                    Nacos Server 本体（gitignore，不入库）
 ├── docs/architecture/              微服务架构说明
 ├── docs/api/README.md              接口文档（改接口必须同步更新）
@@ -305,6 +306,23 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 密码只存 BCrypt；`SA_TOKEN_JWT_SECRET` 生产用环境变量覆盖，
   网关与所有业务服务的 jwt-secret-key 必须一致，代码里不得出现新的硬编码密钥。
 
+### AI 模块口径（M0 起建立，后续按里程碑扩展）
+- **端口与拓扑**：`ai-service :8107`（Java，对外 `/ai/**`）+ `stellar-ink-ai :8200`（Python，**仅内网**）。
+  Python 不注册 Nacos、不配网关路由；浏览器与网关都不得直达 8200。
+- **ai-service 不拥有业务表**：`DataSourceAutoConfiguration` 与 common-core 的 MyBatis-Plus/Redis Bean
+  在启动类里被显式排除；将来确实需要 `ai_*` 表（M3）或 Redis 配额（M1）时，再随对应切片放开并同步本文。
+- **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
+  经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
+  M1 实现签名与 nonce 防重放。密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。
+- **跨语言契约单一来源**：Java DTO（`stellar-ink-ai-client`）与 Python Pydantic（`stellar-ink-ai/app/schemas`）
+  共用 `stellar-ink-ai/tests/fixtures/*.json`，两侧各有一组契约测试读**同一批文件**；
+  JSON 键名一律驼峰，枚举序列化用小写字面量（Java 侧必须 `@JsonValue`，默认会写成大写）。
+  改契约要同时改：Python 模型、fixture、Java DTO 与 `docs/api/README.md`。
+- **M0 的诚实降级**：Python 链路未接线时 `/ai/health` 返回 `available=false` 并给出可读原因，
+  不允许假装健康；Python 不可用时 `PythonAiClientFallbackFactory` 抛 503 业务异常，
+  不返回空答案（让前端区分「没有依据」与「服务坏了」）。
+- 红线详见 `docs/ai/development-workflow.md` §7；每轮开工先读该文件，收尾更新 roadmap 进度清单与 §9。
+
 ## 6. 当前状态与边界（不要越界开发）
 
 - 已完成：前端内容页（此刻 / 执笔 / 星图 / 寻星 / 笔记 / 我的笔记 / 笔记详情与编辑 / 流星 / 回声 / 星链 /
@@ -314,11 +332,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
   草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
 - **AI 当前状态**：技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
-  开发流程（`docs/ai/development-workflow.md`）均已定稿，**从 M0「契约与工程骨架」开始实施**：
-  一轮一个可验证切片、一个主题一个提交，M0 全程用 Fake Adapter 且不需要任何密钥；
-  M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调。`ai-client`、`stellar-ink-ai`
-  只实现路线中已列出的切片内容，不在未明确拆分任务时自行扩展。文件上传、
-  全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
+  开发流程（`docs/ai/development-workflow.md`）均已定稿，**M0「契约与工程骨架」已完成**：
+  `stellar-ink-ai`（Python 骨架 + 契约 + fixture）、`stellar-ink-ai-client`（Feign 契约 + DTO + 降级）、
+  `ai-service :8107`（公开 `/ai/health`）三个模块可构建可测试，**全程 Fake Adapter、无任何密钥**；
+  下一阶段是 M1「Java/Python 安全调用链」（网关 `/ai/**` 路由 + HMAC 签名 + SSE）。
+  一轮一个可验证切片、一个主题一个提交；M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调。
+  文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
   AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
 - 前端已接网关：`src/api/client.js`（fetch 封装 + token）+ Pinia stores（会话与业务数据）；
