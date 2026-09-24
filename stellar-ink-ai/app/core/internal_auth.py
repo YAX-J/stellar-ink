@@ -154,6 +154,20 @@ class NonceStore:
         return len(self._seen)
 
 
+def _header(headers: dict[str, str], name: str) -> str:
+    """按 HTTP 语义取头：**头名大小写不敏感**。
+
+    这条不是细节：httpx 发出去的是小写头名（`x-ai-signature`），而 Java 侧常量是
+    `X-AI-Signature`；用大小写敏感的 `dict(headers).get(NAME)` 会得到 None，
+    表现为「请求明明带了签名，服务端却说没带」—— 而且日志里两头看起来都对，极难定位。
+    """
+    target = name.lower()
+    for key, value in headers.items():
+        if key.lower() == target:
+            return str(value)
+    return ""
+
+
 @dataclass(frozen=True)
 class InternalIdentity:
     """验签通过后的调用方身份。"""
@@ -182,14 +196,14 @@ class InternalRequestVerifier:
         now_ms: int | None = None,
     ) -> InternalIdentity:
         """校验并返回身份；任何一步失败都抛异常，绝不返回「部分可信」的结果。"""
-        signature = (headers.get(HEADER_SIGNATURE) or "").strip().lower()
+        signature = _header(headers, HEADER_SIGNATURE).strip().lower()
         if not signature:
             raise InternalAuthError(f"缺少 {HEADER_SIGNATURE} 头")
 
-        timestamp_raw = (headers.get(HEADER_TIMESTAMP) or "").strip()
-        nonce = (headers.get(HEADER_NONCE) or "").strip()
-        user_id_raw = (headers.get(HEADER_USER_ID) or "").strip()
-        role = (headers.get(HEADER_ROLE) or "").strip().upper()
+        timestamp_raw = _header(headers, HEADER_TIMESTAMP).strip()
+        nonce = _header(headers, HEADER_NONCE).strip()
+        user_id_raw = _header(headers, HEADER_USER_ID).strip()
+        role = _header(headers, HEADER_ROLE).strip().upper()
         if not timestamp_raw or not nonce or not user_id_raw:
             raise InternalAuthError("缺少时间戳、nonce 或用户身份头")
 
@@ -227,5 +241,5 @@ class InternalRequestVerifier:
         return InternalIdentity(
             user_id=user_id,
             role=role,
-            trace_id=headers.get(HEADER_TRACE_ID) or None,
+            trace_id=_header(headers, HEADER_TRACE_ID) or None,
         )

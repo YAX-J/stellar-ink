@@ -117,6 +117,29 @@ def test_python_recomputes_the_same_signature() -> None:
         assert sign(vector["secret"], canonical) == case["signature"]
 
 
+def test_header_lookup_is_case_insensitive() -> None:
+    """HTTP 头名大小写不敏感：httpx 发的是小写头名，Java 常量是 `X-AI-*`。
+
+    用大小写敏感的 `dict(headers).get(NAME)` 会得到 None，表现为
+    「请求明明带了签名，服务端却说没带」—— 日志里两头看起来都对，极难定位。
+    """
+    case = load_vector()["cases"][0]
+    lowercased = {
+        key.lower(): value for key, value in headers_for(case, case_signature(case)).items()
+    }
+
+    identity = verifier().verify(
+        method=case["method"],
+        path=case["path"],
+        headers=lowercased,
+        body=case["body"],
+        now_ms=case["timestampMs"],
+    )
+
+    assert identity.user_id == case["identity"]["userId"]
+    assert identity.role == case["identity"]["role"]
+
+
 def test_verifier_uses_constant_time_comparison() -> None:
     """用 hmac.compare_digest 而不是 ==：避免逐字节比较泄露签名前缀。"""
     source = Path(__file__).resolve().parent.parent / "app" / "core" / "internal_auth.py"

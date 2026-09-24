@@ -92,8 +92,10 @@ def _split(token: str) -> tuple[str, bytes, bytes]:
     if len(parts) != 3:
         raise CipherFormatError("密文格式应为 v1:<nonce>:<ciphertext>")
     try:
-        return parts[0], base64.b64decode(parts[1], validate=True), base64.b64decode(
-            parts[2], validate=True
+        return (
+            parts[0],
+            base64.b64decode(parts[1], validate=True),
+            base64.b64decode(parts[2], validate=True),
         )
     except (binascii.Error, ValueError) as exc:
         raise CipherFormatError("密文里的 nonce/ciphertext 不是合法 base64") from exc
