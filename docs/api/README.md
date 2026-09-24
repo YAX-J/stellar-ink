@@ -213,26 +213,54 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 公开评论、回声使用 30 秒缓存；公开流星分页使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
 
-### ai-service :8107 - AI（M0：只有探活）
+### ai-service :8107 - AI（A1：探活 + 模型配置面板）
 
-> M0 阶段不对外暴露 AI 能力：网关尚未配 `/ai/**` 路由（M1 接），
-> 验证只能直连 `http://127.0.0.1:8107/ai/health`。其余 AI 接口（问答 / 写作建议 / 索引任务）
-> 的路径与契约已在 `stellar-ink-ai-client` 与 `stellar-ink-ai` 中冻结，落地时逐条补进本文档。
+> 网关尚未配 `/ai/**` 路由（M1 接），验证只能直连 `http://127.0.0.1:8107`。
+> 其余 AI 接口（问答 / 写作建议 / 索引任务）的路径与契约已在 `stellar-ink-ai-client`
+> 与 `stellar-ink-ai` 中冻结，落地时逐条补进本文档。
+
+**探活（公开）**
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/ai/health` | AI 能力可用性探活：`service` / `version` / `env` / `available` / `reason` / `downstreamAvailable` / `checkedAt`。**公开**，只回能力状态，不含内网地址、端口、模型名或密钥信息 | 公开 |
 
 ```bash
-# 直连本机 ai-service（M0 验证方式；M1 起改走网关 /ai/health）
+# 直连本机 ai-service（M1 前只能这样验；M1 起改走网关 /ai/health）
 curl -s http://127.0.0.1:8107/ai/health
 # => {"code":0,"msg":"成功","data":{"service":"ai-service","available":false,
 #     "reason":"下游 AI 编排服务未就绪","downstreamAvailable":false,...}}
 ```
 
-- `available=false` 不等于故障：M0 的下游是 Fake 探活，会**如实上报未接线**（假装健康比暴露未接线更危险）
+- `available=false` 不等于故障：下游尚未接线时会**如实上报**（假装健康比暴露未接线更危险）
 - 失败形态沿用全局约定：鉴权类错误由网关给出 HTTP 401/403；`/ai/**` 的服务端错误按 `code` 判定
 - `stellar-ink-ai`（Python, 8200）**没有对外接口**：它只提供 `/health` 等内部路由，仅供 ai-service 调用
+
+**模型配置（全部 ADMIN）**
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/admin/providers` | 列出所有角色（`chat`/`fast`/`reasoning`/`embedding`/`rerank`）的配置；**密钥只回掩码**（`sk-…9f3a`）与 `apiKeyConfigured` | ADMIN |
+| POST | `/ai/admin/providers` | 新增或更新某角色配置；`apiKey` **留空表示沿用已存密钥**（改模型名不必重填） | ADMIN |
+| DELETE | `/ai/admin/providers/{role}` | 删除某角色配置 | ADMIN |
+| POST | `/ai/admin/providers/{role}/check` | 端点连通性自检：只验证 TCP 可达（`scope: tcp_only`），不验证模型与密钥 | ADMIN |
+| GET | `/ai/admin/providers/runtime` | **含解密后密钥**的运行时配置，供 Python 侧读取（M1 加内网签名后由 Python 调用） | ADMIN |
+
+```bash
+# 保存一份 DeepSeek 配置（Key 只在请求体里出现这一次）
+curl -s -X POST http://127.0.0.1:8107/ai/admin/providers \
+  -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" \
+  -d '{"role":"chat","displayName":"DeepSeek Chat","provider":"openai_compatible",
+       "baseUrl":"https://api.deepseek.com/v1","model":"deepseek-chat","apiKey":"sk-xxxx"}'
+# 自检
+curl -s -X POST http://127.0.0.1:8107/ai/admin/providers/chat/check -H "Authorization: <ADMIN token>"
+# => {"code":0,"data":{"ok":true,"scope":"tcp_only","latencyMs":12,"message":"地址可达（尚未验证模型与密钥）"}}
+```
+
+- **没有读取明文 Key 的接口**：忘了只能重填一次。密文用 AES-256-GCM 存
+  `ai_provider_config.api_key_cipher`，主密钥 `AI_SECRET_MASTER_KEY` 只在环境变量里
+- 首次配置某角色必须带 `apiKey`；`apiKey` 留空且该角色从未配过 → `code 1001`
+- 自检结论只给「可达/不可达 + 可操作提示」，不含主机名与端口
 
 ### 各服务通用
 
