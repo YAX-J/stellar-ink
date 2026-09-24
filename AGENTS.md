@@ -328,6 +328,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
   M1 实现签名与 nonce 防重放。密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。
+- **内部签名的标准串（跨语言，改必须两侧同时改）**：
+  `METHOD \n PATH \n TIMESTAMP_MS \n NONCE \n SHA256_HEX(BODY) \n USER_ID \n ROLE`；
+  签名是 HMAC-SHA256 小写十六进制，放 `X-AI-Signature`。
+  两端各一份实现（Java `CanonicalRequest`/`InternalRequestSigner`、Python `app/core/internal_auth.py`），
+  **一致性由 `stellar-ink-ai/tests/fixtures/signature_vector.json` 的固定向量守住**（两侧单测都读它）。
+  ⚠️ **身份字段必须参与签名**：只签 body 的话，内网中间人把 `X-AI-User-Id` 改成 1 就能冒充 ADMIN ——
+  那是「验签通过但身份是别人」，比不验签更危险。同理角色只接受 `READER/AUTHOR/ADMIN` 白名单。
+  时间窗 ±60s，nonce 在 TTL 内不得重复；校验顺序固定「时间戳 → 签名 → nonce」，
+  nonce 放在最后是为了不让垃圾签名把 nonce 表刷满。
 - **跨语言契约单一来源**：Java DTO（`stellar-ink-ai-client`）与 Python Pydantic（`stellar-ink-ai/app/schemas`）
   共用 `stellar-ink-ai/tests/fixtures/*.json`，两侧各有一组契约测试读**同一批文件**；
   JSON 键名一律驼峰，枚举序列化用小写字面量（Java 侧必须 `@JsonValue`，默认会写成大写）。

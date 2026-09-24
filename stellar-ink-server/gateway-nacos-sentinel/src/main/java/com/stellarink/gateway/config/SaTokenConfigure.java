@@ -72,6 +72,15 @@ public class SaTokenConfigure {
 
     private static final String NOTE_REVIEW_PATH = "/notes/review";
 
+    /** AI 服务健康探活：唯一公开的 /ai/** 路径（运维与前端需要未登录就能判断 AI 能不能用） */
+    private static final String AI_HEALTH_PATH = "/ai/health";
+
+    /** AI 管理端前缀：模型配置、索引任务、评测台——全部只对 ADMIN */
+    private static final String AI_ADMIN_PREFIX = "/ai/admin/";
+
+    /** AI 写作建议前缀：需要 AUTHOR（草稿助手涉及作者自己的内容） */
+    private static final String AI_WRITING_PREFIX = "/ai/writing/";
+
     @Bean
     public SaReactorFilter saReactorFilter() {
         return new SaReactorFilter()
@@ -86,17 +95,33 @@ public class SaTokenConfigure {
                             && ("/auth/login".equals(path) || "/auth/register".equals(path))) {
                         return;
                     }
-                    // 2) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
+                    // 2) AI 探活：唯一的公开 AI 路径，必须在一切角色判断之前放行
+                    if (isPublicAi(method, path)) {
+                        return;
+                    }
+                    // 3) AI 管理端（含读）：模型配置与索引任务，任何方法都要 ADMIN。
+                    //    必须放在「GET 全放行」之前 —— 否则 GET /ai/admin/providers 会匿名可读，
+                    //    而它返回的正是「用了哪家模型、端点在哪」这类配置情报。
+                    if (aiRequiresAdmin(path)) {
+                        requireRole(Role.ADMIN);
+                        return;
+                    }
+                    // 4) AI 写作建议：涉及作者草稿，写操作要 AUTHOR
+                    if (aiRequiresAuthor(method, path)) {
+                        requireRole(Role.AUTHOR);
+                        return;
+                    }
+                    // 5) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
                     if (requiresAdminRead(method, path)) {
                         requireRole(Role.ADMIN);
                         return;
                     }
-                    // 3) 我的内容与复核队列只允许作者及以上读取，须先于「GET 全放行」判断
+                    // 6) 我的内容与复核队列只允许作者及以上读取，须先于「GET 全放行」判断
                     if (requiresAuthorRead(method, path)) {
                         requireRole(Role.AUTHOR);
                         return;
                     }
-                    // 4) 读请求与 CORS 预检放行
+                    // 7) 读请求与 CORS 预检放行
                     if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                             || "OPTIONS".equalsIgnoreCase(method)) {
                         return;
@@ -107,14 +132,14 @@ public class SaTokenConfigure {
                         StpUtil.checkLogin();
                         return;
                     }
-                    // 5) 公开写接口白名单
+                    // 8) 公开写接口白名单
                     if ("POST".equalsIgnoreCase(method) && isPublicWrite(path)) {
                         return;
                     }
-                    // 6) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
+                    // 9) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
                     StpUtil.checkLogin();
 
-                    // 7) 角色门槛（登录后，按写操作细分）
+                    // 10) 角色门槛（登录后，按写操作细分）
                     Role role = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
                     if (requiresAdmin(method, path) && !role.atLeast(Role.ADMIN)) {
                         throw new NotRoleException(Role.ADMIN.name());
@@ -146,6 +171,28 @@ public class SaTokenConfigure {
                 || GLOW_PATH.matcher(path).matches()
                 || VIEWED_PATH.matcher(path).matches()
                 || NOTE_VIEWED_PATH.matcher(path).matches();
+    }
+
+    /** AI 探活是唯一的公开 AI 路径；比对全等，不做前缀匹配。 */
+    static boolean isPublicAi(String method, String path) {
+        return "GET".equalsIgnoreCase(method) && AI_HEALTH_PATH.equals(path);
+    }
+
+    /** AI 管理端：任何方法（含 GET）都要 ADMIN。 */
+    static boolean aiRequiresAdmin(String path) {
+        return path != null && path.startsWith(AI_ADMIN_PREFIX);
+    }
+
+    /**
+     * AI 写作建议：读接口放行逻辑由后面的「GET 全放行」处理，
+     * 这里只管写操作（生成建议是 POST）需要 AUTHOR。
+     */
+    static boolean aiRequiresAuthor(String method, String path) {
+        return !"GET".equalsIgnoreCase(method)
+                && !"HEAD".equalsIgnoreCase(method)
+                && !"OPTIONS".equalsIgnoreCase(method)
+                && path != null
+                && path.startsWith(AI_WRITING_PREFIX);
     }
 
     /** 需 ADMIN 的写操作：友链审核、用户角色调整 */

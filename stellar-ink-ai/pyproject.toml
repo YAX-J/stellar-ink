@@ -45,7 +45,10 @@ target-version = "py311"
 extend-exclude = [".venv"]
 
 [tool.ruff.lint]
+# S105/S106 是「疑似硬编码口令」：本仓库只会硬编码**环境变量名**（如 AI_INTERNAL_SECRET），
+# 真实密钥一律只从环境变量读取，因此这两条在本项目恒为误报。
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+ignore = ["S105", "S106"]
 
 [tool.ruff.lint.per-file-ignores]
 # 测试里允许 assert（S101 是面向生产代码的规则）

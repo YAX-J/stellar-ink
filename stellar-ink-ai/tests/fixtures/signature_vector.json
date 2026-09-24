@@ -1,0 +1,57 @@
+{
+  "_comment": "Java → Python 内部请求签名的跨语言基准。Java 侧 InternalRequestSignerTest 与 Python 侧 test_internal_auth.py 读同一份做双向验证。标准串含身份字段（userId/role），改格式必须两侧同时改并重新生成本文件。",
+  "secret": "stellar-ink-internal-secret-for-test-only-0001",
+  "algorithm": "HmacSHA256",
+  "identity": {
+    "userId": 42,
+    "role": "AUTHOR"
+  },
+  "bodySha256Empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "cases": [
+    {
+      "name": "qa_stream",
+      "method": "POST",
+      "path": "/qa/stream",
+      "timestampMs": 1790256000000,
+      "nonce": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "body": "{\"question\":\"星笺为什么把文章比作星辰？\",\"topK\":5}",
+      "identity": {
+        "userId": 42,
+        "role": "AUTHOR"
+      },
+      "bodySha256": "c67adc1f138d5913ab3f7eef63a558e4beb7ea63f710bc4c1e0728a108e2377f",
+      "canonical": "POST\n/qa/stream\n1790256000000\n0f1e2d3c4b5a69788796a5b4c3d2e1f0\nc67adc1f138d5913ab3f7eef63a558e4beb7ea63f710bc4c1e0728a108e2377f\n42\nAUTHOR",
+      "signature": "74672965473989e3de55d2537186fb1833414046e12bdc755c502d75baf7c157"
+    },
+    {
+      "name": "empty_body_get",
+      "method": "GET",
+      "path": "/health",
+      "timestampMs": 1790256000000,
+      "nonce": "000102030405060708090a0b0c0d0e0f",
+      "body": "",
+      "identity": {
+        "userId": 7,
+        "role": "READER"
+      },
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "GET\n/health\n1790256000000\n000102030405060708090a0b0c0d0e0f\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n7\nREADER",
+      "signature": "7e8ec390cd2d0238d5aef90de4f3432724f92d94b200bfc527bb7d67f1e1742c"
+    },
+    {
+      "name": "writing_suggest",
+      "method": "POST",
+      "path": "/writing/suggest",
+      "timestampMs": 1790256001000,
+      "nonce": "aabbccddeeff00112233445566778899",
+      "body": "{\"task\":\"polish\",\"draft\":\"今晚的星星很多。\",\"tone\":\"restrained\"}",
+      "identity": {
+        "userId": 1,
+        "role": "ADMIN"
+      },
+      "bodySha256": "57720bf0d2fc8a887b2fbe3f5799d837c08f7337bd6d1ccbd3d537a397e07cb0",
+      "canonical": "POST\n/writing/suggest\n1790256001000\naabbccddeeff00112233445566778899\n57720bf0d2fc8a887b2fbe3f5799d837c08f7337bd6d1ccbd3d537a397e07cb0\n1\nADMIN",
+      "signature": "7fbc3c83e757bc0f4725a133b0700d2b11196195ded72b429396d1afac225682"
+    }
+  ]
+}

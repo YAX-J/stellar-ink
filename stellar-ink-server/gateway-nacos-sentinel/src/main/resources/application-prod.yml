@@ -51,6 +51,12 @@ spring:
           uri: lb://content-service
           predicates:
             - Path=/posts/**,/notes/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
+        # AI 业务服务：对外唯一入口是 /ai/**；Python（8200）不配路由，只能由 ai-service 内网调用。
+        # 公开性/角色门槛在 SaTokenConfigure 里按路径判定（/ai/health 公开，/ai/admin/** 需 ADMIN）
+        - id: ai-service
+          uri: lb://ai-service
+          predicates:
+            - Path=/ai/**
 
     sentinel:
       eager: true
