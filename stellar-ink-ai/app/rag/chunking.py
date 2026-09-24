@@ -248,7 +248,7 @@ def _split_sections(text: str) -> list[tuple[str, str, int]]:
             level = len(match.group(1))
             title = match.group(2).strip()
             # 维护标题路径：同级或更高级标题替换掉更深的层级
-            del current_path[max(level - 1, 0):]
+            del current_path[max(level - 1, 0) :]
             while len(current_path) < level - 1:
                 current_path.append("")
             current_path.append(title)
