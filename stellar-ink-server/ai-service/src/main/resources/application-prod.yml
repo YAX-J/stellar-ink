@@ -1,0 +1,80 @@
+# 生产环境配置（AI 业务服务）
+#
+# 敏感项全部走环境变量，且**不提供默认值**：SA_TOKEN_JWT_SECRET 缺失时应直接启动失败，
+# 而不是用开发默认密钥把生产环境签发的 token 变成可伪造的（红线 §7.1）。
+server:
+  port: 8107
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # 可选：未上传也能启动
+  cloud:
+    nacos:
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:public}
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        group: DEFAULT_GROUP
+        namespace: ${NACOS_NAMESPACE:public}
+
+stellar:
+  ink:
+    ai:
+      # Docker 编排内的服务名；部署时由 compose 注入
+      python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
+
+sa-token:
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  # 必须由环境变量提供，与网关/其它服务保持一致；缺失即启动失败
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+# 生产不暴露接口文档与调试端点
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+knife4j:
+  enable: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
+    prometheus:
+      enabled: true

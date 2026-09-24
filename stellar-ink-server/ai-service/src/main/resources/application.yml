@@ -1,0 +1,10 @@
+# AI 业务服务：对外 /ai/** 出口（鉴权复核、配额、审计、Python 调用编排）
+server:
+  port: 8107
+
+spring:
+  application:
+    name: ai-service
+    version: 1.0.0-SNAPSHOT
+  profiles:
+    active: dev

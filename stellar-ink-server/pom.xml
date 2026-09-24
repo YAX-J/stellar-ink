@@ -23,6 +23,8 @@
         <module>content-service</module>
         <!-- Java → Python AI 客户端契约（M0-3 起登记；由 ai-service 依赖） -->
         <module>stellar-ink-ai-client</module>
+        <!-- AI 业务服务：对外 /ai/** 出口（M0-4 起登记） -->
+        <module>ai-service</module>
     </modules>
 
     <properties>

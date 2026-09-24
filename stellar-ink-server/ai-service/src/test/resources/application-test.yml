@@ -1,0 +1,27 @@
+# 测试环境配置：让集成测试**不依赖任何外部组件**（无 Nacos、无 Redis、无 MySQL、无 Python）。
+#
+# 与 application-dev.yml 的区别：dev 会去连远端 Nacos 并注册实例，
+# 测试里那既慢又会在 CI 上失败；这里显式关掉注册与配置拉取。
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+        # test profile 没有 spring.config.import（那是 dev/prod 才有），
+        # 不关掉校验的话启动会直接报「No spring.config.import property has been defined」
+        import-check:
+          enabled: false
+
+# 测试用的占位密钥：只在本进程内签验，不得用于任何真实环境
+sa-token:
+  token-name: Authorization
+  jwt-secret-key: test-only-sa-token-jwt-secret-32-bytes
+  is-log: false
+
+logging:
+  level:
+    root: WARN
+    com.stellarink: INFO
+    org.springframework: WARN

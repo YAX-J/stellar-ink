@@ -1,0 +1,29 @@
+# =============================================================
+# Nacos 动态配置模板 · AI 业务服务（生产环境）
+#
+# 上传：Data ID = ai-service-prod.yaml，Group = DEFAULT_GROUP，格式 = YAML
+#       入口：Nacos 控制台 → 配置管理 → 配置列表 → 「+」
+#             （控制台只绑宿主机回环，用 SSH 隧道开：ssh -L 8848:127.0.0.1:8848 ubuntu@<服务器>）
+#
+# ⚠️ 可选文件：application-prod.yml 用的是 optional:nacos:... 导入，不建也能启动。
+#
+# 约定（与网关、其它服务一致）：
+#   · 不放密钥（jwt-secret-key / AI_API_KEY / AI_INTERNAL_SECRET）、
+#     不放 actuator 端点开关、不放路由、不放部署拓扑；
+#   · ai-service 不拥有业务表、不使用 Redis，所以没有 datasource / redis 段；
+#   · 本文件的值 = 当前 application-prod.yml 的同类取值，发布不改变行为，只是搬到可热更新的位置。
+# =============================================================
+
+stellar:
+  ink:
+    ai:
+      # 编排网络内的服务名；改这里可热切换 Python 实例（不重启 ai-service）
+      python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    # 临时排查时按需放开：
+    # com.stellarink.ai: DEBUG

@@ -1,0 +1,95 @@
+# 开发环境配置（AI 业务服务）
+#
+# 与 user-service / content-service 的差异：**没有数据源与 Redis**。
+# ai-service 不拥有任何业务表（AI 的 ai_* 表在 M3 才建），Redis 配额与 nonce 在 M1 才用；
+# 依赖一旦引入就会在启动时建连接池，所以按「需要时才加」处理。
+spring:
+  config:
+    activate:
+      on-profile: dev # 仅在 dev 环境激活
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # 导入Nacos配置（可选，未上传不影响启动）
+  cloud:
+    nacos:
+      # 配置中心
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}  # 命名空间（默认 public）
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      # 服务发现
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
+        group: DEFAULT_GROUP
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+
+# AI 服务配置
+stellar:
+  ink:
+    ai:
+      # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）
+      python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+
+# Sa-Token：服务内防御性复核（主门槛在网关；M1 才接入 /ai/** 路由）
+sa-token:
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  # JWT 密钥（必须与网关一致）
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET:stellar-ink-satoken-jwt-secret-32bytes}
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+# Actuator端点暴露 - 用于健康检查和配置验证
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    # 安全：高危端点显式关闭（即使被误加回 exposure 也不会开启）
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+    loggers:
+      enabled: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
