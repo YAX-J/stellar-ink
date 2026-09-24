@@ -1,7 +1,7 @@
-# 测试环境配置：让集成测试**不依赖任何外部组件**（无 Nacos、无 Redis、无 MySQL、无 Python）。
+# 测试环境配置：让集成测试**不依赖任何外部组件**（无 Nacos、无 MySQL、无 Python）。
 #
-# 与 application-dev.yml 的区别：dev 会去连远端 Nacos 并注册实例，
-# 测试里那既慢又会在 CI 上失败；这里显式关掉注册与配置拉取。
+# 与 application-dev.yml 的区别：dev 会去连远端 Nacos 并注册实例、连开发机 MySQL，
+# 测试里那既慢又会在没有数据库的机器上失败；这里换成 H2 内存库 + 关掉注册与配置拉取。
 spring:
   cloud:
     nacos:
@@ -14,11 +14,37 @@ spring:
         import-check:
           enabled: false
 
+  datasource:
+    # MODE=MySQL：让 H2 接受 mysql 风格的类型与 ` 引号，schema.sql 可以照生产写
+    url: jdbc:h2:mem:stellar_ai_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    type: com.alibaba.druid.pool.DruidDataSource
+    druid:
+      initial-size: 1
+      min-idle: 1
+      max-active: 4
+      max-wait: 3000
+      validation-query: SELECT 1
+      test-while-idle: true
+
+  sql:
+    init:
+      mode: always          # 每次启动都建表（H2 内存库丢了就没了）
+      schema-locations: classpath:test-schema.sql
+
 # 测试用的占位密钥：只在本进程内签验，不得用于任何真实环境
 sa-token:
   token-name: Authorization
   jwt-secret-key: test-only-sa-token-jwt-secret-32-bytes
   is-log: false
+
+# 模型配置的默认 provider（测试里不真的调用外网；自检只做 TCP 可达性）
+stellar:
+  ink:
+    ai:
+      python-base-url: http://127.0.0.1:8200
 
 logging:
   level:

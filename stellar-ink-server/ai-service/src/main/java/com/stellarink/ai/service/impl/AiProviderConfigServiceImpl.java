@@ -5,6 +5,7 @@ import com.stellarink.ai.config.MasterKeyProvider;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
 import com.stellarink.ai.pojo.AiProviderConfig;
 import com.stellarink.ai.service.AiProviderConfigService;
+import com.stellarink.ai.service.ProviderConnectivityChecker;
 import com.stellarink.common.crypto.AesGcmCipher;
 import com.stellarink.common.exception.BusinessExceptionHelper;
 import com.stellarink.sharedmodel.dto.ai.AiProviderSaveDTO;
@@ -35,6 +36,7 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
 
     private final AiProviderConfigMapper mapper;
     private final MasterKeyProvider masterKeyProvider;
+    private final ProviderConnectivityChecker connectivityChecker;
 
     @Override
     public List<AiProviderVO> list() {
@@ -99,6 +101,35 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
             log.info("AI 模型配置已删除：role={}", role.getKey());
         }
         return removed > 0;
+    }
+
+    @Override
+    public void recordCheckResult(AiModelRole role, ProviderConnectivityChecker.CheckResult result) {
+        AiProviderConfig row = mapper.selectOne(Wrappers.<AiProviderConfig>lambdaQuery()
+                .eq(AiProviderConfig::getRole, role.getKey())
+                .last("limit 1"));
+        if (row == null) {
+            return;
+        }
+        row.setLastCheckStatus(result.ok() ? "ok" : "failed");
+        row.setLastCheckMessage(result.message());
+        row.setLastCheckedAt(LocalDateTime.now());
+        mapper.updateById(row);
+    }
+
+    @Override
+    public ProviderConnectivityChecker.CheckResult checkConnectivity(AiModelRole role) {
+        AiProviderConfig row = mapper.selectOne(Wrappers.<AiProviderConfig>lambdaQuery()
+                .eq(AiProviderConfig::getRole, role.getKey())
+                .last("limit 1"));
+        if (row == null) {
+            throw BusinessExceptionHelper.of(ErrorCode.NOT_FOUND,
+                    "该角色尚未配置模型，请先保存配置再自检");
+        }
+        ProviderConnectivityChecker.CheckResult result = connectivityChecker.check(row.getBaseUrl());
+        recordCheckResult(role, result);
+        log.info("模型端点自检：role={}, ok={}, cost={}ms", role.getKey(), result.ok(), result.latencyMs());
+        return result;
     }
 
     @Override

@@ -4,6 +4,7 @@ import com.stellarink.ai.config.MasterKeyProvider;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
 import com.stellarink.ai.pojo.AiProviderConfig;
 import com.stellarink.ai.service.AiProviderConfigService;
+import com.stellarink.ai.service.ProviderConnectivityChecker;
 import com.stellarink.common.crypto.AesGcmCipher;
 import com.stellarink.common.crypto.MasterKey;
 import com.stellarink.sharedmodel.dto.ai.AiProviderSaveDTO;
@@ -61,7 +62,7 @@ class AiProviderConfigServiceImplTest {
                 return MASTER_KEY;
             }
         };
-        service = new AiProviderConfigServiceImpl(mapper, provider);
+        service = new AiProviderConfigServiceImpl(mapper, provider, new ProviderConnectivityChecker());
     }
 
     private static AiProviderSaveDTO dto(AiModelRole role, String apiKey) {

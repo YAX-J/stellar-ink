@@ -29,6 +29,12 @@ public interface AiProviderConfigService {
     /** 删除某个角色的配置；不存在时返回 false。 */
     boolean delete(AiModelRole role);
 
+    /** 记录一次连通性自检结论（只写状态与可读说明，不写密钥）。 */
+    void recordCheckResult(AiModelRole role, ProviderConnectivityChecker.CheckResult result);
+
+    /** 对某个角色的端点做一次连通性自检，并把结论记进配置行。 */
+    ProviderConnectivityChecker.CheckResult checkConnectivity(AiModelRole role);
+
     /**
      * 运行时配置：按角色给出**解密后的**调用参数，供 Python 侧取用。
      *

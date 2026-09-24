@@ -99,6 +99,22 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- 统一响应体里有 LocalDateTime：Spring Boot 运行时自动注册 JSR-310 模块，
+             但切片测试里没有完整的 Jackson 自动配置，显式引入避免切片测试误报 500 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- 内存库：让「模型配置真能落库」这条链路在测试里跑起来（含 @Mapper 扫描与加密列），
+             不需要开发机有 MySQL；生产仍用 MySQL，见 application-{dev,prod}.yml -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
