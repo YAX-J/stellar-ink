@@ -21,7 +21,8 @@
         <!-- 两个业务服务：身份与内容 -->
         <module>user-service</module>
         <module>content-service</module>
-        <!-- AI 能力暂不开发，stellar-ink-ai-client 目录预留，后续接入时在此登记 -->
+        <!-- Java → Python AI 客户端契约（M0-3 起登记；由 ai-service 依赖） -->
+        <module>stellar-ink-ai-client</module>
     </modules>
 
     <properties>

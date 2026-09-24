@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.stellarink</groupId>
+        <artifactId>stellar-ink-server</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>stellar-ink-ai-client</artifactId>
+    <description>Java → Python AI 服务的内部客户端契约：Feign 接口、内部 DTO、签名头常量与 Fallback</description>
+
+    <dependencies>
+        <!-- 只定义契约与降级：不含 Controller、不引 Sa-Token、不直连 MySQL/Qdrant/Redis -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!-- 复用 Role 枚举等共享模型（客户端不外发这些类型，仅用于内部请求头组装） -->
+        <dependency>
+            <groupId>com.stellarink</groupId>
+            <artifactId>shared-model</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- 契约测试要把 fixture 里的 ISO 8601 时间反序列化成 Instant：
+             Jackson 的时间模块在 Boot 运行时由自动配置注册，测试里必须显式引入 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
