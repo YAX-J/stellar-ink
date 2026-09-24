@@ -1,0 +1,191 @@
+{
+  "_comment": "黄金集 v1：30 道题，基于 deploy/sql/02_init-data.sql 的真实种子内容标注。expectedPostIds 是「应该被检索到的文章」——同一篇文章的多个 chunk 命中只算一次。expectedPostIds 为空 = 无答案题，用于测拒答。标了 gradedRelevance 的题是分级相关（2.0 最相关 / 1.0 相关）。改题请同时核对原文。",
+  "name": "公开文章黄金集 v1",
+  "description": "覆盖种子内容包里的写作观、效率方法、阅读与城市速写；含 8 道无答案题测拒答",
+  "cases": [
+    {
+      "caseId": "q001",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "expectedPostIds": [1, 8, 9],
+      "gradedRelevance": { "1": 2.0, "8": 1.0, "9": 1.0 },
+      "expectedAnswer": "时间线属于别人，博客属于自己；每篇文章有固定坐标，不会被新的噪音冲走。"
+    },
+    {
+      "caseId": "q002",
+      "question": "一年写 18 万字的方法是什么？",
+      "expectedPostIds": [8],
+      "expectedAnswer": "不追求每天都写得好，只追求每天都写；数量会变成习惯，习惯会变成肌肉。"
+    },
+    {
+      "caseId": "q003",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "expectedPostIds": [1],
+      "expectedAnswer": "写得快不算活着，留下来的句子都是在慢里熬出来的。"
+    },
+    {
+      "caseId": "q004",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "expectedPostIds": [5],
+      "expectedAnswer": "第一遍读故事，第二遍读句子，第三遍读孤独。"
+    },
+    {
+      "caseId": "q005",
+      "question": "为什么说博客不是简历而是花园？",
+      "expectedPostIds": [6],
+      "expectedAnswer": "有的文章是乔木，有的是苔藓，都允许生长。"
+    },
+    {
+      "caseId": "q006",
+      "question": "告别朋友圈九十天后作者发现了什么？",
+      "expectedPostIds": [9],
+      "expectedAnswer": "没有错过任何真正重要的消息；重要的东西会自己找到你。"
+    },
+    {
+      "caseId": "q007",
+      "question": "搬家那篇文章把搬家比作什么？",
+      "expectedPostIds": [12],
+      "expectedAnswer": "一次小型告别式：每一件被丢掉的东西，都替你记住了一段时间。"
+    },
+    {
+      "caseId": "q008",
+      "question": "作者怎么比较第一行代码和第一首诗？",
+      "expectedPostIds": [11],
+      "expectedAnswer": "第一行代码打印 Hello World，第一首诗只写给自己；它们是同一种心跳。"
+    },
+    {
+      "caseId": "q009",
+      "question": "写作为什么被称为一种延迟的艺术？",
+      "expectedPostIds": [2, 6],
+      "gradedRelevance": { "2": 2.0, "6": 1.0 },
+      "expectedAnswer": "让情绪先沉淀、让事实先冷却，等某个夜晚它们会自己浮上来，轮廓更清晰。"
+    },
+    {
+      "caseId": "q010",
+      "question": "雨夜出租车里的司机都在聊什么？",
+      "expectedPostIds": [2],
+      "expectedAnswer": "房价、孩子、故乡的雨。"
+    },
+    {
+      "caseId": "q011",
+      "question": "作者认为「已读不回」意味着什么？",
+      "expectedPostIds": [3],
+      "expectedAnswer": "不是冷漠，是一种迟到的诚实；有些话不必立刻有回声。"
+    },
+    {
+      "caseId": "q012",
+      "question": "删掉的字对一篇文章有什么作用？",
+      "expectedPostIds": [3],
+      "expectedAnswer": "它们没有消失，变成了文章的骨密度。"
+    },
+    {
+      "caseId": "q013",
+      "question": "桌面清空一半之后发生了什么变化？",
+      "expectedPostIds": [4],
+      "expectedAnswer": "效率没有下降，呼吸变深了；工具要少到只剩下喜欢的。"
+    },
+    {
+      "caseId": "q014",
+      "question": "写作有什么秘诀？",
+      "expectedPostIds": [4, 11],
+      "gradedRelevance": { "4": 2.0, "11": 1.0 },
+      "expectedAnswer": "诚实面对那些让你犹豫要不要写下来的东西；犹豫的地方往往就是光进来的地方。"
+    },
+    {
+      "caseId": "q015",
+      "question": "凌晨的便利店里有什么？",
+      "expectedPostIds": [7],
+      "expectedAnswer": "霓虹灯、关东煮、关东煮的汤，和还没睡的人。"
+    },
+    {
+      "caseId": "q016",
+      "question": "海边的路由器有什么特别之处？",
+      "expectedPostIds": [10],
+      "expectedAnswer": "民宿的路由器密码是海浪的声音；信号很差，睡眠很好。"
+    },
+    {
+      "caseId": "q017",
+      "question": "作者说夜色越深的时候会发生什么？",
+      "expectedPostIds": [1, 7],
+      "gradedRelevance": { "1": 2.0, "7": 1.0 },
+      "expectedAnswer": "世界越安静，一个念头才有空间舒展成它本来该有的样子。"
+    },
+    {
+      "caseId": "q018",
+      "question": "为什么作者认为数量比质量更重要？",
+      "expectedPostIds": [8],
+      "expectedAnswer": "数量会变成习惯，习惯会变成肌肉 —— 先把频率稳住。"
+    },
+    {
+      "caseId": "q019",
+      "question": "夜航西飞是写给谁的？",
+      "expectedPostIds": [5],
+      "expectedAnswer": "写给所有在深夜清醒的人。"
+    },
+    {
+      "caseId": "q020",
+      "question": "凌晨四点那篇里的灯被比作什么？",
+      "expectedPostIds": [7],
+      "expectedAnswer": "便利店的灯是城市的星星。"
+    },
+    {
+      "caseId": "q021",
+      "question": "把待办清单烧掉一半会怎样？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q022",
+      "question": "楼下的猫允许作者摸了几秒？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q023",
+      "question": "作者用的是什么品牌的机械键盘？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q024",
+      "question": "博客用的服务器配置是多少核多少内存？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q025",
+      "question": "作者每天几点起床？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q026",
+      "question": "作者推荐的咖啡豆产地是哪里？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q027",
+      "question": "文章里提到的年度写作目标是多少万字？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q028",
+      "question": "作者在哪座城市生活？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q029",
+      "question": "深夜写作时作者听什么音乐？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "q030",
+      "question": "作者有没有推荐过具体的写作软件？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    }
+  ]
+}
