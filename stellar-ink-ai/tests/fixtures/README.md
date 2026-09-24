@@ -1,0 +1,32 @@
+# 跨语言共享契约样例（M0-2）
+
+这里每个 JSON 都是**同一份**被两侧读取的契约样例：
+
+| 文件 | 对应契约 |
+|---|---|
+| `qa_stream_request.json` | `QaStreamRequest`（`POST /ai/qa/stream` 请求） |
+| `qa_answer.json` | `QaAnswer`（问答结果，引用 + 用量） |
+| `writing_suggest_request.json` | `WritingSuggestRequest`（`POST /ai/writing/suggest` 请求） |
+| `writing_suggest_result.json` | `WritingSuggestResult`（写作候选） |
+| `index_rebuild_request.json` | `IndexRebuildRequest`（`POST /ai/admin/index/rebuild` 请求） |
+| `index_job.json` | `IndexJob`（`GET /ai/admin/jobs/{id}` 返回） |
+| `error_body.json` | `ErrorBody`（可展示错误码与提示） |
+
+## 两侧怎么读同一组文件
+
+- Python：`tests/test_schemas.py` 用 `pytest` 直接读本目录，校验「解析 → 序列化 → 与原文一致」。
+- Java：`ai-service` 的契约测试（M0-4）按仓库相对路径读取同一批文件。因为 Python 侧的
+  `uv sync` 只认 `stellar-ink-ai/pyproject.toml`，不能把 `tests/` 移到 Maven 模块内；
+  统一用下面的相对路径常量，避免两边各存一份：
+
+```text
+# 从 stellar-ink-server/ai-service/ 出发
+Path.of("..", "..", "stellar-ink-ai", "tests", "fixtures")
+```
+
+## 约定
+
+- 键名一律**驼峰**（Java Jackson 默认输出；Python 用 `alias_generator=to_camel` 转换）。
+- 字符串统一 UTF-8，中文直写不转义。
+- 契约里**不允许**出现密钥、真实模型密钥、真实用户数据；示例内容全部是本仓库种子内容口径的假数据。
+- 改契约要同时改：Python 模型、本目录 fixture、Java DTO（M0-4 起）与 `docs/api/README.md`。

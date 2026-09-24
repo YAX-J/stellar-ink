@@ -1,0 +1,20 @@
+{
+  "task": "polish",
+  "candidates": [
+    {
+      "text": "今晚有星。我坐在窗边写字。",
+      "rationale": "去掉「很多」「很安静」这类程度词，句子更克制。"
+    },
+    {
+      "text": "星很多。我在窗边写字，屋里很静。",
+      "rationale": "保留原句节奏，只把主观感受换成具体场景。"
+    }
+  ],
+  "usage": {
+    "promptTokens": 420,
+    "completionTokens": 128,
+    "totalTokens": 548,
+    "latencyMs": 960,
+    "model": "fake-chat-v1"
+  }
+}

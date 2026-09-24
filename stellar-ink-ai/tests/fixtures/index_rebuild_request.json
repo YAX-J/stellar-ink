@@ -1,0 +1,5 @@
+{
+  "kind": "post_rebuild",
+  "postId": 12,
+  "reason": "修正中文标点后重建单篇索引"
+}

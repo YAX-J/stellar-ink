@@ -3,7 +3,7 @@
 Python AI 服务，**仅内网可达**：模型网关、RAG、Agent 与知识管道。浏览器不直连本服务，
 对外协议、鉴权与 `Response<T>` 由 Java `ai-service :8107` 提供。
 
-当前进度：**M0-1 工程骨架已完成**（可构建、可测试，全程 Fake Adapter，无任何密钥）。
+当前进度：**M0-1 工程骨架、M0-2 跨语言契约已完成**（可构建、可测试，全程 Fake Adapter，无任何密钥）。
 实施顺序见 [`../docs/ai/implementation-roadmap.md`](../docs/ai/implementation-roadmap.md)，
 每轮节奏见 [`../docs/ai/development-workflow.md`](../docs/ai/development-workflow.md)。
 
@@ -46,6 +46,20 @@ curl -i http://127.0.0.1:8200/health                      # 期望 200 + X-Trace
 
 对外的 `/ai/**`（问答、写作建议、索引任务）由 Java `ai-service` 转发，落地前先写进
 [`../docs/api/README.md`](../docs/api/README.md)。
+
+## 跨语言契约
+
+`app/schemas/` 是 Java 与 Python 之间唯一的数据结构来源，JSON 键统一驼峰：
+
+| 契约 | 用途 |
+|---|---|
+| `QaStreamRequest` / `QaAnswer` | 星海问答（M3 检索、M5 SSE） |
+| `WritingSuggestRequest` / `WritingSuggestResult` | 执笔页 Copilot 建议（M5） |
+| `IndexRebuildRequest` / `IndexJob` | ADMIN 索引任务（M3/M4） |
+| `Citation` / `Usage` / `ErrorBody` | 引用、用量与错误体 |
+
+样例放 [`tests/fixtures/`](tests/fixtures/)，Java 契约测试（M0-4）与 Python Schema 测试
+读**同一组 JSON**，路径约定见 [`tests/fixtures/README.md`](tests/fixtures/README.md)。
 
 ## 安全边界
 

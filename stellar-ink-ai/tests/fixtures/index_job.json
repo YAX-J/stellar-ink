@@ -1,0 +1,11 @@
+{
+  "jobId": "job-0001",
+  "kind": "post_rebuild",
+  "status": "partial",
+  "totalPosts": 16,
+  "processedPosts": 15,
+  "failedPosts": 1,
+  "message": "1 篇文章切块失败：正文为空",
+  "createdAt": "2026-09-24T21:00:00+08:00",
+  "finishedAt": "2026-09-24T21:02:13+08:00"
+}
