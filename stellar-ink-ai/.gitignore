@@ -1,0 +1,15 @@
+# Python 服务的构建与虚拟环境产物（与仓库根 .gitignore 保持同一口径：一律不入库）
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# 本地密钥与覆盖配置（模型 API Key、AI_INTERNAL_SECRET 等只放这里，绝不入库）
+.env
+.env.local
