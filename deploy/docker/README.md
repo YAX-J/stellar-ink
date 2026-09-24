@@ -162,11 +162,19 @@ docker compose exec redis redis-cli                           # 进 Redis
   （logback 按天 + 单文件 100MB 滚动，保留 7 天，总上限 2G）。
 - **头像文件**：`STORAGE_TYPE=local`（默认）时写 `/app/data/uploads`，挂到宿主机 `deploy/docker/data/uploads/`。
   **该目录必须保留**（重建容器/换镜像不会带走它）；备份时连它一起打包，否则头像 404 并降级为底字。
-  `STORAGE_TYPE=cos` 时头像存腾讯云对象存储，该目录不再使用，可保留以备回滚。
-- **头像改用 COS（推荐生产）**：`.env` 填 `STORAGE_TYPE=cos` + `COS_BUCKET` / `COS_REGION` /
-  `COS_PUBLIC_BASE` / `COS_SECRET_ID` / `COS_SECRET_KEY`，然后 `docker compose up -d user-service`；
-  **回滚**：`STORAGE_TYPE` 改回 `local` 重启。两种实现的 `avatar_url` 形态不同（相对路径 / 绝对 URL），
-  互相切换时对方的地址会被安全忽略、不会误删文件。详见 `docs/architecture/avatar-minio.md`。
+  `STORAGE_TYPE=cos` 时头像存对象存储，该目录不再使用，可保留以备回滚。
+- **头像改用 COS（腾讯云）**：`.env` 填 `STORAGE_TYPE=cos` + `COS_BUCKET` / `COS_REGION` /
+  `COS_PUBLIC_BASE` / `COS_SECRET_ID` / `COS_SECRET_KEY`，然后 `docker compose up -d user-service`。
+  - 生产用**中国香港桶**（`COS_REGION=ap-hongkong`）：源站放境外，避开大陆源站 + 未备案域名的 SNI 拦截；
+  - `COS_PUBLIC_BASE` 必须是**浏览器能访问到**的地址，且因为 CF 会把 `Host` 原样转给源站、
+    而 COS 只认自己的端点域名，直接 CNAME 到 COS 会 403/404 —— 生产是
+    **`COS_PUBLIC_BASE=https://img.geminix.work` + Cloudflare Worker 代理**，
+    配置与验证见 `deploy/cloudflare/README.md`；建议给该图片域名加 Cache Rule：
+    **Eligible + Edge/Browser TTL 1 年**（对象名带随机串，换头像即换 URL，可放心长缓存）；
+  - **回滚**：`STORAGE_TYPE` 改回 `local` 重启 user-service 即可。
+    两种实现的 `avatar_url` 形态不同（站内相对路径 / 绝对 URL），互相切换时对方的地址会被安全忽略、
+    不会误删文件；但切回 `local` 后库里指向 COS 的旧头像会 404 并降级成底字 ——
+    要显示旧图就得先切回去或重新上传。详见 `docs/architecture/avatar-minio.md`。
 - **Knife4j 接口文档**：各服务只在编排网络内，未对外暴露；调试需要时临时给对应服务加 `ports` 映射。
 - **HTTPS**：由 `web` 容器的 nginx 终结（Cloudflare Origin 证书 + `Full (strict)`），**详见第五节**。
 - **网关端口**：`gateway` 的 8080 只绑宿主机 `127.0.0.1`。前端经 `web` 走容器内网 `http://gateway:8080`；
