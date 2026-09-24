@@ -1,8 +1,6 @@
 # 开发环境配置（AI 业务服务）
 #
-# 与 user-service / content-service 的差异：**没有数据源与 Redis**。
-# ai-service 不拥有任何业务表（AI 的 ai_* 表在 M3 才建），Redis 配额与 nonce 在 M1 才用；
-# 依赖一旦引入就会在启动时建连接池，所以按「需要时才加」处理。
+# 数据源只用于 ai_* 表（模型配置、评测数据）；AI 不读写 user / post 等业务表。
 spring:
   config:
     activate:
@@ -28,12 +26,34 @@ spring:
         group: DEFAULT_GROUP
         namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
 
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路抖动时只能等操作系统放弃（Windows 约 21s）
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123456}
+    druid:
+      initial-size: 2
+      min-idle: 2
+      max-active: 8
+      max-wait: 5000                    # 拿不到连接最多等 5s：宁可快速失败，也不要把线程挂到 60s
+      validation-query: SELECT 1
+      validation-query-timeout: 3       # 保活探测也要有上限，否则抖动时 SELECT 1 自己先挂住
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+
 # AI 服务配置
 stellar:
   ink:
     ai:
       # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl   # 控制台打印 SQL（dev）
 
 # Sa-Token：服务内防御性复核（主门槛在网关；M1 才接入 /ai/** 路由）
 sa-token:

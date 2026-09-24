@@ -315,8 +315,16 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   判断标准：一段代码如果「换成另一个模型/检索策略就要改」，它属于 Python。
 - **端口与拓扑**：`ai-service :8107`（Java，对外 `/ai/**`）+ `stellar-ink-ai :8200`（Python，**仅内网**）。
   Python 不注册 Nacos、不配网关路由；浏览器与网关都不得直达 8200。
-- **ai-service 不拥有业务表**：`DataSourceAutoConfiguration` 与 common-core 的 MyBatis-Plus/Redis Bean
-  在启动类里被显式排除；将来确实需要 `ai_*` 表（M3）或 Redis 配额（M1）时，再随对应切片放开并同步本文。
+- **ai-service 只拥有 `ai_*` 表**：M0 时它以「排除数据源」表明「碰不到业务库」；A1 起需要
+  `ai_provider_config`（模型配置）等 AI 域自己的表，因此恢复数据源与 MyBatis-Plus，但
+  **Mapper 只允许 `com.stellarink.ai.**.mapper`、只访问 `ai_*` 表**，绝不读写 `user`/`post`。
+  Redis 仍被排除（配额与 nonce 到 M1 才用），届时随对应切片放开并同步本文。
+  不要用 `@MapperScan`（它会污染 `@WebMvcTest` 切片测试）；在 Mapper 接口上标 `@Mapper`。
+- **API Key 口径**：默认给「国内云 + OpenAI 兼容」一套（Chat 用 DeepSeek，Embedding 用 bge-m3），
+  但**代码里不写死厂商**；面板 `POST /ai/admin/providers` 提交明文 Key，
+  落库前 AES-256-GCM 加密（`AesGcmCipher`，主密钥 `AI_SECRET_MASTER_KEY` 只在环境变量），
+  列表**只回掩码**（`sk-…9f3a`），没有任何接口能读回明文。加解密在 Java 与 Python 各实现一份，
+  一致性由 `stellar-ink-ai/tests/fixtures/key_vector.json` 的固化向量守住（两侧单测都读它）。
 - **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
   M1 实现签名与 nonce 防重放。密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。

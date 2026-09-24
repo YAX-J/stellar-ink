@@ -1,11 +1,9 @@
 package com.stellarink.ai;
 
-import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.stellarink.common.redis.RedisCache;
 import com.stellarink.common.redis.RedisUtils;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
@@ -17,28 +15,29 @@ import org.springframework.context.annotation.FilterType;
  * <ul>
  *   <li>Sa-Token JWT 防御性复核与角色门槛（主门槛在网关，M1 接上路由）</li>
  *   <li>请求限额、审计与统一 {@code Response<T>}</li>
+ *   <li>模型配置的 CRUD 与密钥加解密（{@code ai_* } 表归 AI 域所有）</li>
  *   <li>通过 {@code stellar-ink-ai-client} 调用 Python（仅内网，浏览器不可直达）</li>
  * </ul>
  *
  * <p>本服务**不**直接读写 {@code post} / {@code user} 等业务表：文章数据由 content-service
- * 的内部契约提供（M3），草稿只随当前作者请求临时传输。
+ * 的内部契约提供（M3），草稿只随当前作者请求临时传输。它拥有的是 {@code ai_*} 表
+ * （{@code ai_provider_config} 等），且**只**访问这些表。
  *
- * <p>为什么排除公共模块里的三个 Bean：{@code MybatisPlusConfig} 会建 MyBatis-Plus 拦截器、
- * {@code RedisUtils}/{@code RedisCache} 会要求注入 {@code StringRedisTemplate}，而 ai-service
- * 当前**既不拥有数据表也不做缓存**（AI 的 {@code ai_*} 表在 M3 才建，配额与 nonce 在 M1 才用）。
- * 这些类会随 common-core 传递到 classpath（common-core 未标 optional），
- * 排除扫描可以避免服务启动时就去初始化 Redis 连接池；等 M1/M3 真正需要时再随对应切片放开。
- * 服务内自身需要复用的公共组件（全局异常、TraceId、访问日志）保持照常生效。
+ * <p>为什么还排除公共模块的两个 Redis Bean：{@code RedisUtils}/{@code RedisCache} 会要求
+ * 注入 {@code StringRedisTemplate}，而配额与 nonce 防重放要到 M1 才用。
+ * 这些类随 common-core 传递到 classpath，排除扫描可以避免服务启动时就去初始化 Redis 连接池；
+ * 等 M1 真正需要时再放开（并在 fast-track-plan 里同步说明）。
+ * 数据源与 MyBatis-Plus 则**是需要的**（模型配置要落库）。
  *
- * <p>同时显式排除 {@link DataSourceAutoConfiguration}：仓库里其它服务都连 MySQL，
- * 但 AI 服务不该"顺手"拥有数据源 —— 排掉之后，将来若有人无意引入 JDBC 相关代码，
- * 启动就会直接失败，而不是悄悄连上一个数据库（红线 §7.2）。
+ * <p>这里刻意**不用** {@code @MapperScan}：那会在应用类上留下一个全局 Mapper 扫描器，
+ * 连 {@code @WebMvcTest} 这种只加载 Web 层的切片测试也会去建 Mapper、进而要求 {@code SqlSessionFactory}，
+ * 把纯 Web 测试变成「必须连库」。改为在每个 Mapper 接口上标 {@code @Mapper}，
+ * 语义一样，但切片测试能干净地只测 Web。
  */
-@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
+@SpringBootApplication
 @ComponentScan(
         basePackages = {"com.stellarink.ai", "com.stellarink.common", "com.stellarink.aiclient"},
         excludeFilters = {
-            @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = MybatisPlusInterceptor.class),
             @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = RedisUtils.class),
             @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = RedisCache.class),
         })

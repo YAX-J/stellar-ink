@@ -28,12 +28,30 @@ spring:
         group: DEFAULT_GROUP
         namespace: ${NACOS_NAMESPACE:public}
 
+  # 只用于 ai_* 表（模型配置、评测数据）；AI 不读写业务表
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
+    username: ${MYSQL_USER:stellar}
+    # 无默认值：缺失即启动失败，避免用开发口令连生产库
+    password: ${MYSQL_PASSWORD}
+    druid:
+      initial-size: 2
+      min-idle: 2
+      max-active: 16
+      max-wait: 5000
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+
 stellar:
   ink:
     ai:
       # Docker 编排内的服务名；部署时由 compose 注入
       python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
-
 sa-token:
   token-name: Authorization
   token-style: uuid
