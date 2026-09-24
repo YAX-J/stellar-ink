@@ -101,27 +101,47 @@ ai-service：AES-GCM 加密 → 写 MySQL `ai_provider_config`
 - 涉及 Qdrant / 模型调用的刀，先在**服务器实例**上验证一次，把命令与输出贴进汇报。
 - 未拿到真实 Key 之前，Provider 层必须能用 **Fake Adapter** 跑通全部单测与评测流程。
 
-## 5. 起步顺序（立即执行）
+## 5. 进度与起步顺序
 
 1. **A1-1** ✅ `ai_*` 表与密钥加密：`10_ai-schema.sql`（provider 配置表 + 评测表骨架）、
    Java 侧 AES-GCM 工具与跨语言测试向量、Python 侧同款解密。
-2. **A1-2** ✅ Provider 配置的 CRUD 与脱敏输出（Java），包含「测试连接」转发（当前为 TCP 自检）。
+2. **A1-2** ✅ Provider 配置的 CRUD 与脱敏输出（Java），包含「测试连接」（当前为 TCP 自检）。
 3. **A1-3** ✅ Python Provider 层：OpenAI 兼容 chat/embedding/rerank 三个接口 + Fake 实现 + 按角色路由。
 4. **A1-4** ✅ 前端「AI 实验室 → 模型配置」面板：选 provider、填 Key、跑自检。
-5. **A2** ⏳ 网关 `/ai/**` 路由 + 角色门槛 + HMAC 内网签名（Python 侧读运行时配置）。
-6. 之后进入 B（检索内核）与 C（评测台）。
+5. **A2-1** ✅ 网关 `/ai/**` 路由 + 角色门槛（`/ai/health` 公开；`/ai/admin/**` 任何方法都要 ADMIN）。
+6. **A2-2** ✅ 内部 HMAC 签名（Java 签发 + Python 验签，跨语言向量守一致性）。
+7. **A2-3** ✅ Python 接线：纯 ASGI 中间件在路由前验签，身份进 `request.state`；
+   非生产暴露 `/internal/whoami` 自检接口。**跨语言 HTTP 冒烟已实测通过**。
+8. **B2** ✅ 文章切块（父块 + 子块、标题路径、锚点、内容哈希、幂等），纯函数、无外部依赖。
+9. **B3a** ✅ BM25（Sparse）+ RRF 融合 + Dense 余弦 + 混合检索开关（单路/多路可切）。
+10. **B1 / B3b** ⏳ Qdrant 适配与索引管道 —— **需要 Qdrant 连接信息**（见下）。
+11. **C** ⏳ 评测台（指标 + 策略对比 + 前端面板）：指标计算是纯函数，可以先做。
+
+### 等一个信息才能继续
+
+**服务器上 Qdrant 的连接方式**：6333 能否从开发机直达、是否要 SSH 隧道、有没有 API Key。
+在此之前 B1（写入/查询向量库）无法验证；B2/B3a/C 的纯算法部分不受影响，已在推进。
 
 ### A 阶段的落地记录（供后续切片对照）
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
 | 密钥加密 | `common-core/crypto/AesGcmCipher`、`app/core/crypto.py` | AES-256-GCM，密文 `v1:<nonce>:<ct+tag>`；主密钥仅环境变量 |
-| 跨语言一致性 | `tests/fixtures/key_vector.json` | Java 生成、两侧单测共读；改格式两侧同时红 |
+| 密钥一致性 | `tests/fixtures/key_vector.json` | Java 生成、两侧单测共读；改格式两侧同时红 |
 | 配置 CRUD | `ai-service` 的 `AiProviderAdminController` | 五个接口全 ADMIN；**没有回读明文 Key 的接口** |
 | 连通性自检 | `ProviderConnectivityChecker` | 只做 TCP 可达（`scope: tcp_only`），不冒充「模型可用」 |
 | 供应商层 | `app/providers/` | 三类接口 + OpenAI 兼容实现 + 确定性 Fake + 按角色路由 |
 | 前端面板 | `views/ai/AiLabView.vue`、`stores/ai.js` | 头像菜单入口（仅 ADMIN），预填常见厂商端点与模型名 |
+| 内部签名 | `aiclient/signature/`、`app/core/internal_auth.py` | 标准串含**身份字段**；±60s 时间窗 + nonce 防重放；角色白名单 |
+| 签名一致性 | `tests/fixtures/signature_vector.json` | 由 `scripts/gen_signature_vector.py` 生成，两侧单测共读 |
+| 验签接线 | `app/core/internal_auth_middleware.py` | **纯 ASGI**（路由前生效）：公开路径全等白名单，其余默认拒绝 |
+| 跨语言冒烟 | `InternalAuthSmoke` | Java 签名 → Python 验签的真实 HTTP 往返（含篡改身份被拒） |
 
-**A 阶段修掉的三个既有缺陷**（都在鉴权链路上，值得记住）：
-`ai-service` 漏配 `SaTokenConfigure`（角色判断变 500）；`AiModelRole` 未声明 JSON 字面量
-（前端传 `"chat"` 变 400）；`AuthHelper` 未兜住 Sa-Token 异常（无 token 时 500 而不是 401）。
+**A 阶段修掉的缺陷**（都在鉴权/协议边界上，值得记住）：
+① `ai-service` 漏配 `SaTokenConfigure`（角色判断变 500）；
+② `AiModelRole` 未声明 JSON 字面量（前端传 `"chat"` 变 400）；
+③ `AuthHelper` 未兜住 Sa-Token 异常（无 token 时 500 而不是 401）；
+④ 标准串最初**没签身份字段** —— 内网中间人改 `X-AI-User-Id` 即可冒充 ADMIN（会话内自查发现）；
+⑤ Python 验签用大小写敏感的 `dict(headers).get("X-AI-Signature")` —— httpx 发小写头名，
+   表现为「带了签名却说没带」（跨语言必踩）。
+
