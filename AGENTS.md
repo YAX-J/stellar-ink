@@ -307,6 +307,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   网关与所有业务服务的 jwt-secret-key 必须一致，代码里不得出现新的硬编码密钥。
 
 ### AI 模块口径（M0 起建立，后续按里程碑扩展）
+- **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、
+  切块、Embedding、向量检索、BM25/RRF、Rerank、引用组装、Agent 状态图与工具、记忆、GraphRAG、
+  评测与 Trace，全部只在 `stellar-ink-ai` 实现。Java 侧（`ai-service` / `stellar-ink-ai-client`）
+  **只做**鉴权与角色、配额与审计、协议转换（HTTP/SSE 事件格式）、超时取消降级、DTO/DTO 映射，
+  **不得出现任何 AI 算法、模型调用或厂商 SDK 类型**（Provider 名称只作为配置值传递）。
+  判断标准：一段代码如果「换成另一个模型/检索策略就要改」，它属于 Python。
 - **端口与拓扑**：`ai-service :8107`（Java，对外 `/ai/**`）+ `stellar-ink-ai :8200`（Python，**仅内网**）。
   Python 不注册 Nacos、不配网关路由；浏览器与网关都不得直达 8200。
 - **ai-service 不拥有业务表**：`DataSourceAutoConfiguration` 与 common-core 的 MyBatis-Plus/Redis Bean

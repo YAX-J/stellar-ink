@@ -92,6 +92,12 @@ stellar-ink-ai :8200                     Python，AI 领域服务
 - Python 只写自己拥有的 `ai_*` 表和 Qdrant collection。
 - 文章数据由 `content-service` 的内部契约提供；草稿只随当前作者请求临时传输，不进入公共索引。
 - 第一版 Agent 工具全部只读；文章写入继续使用现有 `/posts/**` 接口并由用户确认。
+- **AI 能力全部在 Python 侧实现**（2026-09-24 与用户确认的口径）：模型调用与厂商 SDK、Prompt 与模板、
+  结构化输出校验、切块、Embedding、向量检索、BM25/RRF、Rerank、引用组装、Agent 状态图与工具、
+  记忆、GraphRAG、评测与 Trace 都只写在 `stellar-ink-ai`。Java 侧（`ai-service` / `stellar-ink-ai-client`）
+  只做鉴权与角色、配额与审计、协议转换（HTTP/SSE 事件格式）、超时取消降级、DTO 映射，
+  **不得出现任何 AI 算法、模型调用或厂商 SDK 类型**（Provider 名称只作为配置值透传）。
+  判断标准：一段代码如果「换成另一个模型或检索策略就要改」，它属于 Python。
 
 ### 2.1 为什么不让网关直接路由 Python
 

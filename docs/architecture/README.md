@@ -66,7 +66,14 @@ stellar-ink-ai/                Python AI 编排服务（8200，M0-1 起；仅内
 **AI 边界**（与其它两个业务服务的区别）：ai-service 不拥有任何业务表，
 **没有数据源与 Redis 依赖**（`DataSourceAutoConfiguration` 与公共模块的 MyBatis-Plus/Redis Bean 被显式排除），
 也不直接读写 `post`/`user`。文章数据将来由 content-service 的内部契约提供（M3），
-草稿只随当前作者请求临时传输。AI 技术路线与实施顺序见
+草稿只随当前作者请求临时传输。
+
+**AI 能力的代码归属**：模型调用与厂商 SDK、Prompt、结构化输出校验、切块与嵌入、检索与重排、
+引用组装、Agent 与工具、记忆、GraphRAG、评测 Trace **一律写在 Python（`stellar-ink-ai`）**；
+Java 的 `ai-service` 只负责鉴权与角色、配额与审计、HTTP/SSE 协议转换、超时取消降级与 DTO 映射，
+不出现任何 AI 算法或厂商 SDK 类型。判断标准：换成另一个模型或检索策略就要改的代码属于 Python。
+
+AI 技术路线与实施顺序见
 [docs/ai/README.md](../ai/README.md) 与 [docs/ai/implementation-roadmap.md](../ai/implementation-roadmap.md)，
 每轮开发流程见 [docs/ai/development-workflow.md](../ai/development-workflow.md)。
 
