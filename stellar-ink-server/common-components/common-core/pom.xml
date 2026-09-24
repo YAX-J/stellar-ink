@@ -47,6 +47,14 @@
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-spring-boot3-starter</artifactId>
         </dependency>
+        <!-- JWT 无状态模式的异常类型（SaJwtException）：只有参与验签的服务才需要，
+             因此标 optional —— 这里只为了能编译 SaJwtExceptionAdvice，
+             不会传递到 user/content 等模块，消费方引与不引都不会被强制。 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-jwt</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
