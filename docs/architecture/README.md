@@ -93,7 +93,7 @@ AI 技术路线和分阶段实现方案见 [docs/ai/README.md](../ai/README.md)�
 
 > 头像存储有**两种实现**（`stellar.ink.storage.type` 切换）：
 > `local` 本地磁盘（文件与库必须同机可达，多实例或本地连远程库会出现「上传成功但图片 404」）；
-> `cos` 腾讯云对象存储（推荐生产，图片与数据库解耦）。
+> `cos` 腾讯云对象存储（生产用香港桶，图片域名经 Cloudflare Worker 代理暴露，见 `deploy/cloudflare/README.md`）。
 > 方案、部署形态、迁移与回滚见 [avatar-minio.md](avatar-minio.md)。
 
 当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。

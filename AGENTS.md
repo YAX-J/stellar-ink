@@ -255,20 +255,26 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
   不要新加「驳回」专用接口，否则「点通过」与「直接改角色」会出现两套代码路径与不一致状态。
 - 头像口径：`avatar_url` 存**可直接给 `<img src>` 用的地址**（`local` 为站内相对路径
-  `/uploads/avatars/u{userId}_{uuid8}.{ext}`；`cos` 为 COS/CDN 绝对 URL）。上传 `POST /user/avatar`
-  （multipart，字段名 `file`）、删除 `DELETE /user/avatar`。**存储位置由 `stellar.ink.storage.type`
-  一个开关决定**（`local` 默认 / `cos`），业务层依赖 `storage/ObjectStorage` 接口，
-  换存储=新增一个实现类，可随时回滚。
+  `/uploads/avatars/u{userId}_{uuid8}.{ext}`；`cos` 为对象存储或 CDN 的绝对 URL）。上传
+  `POST /user/avatar`（multipart，字段名 `file`）、删除 `DELETE /user/avatar`。
+  **存储位置由 `stellar.ink.storage.type` 一个开关决定，两档：`local`（默认）/ `cos`**；
+  业务层依赖 `storage/ObjectStorage` 接口，换存储=新增一个实现类，可随时回滚。
   - `local`：文件落 `UPLOAD_DIR`（生产 Docker 卷 `deploy/docker/data/uploads`，必须保留）；
     读取走 `/uploads/**` 独立网关路由（匿名可读）。**限制：文件与库必须同机可达**，
     本地连远程库或跑多实例时会出现「上传成功但图片 404」。
   - `cos`：腾讯云对象存储。`bucket` 必须带 APPID 后缀、`region` 形如 `ap-shanghai`；
-    `public-base` 必须填**浏览器能访问到**的地址（CDN 域名），填内网端点或 localhost 会导致全站图片 404。
+    `public-base` 必须填**浏览器能访问到**的地址，填内网端点或 localhost 会导致全站图片 404。
+    生产用 **COS 香港桶 + Cloudflare Worker 代理**暴露图片域名：CF 会把 Host 原样转给源站，
+    而 COS 只认自己的端点域名，直接 CNAME 会 403/404；免费套餐既没有 Origin Rules，
+    Transform Rules 又不许改 Host —— Worker 自己 fetch 天然带对的 Host，顺带吃到边缘缓存，
+    配置与验证见 `deploy/cloudflare/README.md`。
+    图片域名建议加 Cache Rule（Eligible + Edge/Browser TTL 1 年，
+    对象名带随机串、换头像即换 URL，可长缓存）。详见 `docs/architecture/avatar-minio.md`。
   - 校验三件套收在 `storage/AvatarValidator`（服务端改名 + ImageIO 魔数认格式 + 1MB 双拦），
     两个实现共用，**对象存储实现不得绕过**；`ObjectStorage.delete` 必须尽力而为、
     只删自己前缀下的对象（切换存储后遗留的另一种形态 URL 要安全忽略）。
-  - 密钥**刻意不作为配置项**：只从环境变量 `COS_SECRET_ID` / `COS_SECRET_KEY` 读取（见 `StorageProperties`），
-    生产用 CAM 子账号密钥并限定单桶，绝不用主账号密钥。
+  - 密钥**刻意不作为配置项**，只从环境变量读取（见 `StorageProperties`）：COS 走 `COS_SECRET_ID` /
+    `COS_SECRET_KEY`（生产用 CAM 子账号密钥并限定单桶，绝不用主账号密钥）。
   - 换头像先写新对象、写库成功后再删旧对象（删库失败回收新对象）；**删除头像必须用
     `LambdaUpdateWrapper.set(..., null)`** —— MyBatis-Plus 的 `updateById` 默认忽略 null 字段，
     直接 `setAvatarUrl(null)` 会「接口成功、刷新又回来」。
@@ -339,7 +345,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   + 待审计数 + 通过驳回按钮，两处都提示「通过后需重新登录才生效」。
 - 头像已完成（图片 + 底字双轨 + 可切换对象存储）：`user.avatar_url` + `POST/DELETE /user/avatar`
   （multipart 上传，服务端改名 + 魔数校验 + 1MB 双拦）；存储有 `local`（本地磁盘 + `/uploads/**`
-  匿名读路由 + Docker 卷）与 `cos`（腾讯云对象存储）两种，由 `stellar.ink.storage.type` 切换。
+  匿名读路由 + Docker 卷）与 `cos`（腾讯云对象存储，生产用香港桶 + Cloudflare Worker 图片代理）
+  两种，由 `stellar.ink.storage.type` 切换。
   前端新增 `components/common/UserAvatar.vue`（降级链路：图片 → 底字 → 昵称首字 → 星），
   接入**导航身份入口、文章/笔记作者署名 AuthorBadge（`/user/authors` 已带 `avatarUrl`）、
   账号页「我的星籍」（可上传/更换/恢复底字）**；

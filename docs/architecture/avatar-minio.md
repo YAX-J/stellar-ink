@@ -6,6 +6,8 @@
 > （上传 / 匿名公开读 / 字节一致 / 缓存头 / 换头像清理旧对象 / 魔数拒绝 / 超限拒绝 / 未登录拒绝 / 删除清理）。
 > MinIO 部分（§3 形态 B、§4 的 MinIO 行）保留为**同接口下的另一实现**，需要时按本文新增
 > `MinioObjectStorage` 即可，无需改动业务层与前端。
+> **生产现状**：COS 香港桶 + Cloudflare Worker 图片代理（微信/大陆访客可直读，见
+> `deploy/cloudflare/README.md`）；为什么不用别的对象存储见 §13。
 > 尚未做：P3 存量头像迁移脚本、P4 生产 Compose 里的 COS 变量核对与 CDN 域名接入。
 
 ## 1. 为什么要动
@@ -244,3 +246,26 @@ mc mirror --overwrite ./data/uploads/avatars ink/stellar-ink-avatars/avatars
 3. 线上 endpoint 走 `https://cdn.你的域名` 反代到 `minio:9000`：既拿到 https，又能让 Nginx 做缓存与限速。
 4. 若你近期不打算多实例部署，只是想解决本地与远程库错位，那**改成本机全套环境（或把图片存进数据库 BLOB）**
    的收益/成本比更好 —— MinIO 的价值在多实例、大文件与将来的文章配图，现在上的话属于提前投入。
+
+## 13. 生产为什么是「COS + Cloudflare Worker 代理」
+
+§3 选的是自建 MinIO，§4 的选型也以 MinIO 为默认目标；**实际落地换了对象存储，但没有换方案骨架**：
+`ObjectStorage` 接口 + `type` 开关 + `AvatarValidator` 三条校验、以及「只删自己前缀、尽力而为」的删除语义
+全部照旧，换的只是接口的一个实现类 —— 这正是 §6.1 抽接口的目的。
+
+**选型对比（2026-09 实测口径）**
+
+| 方案 | 自定义域名 / 图片域名 | 出网流量 | 结论 |
+|---|---|---|---|
+| **腾讯云 COS 香港桶 + CF Worker 代理（当前）** | 桶端点不能直接 CNAME（CF 原样转发 `Host`，COS 只认自己的端点域名 → 403/404）；免费套餐没有 Origin Rules，Transform Rules 又不许改 `Host`，所以用一个 Worker 自己 `fetch`（天然带对的 Host）并吃到边缘缓存 | COS 按量计费，个人站量级可忽略 | **已上线可用**，免费额度足够 |
+| Cloudflare R2 | 自定义域名**原生支持**，连 Worker 都能省掉 | 出网免费 | 需要账户绑定支付方式（信用卡/PayPal），暂无可用国际卡 → 只能搁置 |
+| 自建 MinIO | 要自己反代并维护 A 形态的机器与卷 | 看机房带宽 | 多实例、大文件场景才有必要（§12） |
+
+**要点**
+
+- 图片域名 `img.geminix.work` 与库里的 `avatar_url` 解耦：以后换任何对象存储都只改
+  `COS_PUBLIC_BASE` / `STORAGE_TYPE`，**历史头像 URL 不受影响**；
+- 「桶里是 COS、域名在 CF」的分工意味着**缓存策略在 CF 侧**：给图片域名加 Cache Rule
+  （Eligible + Edge/Browser TTL 1 年，对象名带随机串、换头像即换 URL，可放心长缓存）；
+- 回源链路（DNS / Worker 路由 / 缓存规则 / 验证命令）见 `deploy/cloudflare/README.md`，
+  别只改应用侧 `.env` 就以为换完了。

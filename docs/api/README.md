@@ -71,7 +71,7 @@ curl -X DELETE http://localhost:8080/user/avatar -H "Authorization: <token>"
 | 项 | 口径 |
 |---|---|
 | 存储位置 | 由 `stellar.ink.storage.type` 决定：`local`（默认）落 user-service 本地磁盘 `stellar.ink.upload.dir`（dev `./data/uploads`，prod `/app/data/uploads`，环境变量 `UPLOAD_DIR`）；`cos` 存腾讯云对象存储 |
-| 访问路径 | `local`：`/uploads/avatars/<服务端生成的文件名>`，**匿名可读**（独立网关路由 `user-uploads`）；`cos`：`https://<bucket>.cos.<region>.myqcloud.com/<key>` 或 CDN 域名，由 COS 直接提供，不经网关 |
+| 访问路径 | `local`：`/uploads/avatars/<服务端生成的文件名>`，**匿名可读**（独立网关路由 `user-uploads`）；`cos`：配置的 `publicBase`（图片域名，生产经 Cloudflare Worker 代理回 COS）+ `/avatars/<文件名>`，由对象存储直接提供，不经网关 |
 | 返回值 | `local` 返回**站内相对路径**（`/uploads/avatars/u1_ab12cd34.jpg`）；`cos` 返回**绝对 URL**。前端 `<img src>` 对两者一视同仁 |
 | 文件名校验 | 服务端用 `u{userId}_{uuid8}.{jpg\|png\|webp}` 重新命名，**不采用客户端文件名**，从根上消除 `../` 穿越 |
 | 格式校验 | 按文件头（ImageIO 魔数）识别真实格式，只接受 JPG / PNG / WebP；**不信任 Content-Type 与扩展名** |
@@ -87,8 +87,8 @@ curl -X DELETE http://localhost:8080/user/avatar -H "Authorization: <token>"
 # 切换到 COS：只需环境变量（密钥只从环境变量注入，配置文件里写不进去）
 export STORAGE_TYPE=cos
 export COS_BUCKET=stellar-ink-avatars-1459736092   # 必须带 APPID 后缀
-export COS_REGION=ap-shanghai
-export COS_PUBLIC_BASE=https://cdn.example.com     # 留空则用 COS 默认域名
+export COS_REGION=ap-hongkong                      # 生产用香港桶（源站放境外）
+export COS_PUBLIC_BASE=https://img.geminix.work    # 图片域名（生产经 Cloudflare Worker 代理）
 export COS_SECRET_ID=<CAM 子账号 SecretId>
 export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 ```
@@ -97,6 +97,10 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - 需要的最小权限：`PutObject` / `GetObject` / `HeadObject` / `DeleteObject`（策略资源限定到该桶）
 - 桶权限：**公有读私有写**；**不要**开放 ListBucket（验证方法见 `docs/architecture/avatar-minio.md`）
 - 密钥管理：使用 CAM 子账号密钥并限定单桶；**绝不用主账号密钥**，绝不入库/入 Nacos
+- 启动自检：装配时探一个不存在的键，日志给出「桶可用 / 桶不存在 / 无权限」三种结论
+  （只告警不阻塞启动），并写清检查的桶名与 region
+- 图片域名建议加 Cache Rule：Eligible + Edge/Browser TTL 1 年（对象名带随机串，换头像即换 URL），
+  配置与验证见 [deploy/cloudflare/README.md](../../deploy/cloudflare/README.md)
 - 详细方案、部署形态与迁移步骤见 [docs/architecture/avatar-minio.md](../architecture/avatar-minio.md)
 
 ## 接口一览（经网关调用）
