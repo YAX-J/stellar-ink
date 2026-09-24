@@ -20,6 +20,8 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'login' }, meta: { title: '登录', layout: 'auth' } },
   { path: '/register', name: 'register', component: () => import('@/views/auth/AuthView.vue'), props: { mode: 'register' }, meta: { title: '注册', layout: 'auth' } },
   { path: '/account', name: 'account', component: () => import('@/views/account/AccountView.vue'), meta: { title: '账号', requiresAuth: true } },
+  /* AI 实验室：站长的模型配置与（后续）检索评测台。不进一级导航，入口在头像菜单 */
+  { path: '/ai-lab', name: 'ai-lab', component: () => import('@/views/ai/AiLabView.vue'), meta: { title: 'AI 实验室', requiresAuth: true, requiresRole: 'ADMIN' } },
   { path: '/read/:id', name: 'read', component: () => import('@/views/read/ReadView.vue'), meta: { title: '深读' } },
   /* 未知路径不再静默回首页（打错的链接、被删的文章会让用户以为自己点错了） */
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/notfound/NotFoundView.vue'), meta: { title: '星轨走失' } },
@@ -36,12 +38,15 @@ const router = createRouter({
  * 只有真正需要身份的操作（写作、账号）才拦截，冷启动不再第一屏就是登录页。 */
 router.beforeEach((to) => {
   const auth = useAuthStore()
-  if (auth.isLoggedIn) return
-  /* 未登录访问需登录页：带 redirect 去登录，登录后回到原处 */
-  if (to.meta.requiresAuth) {
-    return { name: 'login', query: { redirect: to.fullPath } }
+  if (!auth.isLoggedIn) {
+    /* 未登录访问需登录页：带 redirect 去登录，登录后回到原处 */
+    if (to.meta.requiresAuth) {
+      return { name: 'login', query: { redirect: to.fullPath } }
+    }
+    return
   }
-  /* 公开页但角色不足（如读者进写作舱）：留在页内用友好提示说明，不做静默重定向 */
+  /* 已登录但角色不足（如读者访问 AI 实验室）：留给页面内友好说明，不静默重定向。
+   * 角色门槛的主判断始终在网关与服务端，前端只决定「给不给看这个入口」。 */
 })
 
 router.afterEach((to) => {

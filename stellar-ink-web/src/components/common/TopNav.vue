@@ -177,6 +177,10 @@ const userTo = computed(() => {
             <RouterLink v-if="auth.isLoggedIn" class="um-item" role="menuitem" to="/notes/mine" @click="closeMenu">
               我的笔记
             </RouterLink>
+            <!-- AI 实验室是站长的调试台（模型配置 + 后续的检索评测），只对 ADMIN 露出入口 -->
+            <RouterLink v-if="auth.isAdmin" class="um-item" role="menuitem" to="/ai-lab" @click="closeMenu">
+              AI 实验室
+            </RouterLink>
             <p class="um-title">外观</p>
             <div class="um-themes">
               <button

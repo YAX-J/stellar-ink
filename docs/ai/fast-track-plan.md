@@ -103,9 +103,25 @@ ai-service：AES-GCM 加密 → 写 MySQL `ai_provider_config`
 
 ## 5. 起步顺序（立即执行）
 
-1. **A1-1** `ai_*` 表与密钥加密：`10_ai-schema.sql`（provider 配置表 + 评测表骨架）、
+1. **A1-1** ✅ `ai_*` 表与密钥加密：`10_ai-schema.sql`（provider 配置表 + 评测表骨架）、
    Java 侧 AES-GCM 工具与跨语言测试向量、Python 侧同款解密。
-2. **A1-2** Provider 配置的 CRUD 与脱敏输出（Java），包含「测试连接」转发。
-3. **A1-3** Python Provider 层：OpenAI 兼容 chat/embedding/rerank 三个接口 + Fake 实现 + 路由。
-4. **A1-4** 前端「AI 实验室 → 模型配置」面板：选 provider、填 Key、跑自检。
-5. 之后进入 B（检索内核）与 C（评测台）。
+2. **A1-2** ✅ Provider 配置的 CRUD 与脱敏输出（Java），包含「测试连接」转发（当前为 TCP 自检）。
+3. **A1-3** ✅ Python Provider 层：OpenAI 兼容 chat/embedding/rerank 三个接口 + Fake 实现 + 按角色路由。
+4. **A1-4** ✅ 前端「AI 实验室 → 模型配置」面板：选 provider、填 Key、跑自检。
+5. **A2** ⏳ 网关 `/ai/**` 路由 + 角色门槛 + HMAC 内网签名（Python 侧读运行时配置）。
+6. 之后进入 B（检索内核）与 C（评测台）。
+
+### A 阶段的落地记录（供后续切片对照）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 密钥加密 | `common-core/crypto/AesGcmCipher`、`app/core/crypto.py` | AES-256-GCM，密文 `v1:<nonce>:<ct+tag>`；主密钥仅环境变量 |
+| 跨语言一致性 | `tests/fixtures/key_vector.json` | Java 生成、两侧单测共读；改格式两侧同时红 |
+| 配置 CRUD | `ai-service` 的 `AiProviderAdminController` | 五个接口全 ADMIN；**没有回读明文 Key 的接口** |
+| 连通性自检 | `ProviderConnectivityChecker` | 只做 TCP 可达（`scope: tcp_only`），不冒充「模型可用」 |
+| 供应商层 | `app/providers/` | 三类接口 + OpenAI 兼容实现 + 确定性 Fake + 按角色路由 |
+| 前端面板 | `views/ai/AiLabView.vue`、`stores/ai.js` | 头像菜单入口（仅 ADMIN），预填常见厂商端点与模型名 |
+
+**A 阶段修掉的三个既有缺陷**（都在鉴权链路上，值得记住）：
+`ai-service` 漏配 `SaTokenConfigure`（角色判断变 500）；`AiModelRole` 未声明 JSON 字面量
+（前端传 `"chat"` 变 400）；`AuthHelper` 未兜住 Sa-Token 异常（无 token 时 500 而不是 401）。

@@ -199,4 +199,25 @@ class AiProviderAdminControllerTest {
         assertNull(AiModelRole.parse(""));
         assertEquals(AiModelRole.CHAT, AiModelRole.parse(" CHAT "));
     }
+
+    @Test
+    @DisplayName("列表响应的字段形状固定：前端面板按 role 建立索引，JSON 键必须是驼峰")
+    void listResponseShapeIsStableForThePanel() {
+        seedChatConfig();
+
+        JsonNode data = objectMapper.valueToTree(service.list());
+
+        assertTrue(data.isArray() && data.size() == 1);
+        JsonNode first = data.get(0);
+        // 面板用 role 当索引键；apiKeyMask/apiKeyConfigured 决定按钮与提示
+        assertTrue(first.has("role"));
+        assertTrue(first.has("displayName"));
+        assertTrue(first.has("baseUrl"));
+        assertTrue(first.has("model"));
+        assertTrue(first.has("apiKeyMask"));
+        assertTrue(first.has("apiKeyConfigured"));
+        assertTrue(first.has("lastCheckStatus"));
+        assertEquals("chat", first.get("role").asText(), "role 必须是面板可识别的小写键");
+        assertFalse(first.has("apiKeyCipher"), "响应里不该出现密文字段");
+    }
 }
