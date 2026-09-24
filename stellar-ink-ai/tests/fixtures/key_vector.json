@@ -1,0 +1,10 @@
+{
+  "_comment" : "跨语言加解密一致性基准：Java 写入、Python 读取。两侧单测都读本文件；密文格式必须逐字节一致（v1:<nonce b64>:<ciphertext+tag b64>）。ciphertext 由 VectorBootstrapper 生成，不要手写。",
+  "masterKeyB64" : "c3RlbGxhci1pbmstYWktbWFzdGVyLWtleS0wMDAwMDA=",
+  "nonceB64" : "AAECAwQFBgcICQoL",
+  "plaintext" : "sk-stellar-ink-test-key-0001",
+  "ciphertext" : "v1:AAECAwQFBgcICQoL:Euo1dIbifCIuINUYmLerxSGpgB4MBOcjAzh7UOQHNY+qpUWxcfiKFnqfZks=",
+  "tamperedCiphertext" : "v1:AAECAwQFBgcICQoL:E+o1dIbifCIuINUYmLerxSGpgB4MBOcjAzh7UOQHNY+qpUWxcfiKFnqfZks=",
+  "masked" : "sk-…0001",
+  "wrongKeyB64" : "d3JvbmctbWFzdGVyLWtleS0wMDAwMDAwMDAwMDAwMDA="
+}

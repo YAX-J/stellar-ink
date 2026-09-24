@@ -9,6 +9,8 @@ dependencies = [
     "pydantic>=2.7,<3.0",
     "pydantic-settings>=2.3,<3.0",
     "uvicorn[standard]>=0.30,<1.0",
+    # API Key 的静态解密（AES-256-GCM）：与 Java 侧 AesGcmCipher 共用同一套密文格式
+    "cryptography>=43.0,<47.0",
 ]
 
 [project.optional-dependencies]
