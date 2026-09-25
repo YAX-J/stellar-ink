@@ -1,47 +1,32 @@
 package com.stellarink.common.config;
 
+import com.stellarink.sharedmodel.auth.JwtSecretPolicy;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
-import java.util.Locale;
-import java.util.Set;
-
 /**
- * 生产启动哨兵：prod 环境下拒绝用「仓库中公开可见的默认密钥」或过短密钥启动。
+ * 启动哨兵（Servlet 侧）：非 dev 档拒绝用「公开可见的密钥」或过短密钥启动。
  *
- * <p>为什么需要它：dev 配置为了让服务开箱即用，给 {@code sa-token.jwt-secret-key}
- * 留了默认值，而该值随代码提交进仓库、等于公开。prod 配置本身没有默认值（缺失即启动失败），
- * 但若运维把环境变量显式设成同一个值（或设成空串），就能被任何人离线伪造 token
- * —— 本类正是拦住这种情况。
- *
- * <p><b>适用范围</b>：只有真正参与 Sa-Token JWT 验签的服务才持有 JWT 密钥，即
- * gateway（{@code StpUtil.checkLogin()} 独立验签）与 user-service（{@code AuthHelper.loginId()} 验签）。
- * post / meteor / echo / link / stats 五个服务不引入 {@code sa-token-jwt}、也不解析 token，
- * 配置中不存在 {@code sa-token.jwt-secret-key}，本类对它们直接跳过（见 {@link #verify()}）。
- * 判定依据是「是否声明了该属性」而非硬编码服务名：将来新增需要验签的服务，
- * 只要按 gateway/user-service 的样式配上密钥，就会自动纳入校验。
+ * <p>规则本身在 {@link JwtSecretPolicy}（shared-model，网关与这里共用一份）。
+ * 本类只负责「谁该被校验」与「把违规翻成启动失败」：
+ * <ul>
+ *   <li>先判本服务是否参与 JWT 验签：没声明 {@code sa-token.jwt-secret-key} 的服务
+ *       （不引入 sa-token-jwt 的那些）直接跳过，避免对它们误报「未设置密钥」。</li>
+ *   <li>再判档位：{@code dev} 放行（本机联调用仓库默认值），其余一律校验。</li>
+ * </ul>
  *
  * <p>失败即抛异常终止启动（fail-closed），不做降级、不只在日志里告警。
+ *
+ * <p>为什么不能只靠「配置里不写默认值」：见 {@link JwtSecretPolicy} 的类注释 ——
+ * 实测未注入环境变量时 Spring 会把 {@code ${SA_TOKEN_JWT_SECRET}} 这个**字面量**当密钥，
+ * 服务照常启动、JCE 预热成功，等于密钥公开。所以这道校验是必需的，不是锦上添花。
  */
 @Slf4j
 @Component
 public class SecretGuard {
-
-    /** 被校验的属性名 */
-    private static final String PROPERTY = "sa-token.jwt-secret-key";
-
-    /** 禁止在 prod 使用的密钥：仓库 dev 默认值 + Nacos 官方文档示例值 */
-    private static final Set<String> FORBIDDEN_SECRETS = Set.of(
-            "stellar-ink-satoken-jwt-secret-32bytes",
-            "SecretKey012345678901234567890123456789012345678901234567890123456789",
-            "changeme", "CHANGE_ME", "change-me"
-    );
-
-    private static final int MIN_LENGTH = 32;
 
     private final Environment environment;
     private final String jwtSecret;
@@ -54,32 +39,22 @@ public class SecretGuard {
 
     @PostConstruct
     public void verify() {
-        // 先判「本服务是否参与 JWT 验签」：没声明该属性说明根本不用这个密钥
-        // （如 post/meteor/echo/link/stats），跳过校验，避免对它们误报「未设置密钥」拒绝启动。
-        if (!environment.containsProperty(PROPERTY)) {
-            log.debug("[SecretGuard] 本服务未声明 {}，不参与 JWT 验签，跳过校验。", PROPERTY);
+        // 先判「本服务是否参与 JWT 验签」：没声明该属性说明根本不用这个密钥，
+        // 跳过校验，避免对它们误报「未设置密钥」而拒绝启动。
+        if (!environment.containsProperty(JwtSecretPolicy.PROPERTY)) {
+            log.debug("[SecretGuard] 本服务未声明 {}，不参与 JWT 验签，跳过校验。", JwtSecretPolicy.PROPERTY);
             return;
         }
 
-        boolean prod = Arrays.stream(environment.getActiveProfiles())
-                .anyMatch(profile -> profile.toLowerCase(Locale.ROOT).contains("prod"));
-        if (!prod) {
+        if (!JwtSecretPolicy.requiresCheck(environment.getActiveProfiles())) {
+            log.info("[SecretGuard] 当前档位为 dev，放行仓库默认密钥（仅限本机联调，切勿用于对外实例）。");
             return;
         }
 
-        if (jwtSecret == null || jwtSecret.isBlank()) {
-            throw new IllegalStateException(
-                    "[SecretGuard] prod 环境未设置 " + PROPERTY + "，拒绝启动。"
-                            + "请设置环境变量 SA_TOKEN_JWT_SECRET（生成方式：openssl rand -base64 48）。");
-        }
-        if (FORBIDDEN_SECRETS.contains(jwtSecret)) {
-            throw new IllegalStateException(
-                    "[SecretGuard] prod 环境检测到 " + PROPERTY + " 使用了仓库中公开的默认值，拒绝启动。"
-                            + "请设置环境变量 SA_TOKEN_JWT_SECRET（生成方式：openssl rand -base64 48）。");
-        }
-        if (jwtSecret.length() < MIN_LENGTH) {
-            throw new IllegalStateException(
-                    "[SecretGuard] prod 环境 " + PROPERTY + " 长度不足 " + MIN_LENGTH + " 字符，拒绝启动。");
+        String violation = JwtSecretPolicy.violation(jwtSecret);
+        if (violation != null) {
+            throw new IllegalStateException("[SecretGuard] " + violation + "，拒绝启动。"
+                    + "请注入环境变量 SA_TOKEN_JWT_SECRET（生成方式：openssl rand -base64 48）。");
         }
         log.info("[SecretGuard] JWT 密钥校验通过（长度 {}）", jwtSecret.length());
     }

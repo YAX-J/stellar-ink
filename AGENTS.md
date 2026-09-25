@@ -413,11 +413,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   Spring **不报错**，而是把这个**字面量字符串** `${SA_TOKEN_JWT_SECRET}` 当密钥传下去 ——
   服务照常启动、JCE 预热成功、`/actuator/env` 里能直接看到那个字面量值。
   也就是说：凡读到仓库的人都能用这个公开字符串自签一个带 `role` 的 token。
-  现有唯一防线是 `common-core` 的 `SecretGuard`（prod 档：拦空值 / 过短 / 仓库默认值），
-  而**网关不依赖 common-core、没有这一层**（`grep SecretGuard gateway-nacos-sentinel` 为空）。
-  要真正做到 fail-fast 需要三件事：① 给网关补一份等价的启动校验（WebFlux 版）；
-  ② 把 `SecretGuard` 的适用范围从 prod 扩到 test；③ 把这个字面量加进 `FORBIDDEN_SECRETS` 防呆。
-  **未做之前，测试/生产环境启动都必须确认 `SA_TOKEN_JWT_SECRET` 已被真实注入。**
+  **已落地的防线（2026-09）**：密钥规则收在 `shared-model` 的 `JwtSecretPolicy`（**唯一实现**，
+  纯 Java 无 Spring），两个入口类共用它 —— 业务服务走 `common-core` 的 `SecretGuard`，
+  网关走 `GatewaySecretGuard`（WebFlux 不能依赖 common-core，所以各留一个入口、规则只有一份）。
+  行为：**dev 放行**（本机联调用仓库默认值），**其余档位一律校验**：空值 / 上面那个字面量 /
+  仓库默认值 / 官方示例值 / 长度 < 32 全部**拒绝启动**；判据是 active profile 必须**全部**属于
+  dev 系（`dev,prod` 这种混用也要校验）。
+  ⚠️ 代价：**线上与测试机重启前必须确认 `SA_TOKEN_JWT_SECRET` 已真实注入**，否则网关会起不来 ——
+  这正是想要的行为（拿公开字面量当密钥，比起不来危险得多）。
+  改判定只改 `JwtSecretPolicy` 一处，两侧单测（`SecretGuardTest` / `GatewaySecretGuardTest`）同时盯住。
 
 ### AI 模块口径（M0 起建立，后续按里程碑扩展）
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、

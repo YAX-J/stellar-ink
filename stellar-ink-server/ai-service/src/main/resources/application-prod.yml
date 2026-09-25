@@ -69,7 +69,8 @@ sa-token:
   is-log: false
   # 必须由环境变量提供，与网关/其它服务保持一致。
   # ⚠️ 「缺失即启动失败」是**错的**：实测未设置时 Spring 会把这个字面量 "${SA_TOKEN_JWT_SECRET}"
-  #    当密钥照常启动（JCE 预热照样成功）。真正的防线是 common-core 的 SecretGuard（prod 档生效）。
+  #    当密钥照常启动（JCE 预热照样成功）。真正的防线是启动哨兵 SecretGuard
+  #    （规则在 shared-model 的 JwtSecretPolicy，非 dev 档生效；网关另有一份 GatewaySecretGuard）。
   jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
   timeout: 604800
   is-concurrent: true

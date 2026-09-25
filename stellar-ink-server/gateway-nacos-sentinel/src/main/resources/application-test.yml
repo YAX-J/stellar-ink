@@ -8,7 +8,8 @@
 # 必须显式注入的环境变量（**没有默认值**）：
 #   ⚠️ 别指望「没设就起不来」：Spring 对未定义的占位符**不一定报错** —— 实测 `sa-token.jwt-secret-key`
 #      会退化成字面量字符串 "${SA_TOKEN_JWT_SECRET}" 并照常启动（JCE 预热照样成功）。
-#      真正的防线是 common-core 的 `SecretGuard`；网关当前没有这一层，见 AGENTS.md §5「安全」。
+#      真正的防线是启动哨兵 `SecretGuard`（业务服务）/ `GatewaySecretGuard`（网关），
+#      两者共用 shared-model 的 `JwtSecretPolicy`：非 dev 档缺密钥（或用了公开可见的值）直接拒绝启动。
 #   SA_TOKEN_JWT_SECRET  网关与各服务必须一致；**测试与生产不得共用同一密钥**
 #
 # 与 dev 的其余差异：
