@@ -39,10 +39,12 @@ stellar-ink/
 cd stellar-ink-web && npm install && npm run dev      # 开发
 npm run check                                          # 验证：自检（差异/Copilot 采纳/SSE 切帧 + 部署前缀）+ vite build
 
-# 后端（网关 8080 对外；Nacos 8848；服务 8101-8102）
-cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos
-cd stellar-ink-server && mvn -DskipTests package       # 2. 构建
-deploy\scripts\start-all.bat                           # 3. 一键起全部（或按模块手动 java -jar）
+# 后端（网关 8080 对外；Nacos 8848；服务 8101-8102；Python AI 8200）
+cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos（若 Nacos 在远端服务器，跳过这步并设 NACOS_ADDR）
+cd stellar-ink-server && mvn -DskipTests package       # 2. 构建（Python 侧无需构建，uv 首次运行会建 .venv）
+deploy\scripts\start-all.bat                           # 3. 一键起全部：Python(:8200) + 4 个 Java 服务
+                                                       #    它会等健康检查、并回显 /ai/health 证明 Java→Python 通了；
+                                                       #    stop-all.bat 对应地也会停 :8200
                                                        #    注：该脚本为本地私有文件（含服务器连接信息），已 gitignore 不入库
 
 # 生产部署（境外 Linux 服务器 Docker Compose；Nacos/MySQL/Redis/Qdrant 全部由编排拉起）
