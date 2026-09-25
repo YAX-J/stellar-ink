@@ -88,6 +88,22 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 连接池：一个操作借一条连接、坏连接被淘汰，而不是所有命令挤在一条共享连接上。
+        # ⚠️ 光配这里不够：Spring Boot 3.2 的 spring.data.redis.lettuce 下**没有**
+        # share-native-connection 这个键，启用池也不会自动关掉共享连接 ——
+        # 关掉它的是 RedisConnectionTuningConfig 里的 BeanPostProcessor（那里有完整理由）。
+        # 另外池生效的前提是 commons-pool2 在 classpath 上（见 pom 的说明）。
+        # 这里只有 Spring Boot 真实存在的键：enabled / max-idle / min-idle / max-active /
+        # max-wait / time-between-eviction-runs（不要凭印象加 test-while-idle，那个键不存在）。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          # 池被借空时的等待上限：宁可快速失败（上层转 503），也不要让请求无限等
+          max-wait: 500ms
+          # 空闲连接每 30s 跑一次淘汰器，把已经死掉的连接清出去
+          time-between-eviction-runs: 30s
 
 # 基础不可变配置
 sa-token:

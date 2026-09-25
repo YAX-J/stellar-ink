@@ -28,7 +28,16 @@ spring:
       timeout: 500ms
       connect-timeout: 2s
       lettuce:
+        # 与 application-dev.yml 保持一致。（共享连接由 RedisConnectionTuningConfig 关掉：
+        # Boot 3.2 没有 share-native-connection 这个键，启用池也不会自动关。）
         shutdown-timeout: 200ms
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
   cloud:
     sentinel:
       eager: true

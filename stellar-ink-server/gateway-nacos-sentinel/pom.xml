@@ -59,6 +59,22 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
         </dependency>
+        <!--
+            Lettuce 连接池：**没有这个依赖，spring.data.redis.lettuce.pool.* 会被静默忽略**
+            （Spring Boot 用 @ConditionalOnClass(GenericObjectPool) 决定是否启用池化）。
+
+            为什么必须池化 + 关掉共享连接（实测踩过）：默认情况下 Lettuce 把**所有命令**
+            复用同一条原生连接。这条连接上只要有一次命令超时，后续命令的应答就会与请求错位，
+            于是**每一个**撤销校验都超时 —— 表现是「全站带 token 的请求连续 5~16 秒 503，
+            然后自己好了」，而 Lettuce 一条日志都不打（连接在它看来是活的）、GC 也可忽略。
+            改成「一个操作借一条连接」后，一条连接坏掉最多影响那一个操作，
+            且池的空闲校验会把死连接淘汰掉。
+            版本由 Spring Boot BOM 管理，不在这里写。
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
         <!-- 公共模型（角色枚举 Role 等，供网关读 JWT 角色做门槛校验） -->
         <dependency>
             <groupId>com.stellarink</groupId>
