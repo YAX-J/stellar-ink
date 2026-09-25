@@ -75,8 +75,8 @@ class AiHealthControllerTest {
     }
 
     @Test
-    @DisplayName("下游未接线时如实上报 available=false，并给出对用户可读的原因")
-    void reportsDownstreamNotWiredInM0() throws Exception {
+    @DisplayName("下游不可用时如实上报 available=false，并给出对用户可读的原因")
+    void reportsUnavailableWhenDownstreamIsDown() throws Exception {
         when(pythonHealthProbe.probe()).thenReturn(
                 PythonHealthProbe.ProbeResult.unavailable("内部细节：http://127.0.0.1:8200 连不上"));
 

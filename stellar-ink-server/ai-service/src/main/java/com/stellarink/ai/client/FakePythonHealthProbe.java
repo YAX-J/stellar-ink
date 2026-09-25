@@ -3,19 +3,23 @@ package com.stellarink.ai.client;
 import com.stellarink.ai.config.AiProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 /**
- * M0 的 Fake 探活：**如实上报「下游未接线」**，不假装健康。
+ * 恒定报告「下游不可用」的假探针：**只给测试与演示用**。
  *
- * <p>为什么不直接返回 {@code available=true}：那会让 {@code /ai/health} 在 M0 说谎，
- * 掩盖「Python 链路还没接」这一事实；而返回 false + 原因，既保证契约稳定，
- * 又让人一眼看出当前处于哪个里程碑。
+ * <p>⚠️ <b>它不再是默认实现</b>（{@link HttpPythonHealthProbe} 才是）。留着它是为了两件事：
+ * <ol>
+ *   <li>切片测试要一个**不发起网络调用**的探针，否则测试会依赖 Python 是否在跑；</li>
+ *   <li>需要演示「下游不可用」时不必真去关 Python。</li>
+ * </ol>
  *
- * <p>M1 用真实 HTTP 探活替换本类（`stellar-ink-ai-client` 的 {@code health()}）。
+ * <p>为什么必须降级为「非默认」：它恒定返回 {@code available=false}，
+ * 于是 Python 明明在跑、{@code /ai/health} 却永远说「未就绪」——
+ * 探活本是排障的第一手信号，一个恒假的信号比没有信号更糟（会让人去查不存在的问题）。
+ * 生产装配见 {@link HttpPythonHealthProbe.Config}：真实探活是默认，本类不在组件扫描范围内
+ * （没有 {@code @Component}，也没有 {@code @ConditionalOnMissingBean} 把它兜进来）。
  */
 @Slf4j
-@Component
 @RequiredArgsConstructor
 public class FakePythonHealthProbe implements PythonHealthProbe {
 
@@ -23,7 +27,7 @@ public class FakePythonHealthProbe implements PythonHealthProbe {
 
     @Override
     public ProbeResult probe() {
-        String reason = "M0 尚未接线：M1 将改为真实调用 " + properties.getPythonBaseUrl() + "/health";
+        String reason = "假探针（测试/演示用）：未真实调用 " + properties.getPythonBaseUrl() + "/health";
         log.debug("Python 探活（fake）：{}", reason);
         return ProbeResult.unavailable(reason);
     }
