@@ -8,11 +8,15 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.ReactiveRedisConnection;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 
+import reactor.core.publisher.Mono;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -29,6 +33,10 @@ import static org.mockito.Mockito.when;
  * 撤销校验是 fail-closed，一条被 NAT 静默丢弃的空闲连接会直接变成 503，
  * 而 Lettuce 的池化工厂 validateObject() 只做 `isOpen()`（本地标志位），
  * 配 `testWhileIdle` / `testOnBorrow` 都发现不了 —— 必须真发一次 PING。
+ *
+ * <p>**最要紧的一条**：心跳必须打在**响应式**池上。Spring Data Redis 的阻塞路径
+ * （`getConnection`）与响应式路径（`getConnectionAsync`）用的是两个独立的池，
+ * 网关的撤销校验走后者；打错池的表现是「心跳日志一切正常，7~10 分钟后照样 503」。
  */
 class RedisConnectionTuningConfigTest {
 
@@ -56,20 +64,42 @@ class RedisConnectionTuningConfigTest {
     }
 
     @Test
-    @DisplayName("心跳真的发 PING；失败就把整池丢掉（半开连接只有重建才能摆脱）")
-    void heartbeatPingsAndResetsOnFailure() {
-        LettuceConnectionFactory healthy = mock(LettuceConnectionFactory.class);
-        RedisConnection connection = mock(RedisConnection.class);
-        when(healthy.getConnection()).thenReturn(connection);
-        new RedisKeepAliveHeartbeat(healthy, java.time.Duration.ofSeconds(30)).beat();
-        verify(connection).ping();
+    @DisplayName("心跳必须走响应式池（阻塞/响应式是两个池，打错池 = 等于没打）")
+    void heartbeatPingsTheReactivePool() {
+        ReactiveRedisConnectionFactory healthy = mock(ReactiveRedisConnectionFactory.class);
+        ReactiveRedisConnection connection = mock(ReactiveRedisConnection.class);
+        when(healthy.getReactiveConnection()).thenReturn(connection);
+        when(connection.ping()).thenReturn(Mono.just("PONG"));
 
+        new RedisKeepAliveHeartbeat(healthy, java.time.Duration.ofSeconds(30)).beat();
+
+        // 反证：如果这里换成阻塞的 getConnection()，撤销校验那条连接根本不会被热到
+        verify(healthy).getReactiveConnection();
+        verify(connection).ping();
+        verify(connection).close();
+    }
+
+    @Test
+    @DisplayName("心跳失败（拿不到连接）→ 丢掉整池（半开连接只有重建才能摆脱）")
+    void heartbeatResetsPoolWhenConnectionFails() {
         LettuceConnectionFactory broken = mock(LettuceConnectionFactory.class);
-        RedisConnection dead = mock(RedisConnection.class);
-        when(broken.getConnection()).thenReturn(dead);
-        when(dead.ping()).thenThrow(new IllegalStateException("Redis command timed out"));
-        new RedisKeepAliveHeartbeat(broken, java.time.Duration.ofSeconds(30)).beat();
+        // 用「拿连接就抛」来构造失败：LettuceConnectionFactory 覆写后的返回类型
+        // LettuceReactiveRedisConnection 是包级私有的，测试里 mock 不出来
+        when(broken.getReactiveConnection()).thenThrow(new IllegalStateException("Redis command timed out"));
+
+        assertDoesNotThrow(() -> new RedisKeepAliveHeartbeat(broken, java.time.Duration.ofSeconds(30)).beat());
         verify(broken).resetConnection();
+    }
+
+    @Test
+    @DisplayName("心跳失败不能把线程打死（下个周期照常再试）")
+    void heartbeatSwallowsPingFailure() {
+        ReactiveRedisConnectionFactory broken = mock(ReactiveRedisConnectionFactory.class);
+        ReactiveRedisConnection connection = mock(ReactiveRedisConnection.class);
+        when(broken.getReactiveConnection()).thenReturn(connection);
+        when(connection.ping()).thenReturn(Mono.error(new IllegalStateException("Redis command timed out")));
+
+        assertDoesNotThrow(() -> new RedisKeepAliveHeartbeat(broken, java.time.Duration.ofSeconds(30)).beat());
     }
 
     @Test

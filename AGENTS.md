@@ -289,6 +289,14 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   等到命令超时（dev 500ms）才发现：网关 fail-closed 回 503、业务服务回 500。
   心跳每 `stellar.ink.redis.keepalive.interval`（默认 30s）借一条连接发一次**真 PING**：
   链路永不空闲、借到的连接被真实验证、失败即 `resetConnection()` 丢掉整池让下一条请求重建。
+  ⚠️ **心跳必须打在实际被用的那个池上 —— 阻塞与响应式是两个独立的池**（踩过第二次）：
+  Spring Data Redis 的 `LettucePoolingConnectionProvider` 里，
+  阻塞的 `getConnection()` 用 `pools`（commons-pool2），响应式的 `getConnectionAsync()` 用
+  `asyncPools`（Lettuce `BoundedAsyncPool`）；网关的撤销校验走 `ReactiveStringRedisTemplate`
+  即后者。第一版心跳用了阻塞 API，结果只热了一条**谁也不用**的连接，真正被用的响应式池照旧
+  闲死 —— 现象是「心跳日志一切正常，重启 7 分钟后照样 503」。
+  所以：**common-core 的那份用阻塞 API（user/content 用 `StringRedisTemplate`），
+  网关的那份必须用 `ReactiveRedisConnectionFactory.getReactiveConnection().ping()`**。
   ⚠️ **别指望 `testWhileIdle` / `testOnBorrow`**：Lettuce 的池化工厂
   `RedisPooledObjectFactory.validateObject()` 只做 `StatefulConnection.isOpen()`
   （javap 确认字节码），那是个**本地标志位**，半开连接照样返回 true —— 校验既不发网络包
@@ -300,7 +308,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**（四件一组），
   心跳开关是 `stellar.ink.redis.keepalive`（ai-service 按边界设计显式关掉）。
   回归测试：`RedisKeepAliveHeartbeatTest`（真发 PING / 失败丢池 / 守护线程）、
-  `RedisLettuceTuningTest` 与网关同名测试（含「Boot 自己不会关共享连接」的反向对照）。
+  `RedisLettuceTuningTest` 与网关同名测试（含「Boot 自己不会关共享连接」的反向对照，
+  以及「网关心跳必须调 `getReactiveConnection()`」那条 —— 它就是第二次踩坑的看门人）。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。

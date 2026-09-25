@@ -11,7 +11,7 @@ import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 
@@ -98,15 +98,19 @@ public class RedisConnectionTuningConfig {
     }
 
     /**
-     * Redis 保活心跳（网关版）。生产环境 Redis 与网关同机，也照样开：同机同样有
-     * keepalive 超时（Docker 网桥 / 宿主防火墙），代价只是每 30s 一次 PING。
+     * Redis 保活心跳（网关版，**响应式池**）。生产环境 Redis 与网关同机也照样开：
+     * 同机同样有 keepalive 超时（Docker 网桥 / 宿主防火墙），代价只是每 30s 一次 PING。
+     *
+     * <p>⚠️ 这里注入的是 {@link ReactiveRedisConnectionFactory}：Spring Data Redis 的阻塞路径与
+     * 响应式路径是**两个独立的连接池**（`pools` vs `asyncPools`），网关用的是响应式，
+     * 心跳必须打在同一个池上，否则等于没打（踩过一次，见 {@link RedisKeepAliveHeartbeat} 的类注释）。
      */
     @Bean
     @ConditionalOnProperty(name = "stellar.ink.redis.keepalive.enabled", havingValue = "true", matchIfMissing = true)
     RedisKeepAliveHeartbeat redisKeepAliveHeartbeat(
-            ObjectProvider<RedisConnectionFactory> connectionFactoryProvider,
+            ObjectProvider<ReactiveRedisConnectionFactory> connectionFactoryProvider,
             @Value("${stellar.ink.redis.keepalive.interval:30s}") String keepAliveInterval) {
-        RedisConnectionFactory connectionFactory = connectionFactoryProvider.getIfAvailable();
+        ReactiveRedisConnectionFactory connectionFactory = connectionFactoryProvider.getIfAvailable();
         if (connectionFactory == null) {
             return null;
         }
