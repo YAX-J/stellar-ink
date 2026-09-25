@@ -428,7 +428,6 @@ onUnmounted(() => {
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .error-text{color:var(--rose)}
-.empty-body{color:var(--ink-faint) !important}
 .read-progress i{display:block; height:100%; width:0;
   background:linear-gradient(90deg,var(--primary),var(--rose),var(--amber))}
 

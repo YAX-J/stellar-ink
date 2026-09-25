@@ -29,9 +29,6 @@ public final class AiInternalHeaders {
     /** HMAC-SHA256 签名（小写十六进制） */
     public static final String SIGNATURE = "X-AI-Signature";
 
-    /** 允许的时间偏移窗口（毫秒）：超出即拒绝，避免时钟漂移过大时被重放 */
-    public static final long TIMESTAMP_TOLERANCE_MS = 60_000L;
-
     private AiInternalHeaders() {
     }
 }

@@ -19,10 +19,7 @@ package com.stellarink.ai.stream;
  */
 public record QaSseFrame(String eventType, String raw) {
 
-    /** 事件类型常量：与 Python `schemas/qa_stream.py`、前端解析器逐字一致。 */
-    public static final String META = "meta";
-    public static final String CITATION = "citation";
-    public static final String DELTA = "delta";
+    /** 需要用到的两个事件类型常量：与 Python `schemas/qa_stream.py`、前端解析器逐字一致。 */
     public static final String DONE = "done";
     public static final String ERROR = "error";
     public static final String UNKNOWN = "unknown";

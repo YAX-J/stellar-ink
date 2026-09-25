@@ -21,7 +21,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` `/uploads/**` | user |
 | content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / note / meteor / echo / link |
-| ai-service | 8107 | `/ai/**`（M1 接入网关；M0 只能直连本机 8107 验证 `/ai/health`） | 无（不拥有业务表） |
+| ai-service | 8107 | `/ai/**`（网关上已接入，见 §AI） | `ai_*`（模型配置等 AI 域表；不碰业务表） |
 | stellar-ink-ai（Python） | 8200 | **不配网关路由、不对外暴露**，仅 ai-service 在编排网络内调用 | ai_*（M3 起） |
 
 ## 鉴权（Sa-Token，网关统一）
@@ -491,8 +491,8 @@ curl -N -s -X POST http://127.0.0.1:8200/qa/stream \
 - 当前语料是种子内容包、模型是 `FakeProvider`，所以 `usage.model` 会如实显示 `fake`。
   接上真实嵌入模型后，`minDenseScore` 要按评测台标定 —— 离线 Fake 向量余弦只有 0.03 量级，
   给它设一个「看起来合理」的下限会让向量通路**静默失效**（混合检索退化成纯 BM25 而不报错）。
-- 流式版本（`/qa/stream`）的编排与线格式见上；**Java 出口（`/ai/qa/stream` 的 `ResponseBodyEmitter`）
-  与前端消费方还没接**，等这两件一起做 —— 先造一条没人消费的流式通道是本仓库明确避免的事。
+- 流式版本（`/qa/stream`）的编排与线格式见上；Java 出口（`/ai/qa/stream` 的 `ResponseBodyEmitter`）
+  与前端消费方（`utils/sse.js` + `stores/qa.js`）**均已接**，深读页「问星笺」用的就是流式版本。
 
 **星笺 Copilot（D 阶段：写作建议）**
 

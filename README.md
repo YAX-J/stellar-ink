@@ -19,7 +19,7 @@ gateway-nacos-sentinel :8080
           MySQL stellar_ink
 ```
 
-三个 Java 进程通过 Nacos 注册与读取配置。对外接口只经过网关，前端始终使用稳定的相对路径。
+四个 Java 服务（网关 + user / content / ai）通过 Nacos 注册与读取配置。对外接口只经过网关，前端始终使用稳定的相对路径。
 
 ## 目录
 
@@ -27,9 +27,9 @@ gateway-nacos-sentinel :8080
 |---|---|
 | [`stellar-ink-web/`](stellar-ink-web/README.md) | Vue 3 前端应用 |
 | [`stellar-ink-server/`](stellar-ink-server/README.md) | Spring Cloud Alibaba 后端 |
-| [`stellar-ink-ai/`](stellar-ink-ai/README.md) | Python AI 编排服务预留目录，尚未实施 |
-| [`deploy/`](deploy/README.md) | SQL、Docker Compose、Nginx 和本地脚本 |
-| [`docs/`](docs/README.md) | 架构、接口与 AI 技术文档 |
+| [`stellar-ink-ai/`](stellar-ink-ai/README.md) | Python AI 编排服务（模型网关 / RAG / Agent，仅内网可达） |
+| [`deploy/`](deploy/docker/README.md) | SQL、Docker Compose、Nginx 和本地脚本 |
+| [`docs/`](docs/architecture/README.md) | 架构、接口与 AI 技术文档；进度快照见 [`docs/status.md`](docs/status.md) |
 
 ## 本地开发
 
@@ -40,7 +40,7 @@ gateway-nacos-sentinel :8080
 - MySQL 8，数据库名默认 `stellar_ink`
 - Nacos，默认 `127.0.0.1:8848`
 
-按顺序执行 [`deploy/sql/`](deploy/sql/README.md) 中的数据库脚本。已有旧库还必须执行 `03_multi-author.sql`，否则文章和流星查询会因缺少 `user_id` 失败。
+按顺序执行 [`deploy/sql/`](deploy/sql) 中的数据库脚本（`01` → `11`，后两个是 AI 域的表）。已有旧库还必须执行 `03_multi-author.sql`，否则文章和流星查询会因缺少 `user_id` 失败。
 
 ### 2. 构建后端
 
@@ -49,13 +49,10 @@ cd stellar-ink-server
 mvn package
 ```
 
-启动 Nacos 后，可分别运行三个 JAR：
-
-```bash
-java -jar gateway-nacos-sentinel/target/gateway-nacos-sentinel.jar
-java -jar user-service/target/user-service.jar
-java -jar content-service/target/content-service.jar
-```
+启动 Nacos 后，四个 JAR 分别是 `gateway-nacos-sentinel` / `user-service` / `content-service` /
+`ai-service`（其中 `ai-service` 需要 `AI_INTERNAL_SECRET` 与 `AI_SECRET_MASTER_KEY` 两个环境变量）。
+Windows 上直接用 `deploy/scripts/start-all.bat` 一次起全部（含 Python 服务），完整步骤见
+[`AGENTS.md`](AGENTS.md) §2。
 
 Windows 本地私有脚本 `deploy/scripts/start-all.bat` 可一次启动全部进程；该文件含环境连接信息，受 `.gitignore` 管理。
 
@@ -80,7 +77,7 @@ cd ../stellar-ink-web && npm run build
 
 ## 生产部署
 
-生产环境使用 [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml)，启动前端 Nginx、网关和两个业务服务，复用宿主机已有的 Nacos 与 MySQL。具体变量和命令见 [`deploy/docker/README.md`](deploy/docker/README.md)。
+生产环境使用 [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml)，启动前端 Nginx、网关和三个业务服务（user / content / ai），复用宿主机已有的 Nacos 与 MySQL。具体变量和命令见 [`deploy/docker/README.md`](deploy/docker/README.md)。
 
 ## 开发约定
 

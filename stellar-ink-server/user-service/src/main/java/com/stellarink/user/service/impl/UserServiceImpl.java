@@ -79,7 +79,7 @@ public class UserServiceImpl implements UserService {
                 .eq(User::getUsername, dto.getUsername().trim()));
         if (user == null || !passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
             long lockedSeconds = recordFailure(attemptKey);
-            log.warn("登录失败 username={} 原因={} 剩余尝试次数={}", dto.getUsername(),
+            log.warn("登录失败 原因={} 剩余尝试次数={}",
                     user == null ? "用户不存在" : "密码不匹配",
                     lockedSeconds > 0 ? 0 : Math.max(0, remainingAttempts(attemptKey)));
             if (lockedSeconds > 0) {

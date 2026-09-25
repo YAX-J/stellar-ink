@@ -24,19 +24,9 @@ public enum ErrorCode {
     // 业务错误
     PARAM_ERROR(1001, "参数错误"),
     PARAM_MISSING(1002, "缺少必填参数"),
-    PARAM_TYPE_ERROR(1003, "参数类型错误"),
-    JSON_PARSE_ERROR(1004, "JSON解析失败"),
-    UN_PERMISSION(1005, "无权限"),
 
     // 数据库错误
-    DATABASE_ERROR(2000, "数据库操作错误"),
-    DATABASE_CONNECTION_ERROR(2001, "数据库连接错误"),
-    DATABASE_TIMEOUT(2002, "数据库操作超时"),
-
-    // 网络错误
-    NETWORK_ERROR(3000, "网络错误"),
-    TIMEOUT_ERROR(3001, "请求超时"),
-    GATEWAY_ERROR(3002, "网关错误");
+    DATABASE_ERROR(2000, "数据库操作错误");
 
     private final Integer code;
     private final String msg;

@@ -117,16 +117,6 @@ public final class CanonicalRequest {
         return HexFormat.of().formatHex(raw);
     }
 
-    /** 供日志/排查用的短摘要：只看前 12 位，避免把整串标准串写进日志。 */
-    public static String shortHash(String canonical) {
-        return sha256Hex(canonical).substring(0, 12);
-    }
-
-    /** 内部头常量集中在本类暴露一份，便于调用方少 import 一个类。 */
-    public static String traceHeader() {
-        return AiInternalHeaders.TRACE_ID;
-    }
-
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " 不能为空");

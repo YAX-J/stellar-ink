@@ -1,6 +1,6 @@
 # 星笺后端
 
-本目录是 Spring Cloud Alibaba 多模块 Maven 工程。运行时由一个网关和两个业务服务组成，统一使用 Java 17、Nacos、MySQL、MyBatis-Plus 与 Sa-Token。
+本目录是 Spring Cloud Alibaba 多模块 Maven 工程。运行时由一个网关和三个业务服务（user / content / ai）组成，统一使用 Java 17、Nacos、MySQL、MyBatis-Plus 与 Sa-Token。
 
 ## 运行拓扑
 
@@ -9,8 +9,10 @@
 | [`gateway-nacos-sentinel/`](gateway-nacos-sentinel/README.md) | 8080 | 对外入口、路由、CORS、鉴权、Sentinel |
 | [`user-service/`](user-service/README.md) | 8101 | 登录注册、用户资料、角色和作者摘要 |
 | [`content-service/`](content-service/README.md) | 8102 | 文章、标签、搜索、流星、回声、星链和统计 |
+| [`ai-service/`](ai-service/README.md) | 8107 | 对外 `/ai/**` 出口：鉴权复核、协议转换、超时降级（AI 算法全在 Python 侧） |
 
-公共代码位于 [`common-components/`](common-components/README.md)。`stellar-ink-ai-client/` 仍是 AI 阶段的预留目录，当前不在 Maven reactor 中。
+公共代码位于 [`common-components/`](common-components/README.md)。`stellar-ink-ai-client/`
+是与 Python 之间的契约模块（Feign DTO + 内部签名），`ai-service` 依赖它，两者都在这个 reactor 里。
 
 ## 构建
 
@@ -18,7 +20,7 @@
 mvn package
 ```
 
-该命令会编译全部模块、运行测试并生成三个可执行 JAR。跳过测试只用于临时排查：
+该命令会编译全部模块、运行测试并生成四个可执行 JAR。跳过测试只用于临时排查：
 
 ```bash
 mvn -DskipTests package

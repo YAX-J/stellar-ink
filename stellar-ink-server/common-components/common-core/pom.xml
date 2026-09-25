@@ -21,10 +21,6 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
         <!-- 参数校验实现（DTO 上的 @NotBlank/@Size 等注解由 shared-model 引入的 API 声明）。
              Spring Boot 2.3 起 web starter 不再传递该依赖，必须显式引入，否则 @Valid 静默失效 -->
         <dependency>
@@ -61,9 +57,9 @@
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-spring-boot3-starter</artifactId>
         </dependency>
-        <!-- JWT 无状态模式的异常类型（SaJwtException）：只有参与验签的服务才需要，
-             因此标 optional —— 这里只为了能编译 SaJwtExceptionAdvice，
-             不会传递到 user/content 等模块，消费方引与不引都不会被强制。 -->
+        <!-- JWT 无状态模式（StpLogicJwtForStateless）与 SaJwtException 都在这里：
+             只有参与验签的服务才需要，因此标 optional、不向 user/content 传递
+             （它们各自显式声明同款依赖）。留在这里是为了公共模块的工具类能编译到这些类型。 -->
         <dependency>
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-jwt</artifactId>

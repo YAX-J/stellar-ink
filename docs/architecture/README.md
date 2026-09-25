@@ -17,7 +17,7 @@
              用户、认证、角色     post / comment / note   对外 /ai/** 出口
                     │            meteor / echo / link   （鉴权复核、配额、审计）
                     │            stats                        │
-                    └────────────┬────────────┘              │ HMAC 内网签名（M1）
+                    └────────────┬────────────┘              │ HMAC 内网签名
                           ┌──────┴──────┐                     ▼
                           ▼             ▼            stellar-ink-ai :8200
               MySQL（共享 stellar_ink） Redis          Python：模型网关 / RAG / Agent
@@ -27,10 +27,10 @@
   Python 不注册 Nacos，地址由 ai-service 的 python-base-url 固定配置
 ```
 
-> **AI 当前进度（M0 已完成）**：`ai-service :8107` 与 Python `stellar-ink-ai :8200` 的
-> 工程骨架、跨语言契约与 `/ai/health` 已落地，全程 Fake Adapter、无任何密钥。
-> 网关的 `/ai/**` 路由、HMAC 签名与真实调用属 **M1**；M0 不对外暴露 AI 能力，
-> 因此上面拓扑里的 `/ai/**` 路由与 HMAC 已按目标态画出但尚未接线。
+> **AI 当前进度**：拓扑里的每条线**都已接线** —— 网关有 `/ai/**` 路由（`gateway` 的
+> `application-dev.yml`）、`ai-service` 有 `@EnableFeignClients` + 内部 HMAC 签名拦截器，
+> 问答 / Copilot / 评测 / 画像 / Agent 的对外出口与前端消费方均已完成。
+> 逐阶段核验证据与已知缺口见 `docs/ai/status.md`，整体进度见 `docs/status.md`。
 
 ## 模块结构
 
@@ -90,7 +90,7 @@ AI 技术路线与实施顺序见
 |---|---|
 | user-service | `/auth/**`、`/user/**`、`/uploads/**` |
 | content-service | `/posts/**`、`/notes/**`、`/tags/**`、`/search/**`、`/meteors/**`、`/echos/**`、`/links/**`、`/stats/**` |
-| ai-service | `/ai/**`（M1 接入；M0 只有直连 8107 的 `/ai/health`） |
+| ai-service | `/ai/**`（含 `POST /ai/qa`、`/ai/qa/stream`、`/ai/writing/**`、`/ai/admin/**`；`/ai/health` 公开） |
 
 网关关闭 discovery locator，只允许显式路由，防止通过 `/{serviceId}/**` 绕过鉴权。`/internal/**` 不对外路由。
 `/uploads/**` 是 `user-uploads` 路由（指向 user-service 的静态资源映射），用于头像等上传文件的**匿名读**；

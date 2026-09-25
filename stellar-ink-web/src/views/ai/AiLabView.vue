@@ -286,11 +286,6 @@ function capabilityLabel(key) {
   return AI_CAPABILITIES.find((item) => item.key === key)?.label || key
 }
 
-/** 库列表里一行「能力」的展示文案 */
-function capabilityText(item) {
-  return (item.capabilities || []).map(capabilityLabel).join(' / ') || '未标注'
-}
-
 /** 「正被哪些角色使用」：空数组时不该显示成空白，要说「还没人用」 */
 function boundRolesText(item) {
   const roles = item.boundRoles || []

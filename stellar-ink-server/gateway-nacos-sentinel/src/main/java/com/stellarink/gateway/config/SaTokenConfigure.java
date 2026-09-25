@@ -142,7 +142,10 @@ public class SaTokenConfigure {
                     //    多一个分支就多一处将来会与 ai-service 内 `AuthHelper.loginId()` 不一致的地方。
                     StpUtil.checkLogin();
 
-                    // 10) 角色门槛（登录后，按写操作细分）
+                    // 10) 兜底复核（防御性，**不是主门槛**）：能用同一套谓词拦下的请求，
+                    //     在第 3~6 步就已经 return/throw 了；能走到这里的是「未列举的写操作」，
+                    //     而它们对这两个谓词都为 false，所以本段目前恒不生效。
+                    //     ⚠️ 别把它当成角色门槛所在（主门槛在第 3~8 步）；当前也没有测试覆盖它。
                     Role role = Role.parseOrDefault(String.valueOf(StpUtil.getExtra(Role.JWT_KEY)));
                     if (requiresAdmin(method, path) && !role.atLeast(Role.ADMIN)) {
                         throw new NotRoleException(Role.ADMIN.name());

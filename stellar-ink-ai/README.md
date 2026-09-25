@@ -3,8 +3,10 @@
 Python AI 服务，**仅内网可达**：模型网关、RAG、Agent 与知识管道。浏览器不直连本服务，
 对外协议、鉴权与 `Response<T>` 由 Java `ai-service :8107` 提供。
 
-当前进度：**M0-1/M0-2 骨架与契约、A1-3 模型供应商层已完成**（可构建、可测试，无密钥也能全绿）。
-实施顺序见 [`../docs/ai/fast-track-plan.md`](../docs/ai/fast-track-plan.md)（A→E 阶段），
+当前进度：**A / B / C / D 四个阶段与 E1、E2 已完成**（模型供应商层、切块与检索管道、Qdrant 适配、
+评测台、问答与 SSE、Copilot、写作画像、只读 Agent；无密钥也能全绿）。
+逐阶段核验证据与已知缺口见 [`../docs/ai/status.md`](../docs/ai/status.md)，项目整体进度见
+[`../docs/status.md`](../docs/status.md)，实施顺序见 [`../docs/ai/fast-track-plan.md`](../docs/ai/fast-track-plan.md)（A→E 阶段），
 每轮节奏见 [`../docs/ai/development-workflow.md`](../docs/ai/development-workflow.md)。
 
 ## 目录结构
@@ -14,17 +16,17 @@ stellar-ink-ai/
 ├── pyproject.toml           依赖、ruff / mypy / pytest 配置（requires-python >= 3.11；本机实测 3.13）
 ├── app/
 │   ├── main.py              应用工厂 + uvicorn 入口
-│   ├── api/v1/              HTTP 路由（目前只有探活）
-│   ├── core/                配置、日志、traceId、密钥加解密
+│   ├── api/v1/              HTTP 路由（探活 / 问答与流式 / 写作建议 / 画像 / 评测 / Agent）
+│   ├── core/                配置、日志、traceId、内部签名校验、密钥加解密
 │   ├── providers/           模型供应商层（A1-3）：Chat/Embedding/Rerank + 按角色路由
-│   ├── embedding/           Embedding 适配（M2/M3）
-│   ├── rag/                 切块 / 检索 / 重排 / 生成（M3/M4）
-│   ├── agents/              受控 Agent（M7）
-│   ├── schemas/             Pydantic 契约与共享 fixture（M0-2）
-│   └── vectorstore/         Qdrant 适配（M3）
+│   ├── rag/                 切块 / 检索 / 重排 / 生成 / 评测 / 画像 / Agent / Qdrant 适配
+│   └── schemas/             Pydantic 契约与共享 fixture（M0-2）
 ├── tests/                   单元与契约测试
 └── scripts/                 离线索引、评测 CLI
 ```
+
+> 目录刻意扁平：Qdrant 适配在 `rag/qdrant_store.py`、Agent 在 `rag/agent.py`，
+> **没有** `vectorstore/`、`agents/`、`embedding/` 这类只有名字的空目录（曾存在过，已删）。
 
 ## 本地命令
 
@@ -73,8 +75,9 @@ curl -i http://127.0.0.1:8200/health                      # 期望 200 + X-Trace
 | `registry.py` | 角色 → 能力映射与实例缓存；能力不匹配时**取实例即报错** |
 | `errors.py` | 分类错误（超时/限流/鉴权/上游不可用），区分「可重试」与「必须改配置」 |
 
-- 配置来自 ai-service 的 `/ai/admin/providers/runtime`（面板写库、Java 解密）；
-  本层**不读环境变量、不读数据库**，便于测试与替换来源
+- 配置来源有两档（见 `app/providers/config_source.py`）：`AI_PROVIDER_CONFIG_JSON` 环境变量优先，
+  否则直连 MySQL 读 `ai_provider_config`（密钥列由 Java 侧 AES-GCM 加密、这里解密）。
+  面板写的正是那张表；**本层不读 `user`/`post` 等业务表**。
 - 换模型＝改配置：`base_url` + `model` + `apiKey`，业务代码与 Prompt 都不用动
 - 密钥只出现在 `Authorization` 头里，不进日志；`ProviderConfig.fingerprint()` 刻意不含密钥，
   可安全用作缓存键与审计标识
@@ -82,8 +85,8 @@ curl -i http://127.0.0.1:8200/health                      # 期望 200 + X-Trace
 ## 安全边界
 
 - 浏览器不得直接访问 Python 服务。
-- 不解析 Sa-Token，不直接读写现有 `user`、`post` 等业务表；用户与角色只由 Java 经带时间戳的 HMAC 头传入（M1）。
-- 不保存模型密钥：密钥只从环境变量读取、无默认值，缺失时相关能力拒绝启动（M2 起）。
+- 不解析 Sa-Token，不直接读写现有 `user`、`post` 等业务表；用户与角色只由 Java 经带时间戳的 HMAC 头传入。
+- 不保存模型密钥：主密钥 `AI_SECRET_MASTER_KEY` 只从环境变量读取、无默认值，缺失时相关能力拒绝启动。
 - 草稿与私密内容不出内网、不进公共索引；检索强制 `status=published`。
 - 第一阶段不允许 AI 自动发布、修改或删除文章。
 

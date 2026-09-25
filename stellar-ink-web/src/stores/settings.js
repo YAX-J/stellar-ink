@@ -46,8 +46,6 @@ export const useSettingsStore = defineStore('settings', {
     const read = saved.read || {}
     return {
       theme: saved.theme || systemTheme(),
-      penName: saved.penName || '拾星人',
-      signature: saved.signature || '在算法的洪流里，做一个缓慢的人。',
       /* 深读页阅读偏好（字号 / 行高）——正文宽度已改为整页铺满，不再存宽度偏好 */
       read: {
         fontSize: clamp(read.fontSize, READ_LIMITS.fontSize, READ_DEFAULTS.fontSize),
@@ -60,8 +58,8 @@ export const useSettingsStore = defineStore('settings', {
   },
   actions: {
     persist() {
-      const { theme, penName, signature, read, lastPage, lastPageName } = this
-      localStorage.setItem(KEY, JSON.stringify({ theme, penName, signature, read, lastPage, lastPageName }))
+      const { theme, read, lastPage, lastPageName } = this
+      localStorage.setItem(KEY, JSON.stringify({ theme, read, lastPage, lastPageName }))
     },
     setTheme(theme) {
       this.theme = theme

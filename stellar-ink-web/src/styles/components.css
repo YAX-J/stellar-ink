@@ -82,11 +82,6 @@
 .map-tip h6{font-family:var(--font-serif); font-size:15px; margin-bottom:6px; line-height:1.5}
 .map-tip p{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); line-height:1.8}
 
-.avatar{width:64px; height:64px; border-radius:22px; display:grid; place-items:center;
-  font-family:var(--font-serif); font-weight:900; font-size:26px; color:var(--on-primary);
-  background:conic-gradient(from 200deg,var(--primary),var(--rose),var(--amber),var(--primary));
-  box-shadow:0 6px 20px var(--primary-soft)}
-
 input[type=range]{width:100%; accent-color:var(--primary); cursor:pointer}
 
 .foot{margin-top:90px; padding:30px 0 10px; border-top:1px solid var(--line);

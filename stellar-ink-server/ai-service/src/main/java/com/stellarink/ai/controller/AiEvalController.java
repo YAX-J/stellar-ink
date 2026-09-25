@@ -29,8 +29,9 @@ import java.util.Map;
  * 判断标准依旧是「换成另一个检索策略或指标要不要改这里」—— 要改就说明它属于 Python。
  * 唯一附加的是审计日志：跑评测是 ADMIN 动作，记一条「谁在什么时候用什么策略跑了哪份数据集」。
  *
- * <p>降级由 {@code PythonAiClientFallbackFactory} 统一给出 503，**不返回空对比表**：
- * 空表会被面板渲染成「0 分」，把「服务没连上」误报成「检索质量差」。
+ * <p>Python 不可用时**不返回空对比表**：空表会被面板渲染成「0 分」，把「服务没连上」误报成
+ * 「检索质量差」。错误按内部契约原样上抛（`PythonErrorDecoder` 翻成 `PythonApiException`），
+ * 由全局处理器给出带 traceId 的失败响应 —— 不要在这里 catch 成空表。
  */
 @Slf4j
 @RestController

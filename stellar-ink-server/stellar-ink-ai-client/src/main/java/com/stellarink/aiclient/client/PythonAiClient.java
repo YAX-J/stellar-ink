@@ -13,7 +13,6 @@ import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleResultDTO;
 import com.stellarink.aiclient.dto.WritingSuggestRequestDTO;
 import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
-import com.stellarink.aiclient.fallback.PythonAiClientFallbackFactory;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,33 +41,15 @@ import java.util.Map;
  */
 @FeignClient(
         name = "python-ai",
-        url = "${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}",
-        fallbackFactory = PythonAiClientFallbackFactory.class)
+        url = "${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}")
 public interface PythonAiClient {
-
-    /** Python 侧探活（原始 JSON，便于 ai-service 判定降级原因）。 */
-    @GetMapping(AiContractPaths.HEALTH)
-    Map<String, Object> health();
-
-    /**
-     * 流式问答。
-     *
-     * <p>返回类型暂定 {@code Object}：打通 SSE 时再换成具体的事件流类型
-     * （Spring 侧用 {@code ResponseBodyEmitter} / WebClient 流，由 ai-service 决定；
-     * 客户端不提前绑定某种传输实现）。
-     */
-    @PostMapping(
-            value = AiContractPaths.QA_STREAM,
-            consumes = MediaType.APPLICATION_JSON_VALUE,
-            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    Object qaStream(@RequestBody QaStreamRequestDTO request);
 
     /**
      * 非流式问答：一次请求拿完整答案（含引用与拒答标记）。
      *
-     * <p>与 {@link #qaStream} 并存是有意的：SSE 那条要等 Java 协议转换与前端消费方一起接，
-     * 而「检索 → 引用 → 拒答」的编排已经能用了 —— 先用它把功能交付出去，
-     * 而不是让用户等一条还没人消费的流式通道。
+     * <p>流式（{@code /qa/stream}）不在这里：它由 ai-service 的
+     * {@code HttpQaStreamClient} 用 JDK HttpClient 单独开一条流（Feign 的解码器是
+     * 「拿完整 body」语义，会把 SSE 退化成一次性响应）。
      */
     @PostMapping(
             value = AiContractPaths.QA_ASK,

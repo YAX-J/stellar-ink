@@ -62,7 +62,7 @@ public class HttpQaStreamClient implements QaStreamClient {
             // 一到 Docker（AI_PYTHON_BASE_URL=http://stellar-ink-ai:8200）就是
             // 「探活说好的、功能全是坏的」这种分裂状态
             @Value("${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}") String baseUrl,
-            @Value("${ai.python.connect-timeout-ms:2000}") long connectTimeoutMs) {
+            @Value("${stellar.ink.ai.python-connect-timeout-ms:2000}") long connectTimeoutMs) {
         this.secretProvider = secretProvider;
         this.callerProvider = callerProvider;
         this.objectMapper = objectMapper;

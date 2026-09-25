@@ -172,8 +172,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   （父组件 modelValue 在保存/切换时会短暂变空，照单全收会清空正文）。
 - 新增 Markdown 语法：先在 `parseMarkdown` 加块类型 → 视图加 `v-else-if` 分支 →
   在 `ReadView.vue` 的 `<style scoped>` 补样式（不要用全局样式）。
-- 阅读偏好（字号/行距/正文宽度）存 `stores/settings.js` 的 `read`，通过 CSS 变量
-  `--read-fs / --read-lh / --read-w` 下发给正文，组件里不要硬编码字号。
+- 阅读偏好（字号 / 行距；**正文宽度已取消**，不要再加 `--read-w`）存 `stores/settings.js` 的 `read`，
+  通过 CSS 变量 `--read-fs / --read-lh` 下发给正文，组件里不要硬编码字号。
 - 阅读位置记忆用 sessionStorage（`settings.rememberPosition/positionOf`），只在进入文章时恢复一次。
 - 深读页顶部是**单行工具条** `.read-bar`：左「← 返回星域」、右「⚙ 阅读设置」（`.read-tools` 挂在右端，
   设置面板 `position:absolute` 展开、不推动正文）。**不要再把这两个按钮拆成上下两行**——
@@ -250,7 +250,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 | `application-dev.yml` | `spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator 全暴露 + 日志降噪 |
 | `application-prod.yml` | 生产：敏感项全走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
 | `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放可调项 |
-| `nacos-application-prod.yml` | 生产模板（Data ID：`<app>-prod.yaml`）。**只放可调项，绝不放密钥**：Nacos 上的同名键会覆盖 `application-prod.yml` 的占位符，写进去等于把生产密钥搬进配置中心。prod 是 `optional:` 导入，**不建也能启动** |
+| `nacos-application-prod.yml` | 生产模板（Data ID：`<app>-prod.yaml`）。**只放可调项，绝不放密钥**（远端同名键**实测并不覆盖**本地 yml，见 `docs/architecture/README.md` §Nacos 动态配置；但「密钥不进配置中心」这条口径不变）。prod 是 `optional:` 导入，**不建也能启动** |
 | `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天 + 100MB 滚动，保留 7 天，总上限 2G） |
 
 - Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
@@ -315,12 +315,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
 - DDL：`deploy/sql/01_schema.sql`（幂等）+ 种子 `02_init-data.sql`（与前端展示用的种子内容对齐）；
-  已有库升级脚本按顺序各执行一次：`03_multi-author.sql`（多作者归属）、
-  `04_post_views_glow.sql`（`post.view_count` + `post_glow` 点赞明细 + `post_view` 浏览闸门）、
-  `05_user_role.sql`（补齐 `user.role`；早期库缺该列，不补会导致所有用户查询报 Unknown column）、
-  `06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、
-  `08_user_avatar.sql`（`user.avatar_url` 头像图片路径）、
-  `09_comment.sql`（文章评论 `post_comment`）。
+  已有库升级脚本按顺序各执行一次：`03_multi-author`（多作者归属）、
+  `04_post_views_glow`（计数 + 点赞明细 + 浏览闸门）、`05_user_role`（早期库缺 `user.role`
+  会让所有用户查询报 Unknown column）、`06_note`、`07_role_apply`、`08_user_avatar`、`09_comment`、
+  `10_ai-schema`、`11_ai_model_library`（后两个是 AI 域的表）；各脚本改了什么见文件头注释。
 - 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
   最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
   **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
@@ -432,8 +430,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   ⚠️ 两个刻意的映射：Python 的 401/403 只可能来自内部签名校验，**不能**映射成
   `UNAUTHORIZED`（前端会据此清会话把用户踢出去）；429 映射成「服务不可用」但保留上游那句「稍后重试」。
   契约外的错误体（网关 HTML、FastAPI 的 `{detail}`）退回默认行为，**不得回显上游原文**。
-  ⚠️ `PythonAiClientFallbackFactory` 当前**不生效**（ai-service 没有 circuit breaker 依赖，
-  Spring Cloud OpenFeign 会忽略 `fallbackFactory`），别以为它在兜底。
+  ⚠️ 这里**没有** Feign 降级工厂：曾经有一个 `PythonAiClientFallbackFactory`，但 ai-service 没有
+  circuit breaker 依赖（Spring Cloud OpenFeign 会忽略 `fallbackFactory`），它从不生效、已删除。
+  Python 不可用时就是异常穿透 → 全局处理器给 `code=500`，别把它误判成「服务本身坏了」。
 - **内部签名的标准串（跨语言，改必须两侧同时改）**：
   `METHOD \n PATH \n TIMESTAMP_MS \n NONCE \n SHA256_HEX(BODY) \n USER_ID \n ROLE`；
   签名是 HMAC-SHA256 小写十六进制，放 `X-AI-Signature`。
@@ -451,181 +450,22 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   不允许假装健康（探活是真去问 `GET /health`，不是恒定假信号）；
   Python 不可用时**不得返回空答案**，让前端能区分「没有依据」与「服务坏了」。
   ⚠️ 目前这条由「异常穿透 + 全局处理器」实现（表现为 `code=500`），
-  而不是设计里写的 `PythonAiClientFallbackFactory` 503 —— 那个工厂在当前装配下不生效（见上）。
+  而不是设计里写的「Feign 降级给 503」—— 本仓库没有可用的降级工厂（见上）。
 - 红线详见 `docs/ai/development-workflow.md` §7；每轮开工先读该文件，收尾更新 roadmap 进度清单与 §9。
 
 ## 6. 当前状态与边界（不要越界开发）
 
-- 已完成：前端内容页（此刻 / 执笔 / 星图 / 寻星 / 笔记 / 我的笔记 / 笔记详情与编辑 / 流星 / 回声 / 星链 /
-  深读 / 404）+ 鉴权与账号页（登录 / 注册 / 账号），均已接网关 :8080；
-  后端微服务化（网关 + user/content 两个业务服务 + Nacos 注册/配置中心 + Sentinel + Sa-Token）。
-- Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
-  JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
-  草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
-  **Lettuce 已做三处加固**（关共享原生连接 + **保活心跳** + 池里只留一条空闲连接，
-  见 §5「Lettuce 三处加固」）：这是「一段时间不操作就 503 / 登录 500」那类
-  **空闲后被 NAT 静默丢包**故障的对策 —— 别指望连接池的空闲校验，它只做 `isOpen()`。
-- **AI 当前状态**：**逐阶段状态与已知缺口见 `docs/ai/status.md`**（那份文件把「未开始」
-  明确写出来，避免把计划读成进度）。技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
-  开发流程（`docs/ai/development-workflow.md`）均已定稿，**排序以 `docs/ai/fast-track-plan.md` 为准**
-  （A 控制面 → B 检索内核 → C 评测台 → D 前端实验室 → E 扩展）。已完成：
-  M0 契约与骨架（Python 骨架 + 契约 fixture + Feign 客户端 + `ai-service :8107`）、
-  A1 模型配置中心（`ai_*` 表 + AES-GCM 密钥加密 + Provider 配置 CRUD 脱敏 + Python Provider 层 + 前端面板）、
-  A2 安全调用链（网关 `/ai/**` 路由与角色门槛 + 内部 HMAC 签名，**标准串含身份字段** + Python 纯 ASGI 验签）、
-  B2/B3a 切块与 BM25/RRF/Dense/混合开关、B3b-1 检索管道（`app/rag/pipeline.py`：召回 → RRF → Rerank
-  → post 级去重 → 空即拒答，`RetrievalConfig` 就是前端实验室的开关，**评测与线上共用同一条编排**）、
-  B1 Qdrant 适配（`app/rag/qdrant_store.py`：薄 HTTP 客户端 + 幂等 point id + 错误分类，
-  32 条协议测试用 MockTransport 锁协议，**真实冒烟待跑** `uv run python scripts/qdrant_smoke.py`）、
-  B3b-2 索引写路径（`app/rag/index_pipeline.py`：切块 → 嵌入 → 建集合 → 清旧点 → 分批写入；
-  `RetrievalPipeline.dense_store` 让 Dense 通路可走向量库，不给则走本地余弦，
-  5 条离线端到端测试用内存 Qdrant 模拟器把写路径与读路径接起来跑通）、
-  C1–C3 指标层 + 黄金集 v1（30 题，标注经证据自检）+ 策略对比运行器
-  + **纯 BM25 本地基线**（`uv run python scripts/eval_local_baseline.py`）与四路对比
-  （`uv run python scripts/compare_strategies.py`），两者都不需要 Qdrant 与密钥就能跑通评测链路；
-  C3-1 评测接口（`app/api/v1/eval.py`：`GET /eval/datasets`、`GET /eval/strategies`、`POST /eval/run`，
-  **受内部签名保护**，默认五组策略与命令行同源，Fake 口径写进响应 `notes`）；
-  C3-2 Java 侧（客户端 5 个 DTO + 两份 fixture + `AiEvalController` 的 `/ai/admin/eval/**`
-  + `InternalSignatureFeignInterceptor` 给所有 Feign 请求统一加 `X-AI-*` 签名头）、
-  C3-2 前端（`/ai-lab` 的「评测台」页签 `?tab=eval`：选数据集 → 勾策略 → 跑 → 对比表 + 逐题下钻 +
-  `notes` 原文展示，数据走 `stores/ai.js`）。**C 阶段到此收口**。
-  D1 问答编排（`app/rag/qa.py` + 内网 `POST /qa`：检索 → 引用 → 提示词 → 模型 → 拒答；
-  引用**只列送进模型的段落**，无依据时**不调用模型**，模型自己拒答时保留引用；
-  预算由 `QaSettings` 封顶，装配走缓存避免「每问一句嵌入整库一遍」）；
-  D2 问答入口（网关 `POST /ai/qa`，**登录即可**；深读页「问星笺」面板 + `stores/qa.js`：
-  拒答有独立样式、`usage.model=fake` 显示「离线自测」、引用可点回原文）。
-  **非流式先交付，SSE 升级排在 D3 之后**（避免先造一条没人消费的流式通道）；
-  D3 Copilot 后端（`app/rag/writing.py` + 网关 `/ai/writing/suggest`，**AUTHOR** 门槛；
-  只给候选、**没有任何写入路径**；草稿只随本次请求、日志不记正文；解析失败报错而不是空候选；
-  离线用 `FakeCopilotChat` 桩按格式回答，否则 Fake 回显会让所有润色请求变 502）；
-  D3 Copilot 前端（执笔页侧栏 `components/ai/CopilotPanel.vue` + `stores/copilot.js`：
-  6 个功能按钮 → 候选 → **行级差异预览**（`utils/diff.js` 手写 LCS，不引依赖）+ 逐条「采纳」；
-  采纳动作由纯函数 `utils/copilot-action.js` 决定：润色=替换、续写=插到光标、提纲=追加、
-  标题=只改标题、标签/摘要=只复制，未知任务退到「只复制」；
-  **面板里没有「自动应用」开关**——正文的每次改动都要作者点一下；
-  前端可执行验证 = `npm run check`（`scripts/diff-selfcheck.mjs` 的差异/采纳/SSE 切帧断言
-  + `scripts/deploy-selfcheck.mjs` 的接口前缀代理核对 + `scripts/ai-store-selfcheck.mjs` 的
-  「写成功后刷新失败不算失败」断言 + `vite build`））。
-  Qdrant 连接方式已查清：只绑宿主机 `127.0.0.1:6333`、无鉴权，本地走 SSH 隧道（见 `deploy/docker/README.md` 第十节）。
-  D2s SSE 的 **Python 侧已完成**（`app/schemas/qa_stream.py` 定事件契约：帧是 `data: {json}`、
-  类型写在 JSON 里，顺序固定 `meta → citation → delta → done`，`error` 是旁路事件；
-  `QaService.stream()` 与非流式共用检索/引用/拒答，没有 `stream_chat` 的模型就退化成**一个** delta；
-  内网 `POST /qa/stream` 用「生产者任务 + 队列」实现静默期 `: ping` 心跳与
-  **取消传播**（浏览器断开 → 生成器关闭 → `task.cancel()` → 上游流关闭），并带
-  `X-Accel-Buffering: no` 关掉 Nginx 缓冲）。
-  **踩到的坑**：`InternalAuthMiddleware` 读完 body 后伪造 `http.disconnect`，
-  非流式正常但 SSE 直接 500（`BaseHTTPMiddleware` 拿到假断开就取消响应任务组）——
-  已改为第二次起交回真实 receive，有回归测试盯着。
-  D2s SSE 的 **Java 出口也已完成**（`ai-service/stream/`：`QaSseFrame` 帧模型 +
-  `HttpQaStreamClient` 用 **JDK HttpClient 单独开一条流** —— Feign 的解码器是「拿完整 body」
-  语义，会把 SSE 退化成一次性响应；签名头复用 `InternalRequestSigner`，与 Feign 同口径。
-  `AiQaStreamController` 的 `/ai/qa/stream` 用 `ResponseBodyEmitter` 逐帧转发**原始帧**
-  （Java 不重新编码事件体），失败发一帧 `error` 而不是空流；`IOException` = 浏览器断开 →
-  关掉下游句柄 → 上游断开 → 模型停止生成，所以正常/异常/断开三条路都走 try-with-resources。
-  顺带修掉「路径存在但方法不对返回 500」：新增 `ErrorCode.METHOD_NOT_ALLOWED` 与对应处理器）。
-  D2s SSE 的 **前端消费方也已完成**（`utils/sse.js` 的 `parseFrame`/`FrameSplitter`/`readFrames`：
-  手写切帧是因为 **`EventSource` 只支持 GET**，而问答必须 POST；`stores/qa.js` 的 `askStream`
-  把 `meta/citation/delta/done` 逐帧拼成与一次性回答同形状的 `answer`，`done` 未到就提示「回答中断」；
-  深读页「问星笺」流式渲染正文 + 光标 + 「停止」按钮，离开页面 `onUnmounted` 主动 abort 以关掉下游。
-  **同时补掉一个真实部署缺口**：`/ai` 既没进 `vite.config.js` 的 proxy、也没进 nginx 的 location ——
-  即问星笺/Copilot/评测台在 dev 与生产都会静默失败。新增 `scripts/deploy-selfcheck.mjs`
-  在 `npm run check` 里核对「前端用到的接口前缀必须在两处代理里都出现」，并给 nginx 的 `/ai`
-  单独配 `proxy_buffering off` + 120s 读超时 + 独立限流档）。
-  E1 写作记忆与风格画像（`app/rag/style.py`：字符级统计、**不引分词库**；
-  `commonPhrases` 只放**反复出现 ≥3 次**的 3–6 字字组，**绝不引用原句** ——
-  画像会进提示词，粘一句原话进去下一轮模型就会照抄；阈值降到 1 被参数校验直接拒绝。
-  只吃已发表文章（接真实数据源时必须显式写 `status = published`），
-  Python 现算**不落库、不进索引**；样本不足返回 `evidenceSufficient=false` + `profile=null`
-  + 带实际篇数与字数门槛的 `notes`（**0 与「没量」是两件事**）。
-  对外 `POST /ai/writing/style`（**AUTHOR**，`authorId` 取登录身份、对外 DTO 里没有该字段），
-  执笔页 Copilot 面板有只读的「我的写作画像」折叠块。
-  E2 只读 Agent **核心**（`app/rag/agent.py`：模型每步输出一个 JSON（调工具或给答案）；
-  **三维预算**——步数 / 工具调用次数 / 观察字符数，任一触顶即收尾并如实标 `doneReason=length`；
-  **工具全只读且装不进来**（`ToolBox` 装配时拒绝 `read_only=False`）；**引用必须被观察到**
-  （模型只能标 postId，片段与分数由工具结果贴回，编的引用一律丢弃）；
-  中断只在步与步之间检查、记为 `interruptedBy=caller`。
-  `app/rag/agent_tools.py` 把检索与画像包成只读工具；内网 `/agent/ask` + 网关 `/ai/agent/ask`
-  （登录即可，不比问答多权限；服务端默认预算 4 步 / 6 次，**客户端只能收紧**）。
-  **E2 的前端入口未接**（Agent 慢且贵，等真实模型与配额后再定页面）。
-  下一步：收口与核验。**E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）未开始**。
-  另外欠一次 Qdrant 真实冒烟
-  （`uv run python scripts/qdrant_smoke.py`，连接方式见 `deploy/docker/README.md` 第十节）。
-  三条实测结论：① 种子解析器曾静默丢掉 13–15 号短文（只读第一个 `post` 块），评测语料少三篇却无报错，
-  现已按行扫全部块并有回归测试；② `min_score_ratio` 永远不会让结果为空，**拒答只能靠绝对下限**
-  `min_score`，而两个分数分布重叠（有答案题最低 ≈ 14.3 / 无答案题最高 ≈ 24.1），
-  所以拒答要靠主题相关性判定或 Dense 相似度下限，不是继续拧 BM25 门限；
-  ③ 用 Fake 跑四路对比时 dense 接近随机（哈希伪向量无语义）而 hybrid+rerank 与 dense 完全相同 ——
-  前者证明向量通路真的在起作用，后者说明**重排必须换一个模型**，真实质量等接上 bge-m3 再评。
-  一轮一个可验证切片、一个主题一个提交；M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调。
-  文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
-- **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，
-  AUTHOR 只能创作和维护自己的内容，ADMIN 可管理全部内容；友链仍是全局数据。
-- 前端已接网关：`src/api/client.js`（fetch 封装 + token）+ Pinia stores（会话与业务数据）；
-  页面 `/login` `/register` `/account` 支持改密、登出和 ADMIN 角色管理，文章/流星/回声/友链均读取真实接口；
-  多作者署名通过 `/user/authors` 批量补全，写作页支持草稿自动保存、恢复、删除与发布。
-- 阅读体验一期已完成：登录后按 `redirect` 回跳、未登录可浏览公开页（`/account` 与写作需登录）、
-  全局 toast + traceId 排障、深读页 Markdown 渲染 + 目录 + 阅读设置 + 阅读位置记忆、
-  文章浏览量（登录用户按天去重）与点赞去重（一人一赞 + 已赞态）；`orderBy` 支持
-  `latest / hottest / longest` 三种排序。
-- 文章评论一期已完成：公开文章评论列表、登录读者发表评论、评论作者或 ADMIN 软删除；
-  正文最多 1000 字，前端深读页展示评论者头像与昵称。
-- 技术笔记一期已完成：独立 `note` 表与 `/notes` 接口（列表 / 我的 / 详情 / 增删改 / 标记已验证 / 浏览计数）、
-  公开与私有两档可见性、正文用 `## 现象/环境/排查/结论/参考` 章节表达并由前端自动生成目录、
-  列表按技术栈热度分区、`summary` 优先截取「结论」章节；前端页面 `/notes`、`/notes/mine`、
-  `/note/:id`、`/note/edit`，导航符号 ❖。
-  正文渲染抽到 `components/common/MarkdownBody.vue`（文章与笔记共用，含代码块复制按钮）。
-- 技术笔记复核已完成：AUTHOR 在 `/notes/mine?view=review` 查看自己的已发布笔记，按
-  `DUE / UNVERIFIED / EXPIRED / FRESH` 筛选；180 天时效由后端从 `verified_at` 实时派生，
-  该视图支持搜索、分页、编辑跳转和就地标记「仍然有效」（原独立页 `/notes/review` 已并入，
-  接口 `GET /notes/review` 不变）。
-- 作者申请已完成（读者 → 作者闭环）：`PUT /user/role-apply` 提交/覆盖申请（带可选理由）、
-  `PUT /user/role-apply/cancel` 撤回、`GET /user/list` 兼作审核队列（含 `roleAppliedAt`/`roleApplyNote`）、
-  站长在账号页「成员管理」一键通过/驳回。前端：账号页权限面板三态（可申请 / 审核中可撤回 / 已是作者）
-  + 待审计数 + 通过驳回按钮，两处都提示「通过后需重新登录才生效」。
-- 头像已完成（图片 + 底字双轨 + 可切换对象存储）：`user.avatar_url` + `POST/DELETE /user/avatar`
-  （multipart 上传，服务端改名 + 魔数校验 + 1MB 双拦）；存储有 `local`（本地磁盘 + `/uploads/**`
-  匿名读路由 + Docker 卷）与 `cos`（腾讯云对象存储，生产用香港桶 + Cloudflare Worker 图片代理）
-  两种，由 `stellar.ink.storage.type` 切换。
-  前端新增 `components/common/UserAvatar.vue`（降级链路：图片 → 底字 → 昵称首字 → 星），
-  接入**导航身份入口、文章/笔记作者署名 AuthorBadge（`/user/authors` 已带 `avatarUrl`）、
-  账号页「我的星籍」（可上传/更换/恢复底字）**；
-  账号页可单独保存 `avatarText` 底字，未上传图片时全站显示底字。
-  一期边界：无缩略图/CDN/对象存储迁移脚本、无历史头像保留。
-- 搜索与分页已完成：前端 `/search` 聚合文章 `/search` 与公开笔记 `/notes?keyword=`，按类型分区并各自分页；
-  星图、公开笔记、我的笔记、草稿恢复和流星均支持「继续加载」，作者摘要请求按 100 个 id 自动分批；
-  后端所有分页入口统一要求 `page >= 1`、`1 <= size <= 100`。
-- 友链审核闭环已完成：公开 `/links` 只返回已接入项，申请状态为待审核；ADMIN 在账号页通过
-  `/links/pending` 查看队列，并以 `PUT /links/{id}/status` 通过或驳回（状态 `0/1/2`）。
-  （`PUT /user/profile` 已接：账号页可改底字与头像，以及「恢复本机默认偏好」。）
-- 作者申请二期候选：申请通过后的站内通知、申请被驳回时的原因回执、防刷频率限制。
-- 技术笔记编辑器已完成：笔记编辑区换成 CodeMirror 6 的 Live Preview（`components/editor/MarkdownEditor.vue`）——
-  光标行显示源码、其余行渲染；支持 `Ctrl+B/I/K/S`、Tab 缩进、撤销重做、Markdown 语法着色，
-  列表渲染成圆点；工具栏含「标准章节 / 提示卡（`> [!NOTE]`）/ 代码块 / 列表」四个插入按钮。
-  **只改笔记编辑器**，文章的「留白写作舱」保持原样。
-- 导航与体验收口已完成（上一轮）：**删除了空转功能**——执笔页的「专注模式」（只藏导航、不影响写作）、
-  `/bridge` 舰桥页（实时预览是静态假图、笔名/签名只写 localStorage 而全站读服务端、每日目标无消费方）、
-  首页走马灯与写死的「第 128 夜」、光谱页 14px 彩条、星籍页的假档案段（坐标/职业/正在循环/今日摄入/大事记）；
-  **登出与主题切换收进导航头像菜单**（此前登出要点头像→账号页→第三个面板）；
-  新增 `views/notfound/NotFoundView.vue` 404 页（此前未知路径静默回首页）；
-  `scrollBehavior` 恢复 `savedPosition`、`settings.persist()` 带上返回目标；
-  写作页与笔记编辑页的**自动保存失败会显示「未保存 · 点此重试」**（此前失败被吞、页脚仍显示「已保存」）；
-  三个列表页（流星/回声/星链）的错误提示补 `&& !items.length`，翻页失败不再清空整屏。
-  **无障碍与色板**：`base.css` 增加全局 `:focus-visible` 与 `prefers-reduced-motion` 降级；
-  `index.html` 内联脚本先落主题（消除刷新闪烁）并跟随系统 `prefers-color-scheme`；
-  新增 `--on-primary`，夜色/暮色/破晓三主题的 `--ink-faint`、破晓的强调色全部调到 WCAG AA（≥4.5:1）。
-- 原型退场与顶栏导航已完成（本轮）：**删除整个 `prototype/`**（21 个 HTML 重设计提案与 b12 定稿都已并入实现，
-  从此以 `styles/tokens/variables.css` 的 Token + `components/common/TopNav.vue` 为唯一视觉基准，
-  不再有第二份需要同步的 UI 描述）；左侧竖栏 `RailNav.vue` 换成 b12 式顶栏——
-  顶部 sticky、未滚动透明、滚动 40px 后浮出底色与分隔线，品牌「✦ 星笺 STELLAR INK」在左、
-  一级导航居中、寻星（放大镜）/执笔（主色按钮，仅作者）/头像菜单（账号设置 · 我的笔记 · 外观 · 登出）在右，
-  窄屏折两行、导航横向滚动。**一级导航 11 → 6 项**：光谱并入星图（`/archive` 新增标签星座 chips，
-  与年份叠加筛选画布与长卷）、复核并入我的笔记（`/notes/mine?view=review` 视图切换，URL 可分享）、
-  星籍并入账号（星籍面板补「加入星笺」，编号统一 `NO.ST-0001`）；合并时顺手删掉星籍页的印章、
-  「全站口径」（与首页写作脉搏重复）、格言与三个占位「信标」链接。三个旧路径保留 `redirect`，
-  老书签不撞 404。布局侧：`.main` 去掉 96px 左侧留白、阅读进度条改贴视口顶并抬到顶栏之上、
-  toast 下移到 78px、阅读目录吸顶改为 80px。页面标签（`ACCOUNT · 账号与星籍` 这类）统一挪到
-  标题后面：`SectionHead` 新增 `kicker` 属性 + 全局 `.title-row`，深读页/404 等自绘标题的页面同样处理。
-- 技术笔记二期候选：笔记 ↔ 文章互链、`/tags` 与 `/stats` 是否合并笔记标签、笔记内全文检索、
-  笔记间反向链接；AI 自动打标签/关联推荐需先明确解锁。
-- 前端结构化待办：**流星与回声合并**（流星是作者发射的碎片、回声是任何人投的漂流瓶，
-  两页受众不同，合并前要先定是「同页分栏」还是「视图切换」）；其余合并项（复核并入我的笔记、
-  星籍并入账号）已在本轮完成。
+**进度快照见 [`docs/status.md`](docs/status.md)（功能侧）与 [`docs/ai/status.md`](docs/ai/status.md)（AI 逐阶段核验）。**
+本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
+排查过程与产物路径请写进对应专题文档。
+
+- **未做的事（别当成已做）**：E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）未开始；
+  E2 只读 Agent 没有前端入口；Qdrant 从未连过真实实例（欠一次 `uv run python scripts/qdrant_smoke.py`）。
+- **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
+  M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调；一轮一个可验证切片、一个主题一个提交。
+- **不要加回来的入口**：光谱→星图（`/archive` 标签星座）、复核→`/notes/mine?view=review`、
+  星籍→账号（`/account`）；旧路径只留 `redirect`。一级导航固定 6 项，
+  视觉基准只有 `styles/tokens/variables.css` + `components/common/TopNav.vue`（`prototype/` 已整体删除）。
+- **结构化待办**：流星与回声合并（先定「同页分栏」还是「视图切换」）；作者申请二期（站内通知、
+  驳回原因回执、防刷限频）；技术笔记二期（笔记↔文章互链、笔记标签是否并入 `/tags`、
+  笔记内全文检索、反向链接）。

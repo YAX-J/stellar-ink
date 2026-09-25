@@ -45,9 +45,4 @@ public class AvatarStorage {
     public void delete(String avatarUrl) {
         objectStorage.delete(avatarUrl);
     }
-
-    /** 当前生效的存储类型，供健康检查或排障日志使用 */
-    public String storageType() {
-        return objectStorage.type();
-    }
 }

@@ -30,7 +30,6 @@ const saving = ref(false)
 const saveFailed = ref(false)
 const publishing = ref(false)
 const loading = ref(false)
-const typeHintVisible = ref(false)
 /* 每次切换/载入笔记都自增：作为编辑器的 key，强制重建实例，避免残留旧光标与撤销栈 */
 const editorKey = ref(0)
 const editorRef = ref(null)
@@ -412,10 +411,6 @@ onUnmounted(() => {
 .desk-foot{display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:22px;
   padding-top:16px; border-top:1px dashed var(--line);
   font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
-.ghost-mini{border:1px dashed var(--line); background:transparent; color:var(--ink-dim);
-  border-radius:99px; padding:7px 14px; font-size:12px; cursor:pointer; font-family:var(--font-body);
-  transition:all .25s}
-.ghost-mini:hover{color:var(--teal); border-color:var(--teal)}
 .save-dot{display:inline-flex; align-items:center; gap:7px; border:0; background:transparent;
   padding:0; font:inherit; color:inherit; cursor:default}
 .save-dot i{width:7px; height:7px; border-radius:50%; background:var(--teal); animation:pulse 2.2s infinite}

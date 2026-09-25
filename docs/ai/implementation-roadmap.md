@@ -34,8 +34,12 @@ M0 的落地结果与本文 §4 的差异（以实际代码为准）：
   不含内网地址与密钥）；Python 侧的 `/health` 只在编排网络内可达。
 - M0 未建立任何 `ai_*` 表，也未引入 Qdrant/Redis 依赖：ai-service 显式排除数据源与
   公共 MyBatis-Plus/Redis Bean，等 M1（配额 / nonce）与 M3（ai_* 表）再按切片放开。
-- `stellar-ink-ai-client` 的 Feign 契约已冻结但**尚未接线**（`ai-service` 无 `@EnableFeignClients`），
-  M1 打通签名与 SSE 时启用。
+- `stellar-ink-ai-client` 的 Feign 契约已冻结**并已接线**：`ai-service` 有
+  `@EnableFeignClients`（`config/PythonAiClientConfig`）与 `InternalSignatureFeignInterceptor`，
+  SSE 走单独的 JDK HttpClient。
+
+> ⚠️ **本文的里程碑顺序已被 `docs/ai/fast-track-plan.md` 取代**（M1–M11 的划分保留作技术口径与
+> 验收参考，实际排序以 fast-track 的 A→B→C→D→E 为准）；落地进度见 `docs/ai/status.md`。
 
 ## 1. 对比后的结论
 

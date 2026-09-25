@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-开发地址为 `http://localhost:5173`。Vite 将 `/auth`、`/user`、`/posts`、`/meteors`、`/echos`、`/links`、`/stats`、`/tags` 和 `/search` 代理到网关 `http://localhost:8080`。
+开发地址为 `http://localhost:5173`。Vite 将 `/auth`、`/user`、`/uploads`、`/posts`、`/notes`、`/meteors`、`/echos`、`/links`、`/stats`、`/tags`、`/search` 和 `/ai`（问答 SSE / Copilot / 评测台）代理到网关 `http://localhost:8080`。新增接口前缀时必须同时改这里与 `nginx.conf`，`npm run check` 会核对两处（`scripts/deploy-selfcheck.mjs`）。
 
 生产构建：
 
