@@ -296,44 +296,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
   `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
   同理 `Nacos` 不可达时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503。
-- **Lettuce 三处加固（远端 Redis 必配）**：都在 `common-core` 的
-  `RedisLettuceTuningConfig` + `RedisKeepAliveHeartbeat`，网关各有一份等价实现
-  （它是 WebFlux，不能依赖带 servlet 的 common-core），**改一处要同步另一处**：
-  ① **关掉共享原生连接**（`shareNativeConnection=false`）：Lettuce 默认所有命令复用一条连接，
-  这条连接上只要有一次命令超时，后续应答就与请求错位，于是**每个** Redis 操作都超时。
-  这个开关**只能由代码改**：`spring.data.redis.lettuce` 下没有这个键，配了 pool 也不会自动关。
-  ② **保活心跳 `RedisKeepAliveHeartbeat`（治「一段时间不操作就 503」的正主）**：
-  本机与远端 Redis 之间那条空闲十几分钟的连接会被 **NAT/防火墙静默丢弃** ——
-  本机 `netstat` 还是 ESTABLISHED，Redis 那边早就没这条连接了（实测 11 条对 6 条，
-  且服务端 `CONFIG GET timeout` = 0，**不是 Redis 掐的**）。之后**第一个命令就写进了黑洞**，
-  等到命令超时（dev 500ms）才发现：网关 fail-closed 回 503、业务服务回 500。
-  心跳每 `stellar.ink.redis.keepalive.interval`（默认 30s）借一条连接发一次**真 PING**：
-  链路永不空闲、借到的连接被真实验证、失败即 `resetConnection()` 丢掉整池让下一条请求重建。
-  ⚠️ **心跳必须打在实际被用的那个池上 —— 阻塞与响应式是两个独立的池**（踩过第二次）：
-  Spring Data Redis 的 `LettucePoolingConnectionProvider` 里，
-  阻塞的 `getConnection()` 用 `pools`（commons-pool2），响应式的 `getConnectionAsync()` 用
-  `asyncPools`（Lettuce `BoundedAsyncPool`）；网关的撤销校验走 `ReactiveStringRedisTemplate`
-  即后者。第一版心跳用了阻塞 API，结果只热了一条**谁也不用**的连接，真正被用的响应式池照旧
-  闲死 —— 现象是「心跳日志一切正常，重启 7 分钟后照样 503」。
-  所以：**common-core 的那份用阻塞 API（user/content 用 `StringRedisTemplate`），
-  网关的那份必须用 `ReactiveRedisConnectionFactory.getReactiveConnection().ping()`**。
-  ⚠️ **别指望 `testWhileIdle` / `testOnBorrow`**：Lettuce 的池化工厂
-  `RedisPooledObjectFactory.validateObject()` 只做 `StatefulConnection.isOpen()`
-  （javap 确认字节码），那是个**本地标志位**，半开连接照样返回 true —— 校验既不发网络包
-  也发现不了。上一轮我配了 `testWhileIdle` 并以为治好了，实测 11 分钟后照样 503，已改成心跳。
-  ③ **池里只留一条空闲连接，且不预造**（`max-idle: 1` / `min-idle: 0`）：
-  借用是 LIFO（取最近归还的那条），所以业务请求拿到的就是心跳刚热过的那条；
-  `min-idle` 必须是 **0** —— 设成 1 会让淘汰线程预造一条没人借的连接，
-  它排在队列第二个位置**永远借不到**、也就永远不被心跳 ping 到，只会闲到被 NAT 丢掉
-  （实测：验证脚本里 `cmd=client|setinfo 且 idle == age` 那几条就是它，生灭成 620 → 624）。
-  并发多出来的连接用完即销毁（超过 max-idle 直接 destroy），不残留。
-  代价是并发时不再复用多余连接（每条多 1~2 个 RTT），换来的是不再有「闲死的连接」。
-  `commons-pool2` 是池生效的前提（`common-core` 与网关都已引）；
-  `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**（四件一组），
-  心跳开关是 `stellar.ink.redis.keepalive`（ai-service 按边界设计显式关掉）。
-  回归测试：`RedisKeepAliveHeartbeatTest`（真发 PING / 失败丢池 / 守护线程）、
-  `RedisLettuceTuningTest` 与网关同名测试（含「Boot 自己不会关共享连接」的反向对照，
-  以及「网关心跳必须调 `getReactiveConnection()`」那条 —— 它就是第二次踩坑的看门人）。
+- **Lettuce 三处加固（远端 Redis 必配）**：`common-core` 的 `RedisLettuceTuningConfig` +
+  `RedisKeepAliveHeartbeat`，网关各有一份等价实现（WebFlux 不能依赖带 servlet 的 common-core），
+  **改一处要同步另一处**：① 关共享原生连接（`shareNativeConnection=false`，只能由代码改）；
+  ② 保活心跳（每 30s 借一条连接发**真 PING**，失败即 `resetConnection()` 丢整池）——
+  ⚠️ **心跳必须打在实际被用的那个池上**：阻塞 `getConnection()` 与响应式 `getConnectionAsync()`
+  是**两个独立的池**，网关的撤销校验走响应式，用错 API 会「日志正常但照样 503」；
+  ⚠️ **`testWhileIdle`/`testOnBorrow` 没用**：Lettuce 的池化工厂只做 `isOpen()`（本地标志位）；
+  ③ 池里只留一条空闲连接且不预造（`max-idle: 1` / `min-idle: 0`，LIFO 借用才拿得到被热过的那条）。
+  完整排查过程与验收命令见 `docs/architecture/README.md` §空闲保活。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。

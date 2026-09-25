@@ -178,6 +178,27 @@ Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会
 ⚠️ **生产 Docker 编排里不存在这个问题**：Redis/MySQL 与应用同机同网，没有 NAT 丢包。
 这是**本地跨公网连远端中间件**特有的代价。
 
+### 本地开发现状（2026-09-25 起：能本机的都本机）
+
+`deploy/scripts/start-all.bat` 的默认值已经改成 **本机 Redis + 本机 MySQL**，
+只有 Nacos 留在远端（它的客户端每 ~30s 长轮询一次，链路不会空闲，而且这个命名空间的动态配置在那边）：
+
+| 中间件 | 本地开发现状 | 依据 |
+|---|---|---|
+| Redis | **127.0.0.1:6379**（`D:\Redis`，Windows 服务、开机自启、无密码、`timeout 0`） | 换之前 `USE_REMOTE_REDIS=1` 可回到远端 |
+| MySQL | **127.0.0.1:3306**（本机 MySQL 8.0.45，库 `stellar_ink`） | 换之前 `USE_REMOTE_MYSQL=1` 可回到远端 |
+| Nacos | 远端 `124.221.158.32:8848`（命名空间不变） | 长轮询自带心跳；本机也有 `tools\nacos` 可随时改本地 |
+
+本机库是把远端库补齐过来的：`deploy/sql/10_ai-schema.sql` + `11_ai_model_library.sql`
+建好本机缺的 5 张 `ai_*` 表，再把 `ai_provider_config` / `ai_model` 的数据搬过来
+（密钥列是用本机 `.env` 里的 `AI_SECRET_MASTER_KEY` 加密的，所以搬过来仍能解密）。
+
+⚠️ **两份数据不再同步**：本地写的内容不会上服务器，服务器上的新内容也不会下来。
+要发布内容仍然必须连远端库（`set USE_REMOTE_MYSQL=1` 再跑 `start-all.bat`）。
+
+心跳/保活那一整套在本地连线下其实用不上了（本机没有 NAT），但保留着 ——
+一旦把开关拨回远端就是现成的保护，代价只是每 30s 几条 `PING` / `SELECT 1`。
+
 ## Redis 基础设施
 - `common-core` 通过 Spring Data Redis 提供阻塞式 `RedisUtils` 与 `RedisCache`，供 Servlet 业务服务注入；网关单独使用 Reactive Redis 检查 JWT 撤销列表，禁止在 Netty 事件循环里调用阻塞式工具。撤销键规则由 `shared-model` 共享。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。
