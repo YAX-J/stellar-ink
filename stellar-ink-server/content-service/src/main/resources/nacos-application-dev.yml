@@ -42,9 +42,11 @@ spring:
     druid:
       # ↓ 跨公网连 MySQL：空闲连接会被 NAT 静默丢弃，必须靠保活把它「用热」
       time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
-      min-evictable-idle-time-millis: 30000      # 空闲 30s 就纳入保活（默认 30 分钟太晚）
+      min-evictable-idle-time-millis: 60000      # 空闲 1 分钟就纳入保活（默认 30 分钟太晚）
       keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
-      keep-alive-between-time-millis: 10000      # 保活间隔 10s（默认 2 分钟；实测 2 分钟仍会被丢）
+      keep-alive-between-time-millis: 30000      # 保活间隔 30s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 必须**严格大于** time-between-eviction-runs-millis，否则 Druid 直接抛
+      # 「keepAliveBetweenTimeMillis must be greater than timeBetweenEvictionRunsMillis」拒绝建连
       # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：远端 Nacos 上也有同名键，
       # 会覆盖这里；代码那份还会把生效值打进启动日志，便于核对。
       validation-query: SELECT 1

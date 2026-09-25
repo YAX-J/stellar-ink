@@ -45,18 +45,29 @@ import java.time.temporal.ChronoUnit;
 public class DruidKeepAliveConfig implements SmartInitializingSingleton {
 
     /** 空闲多久纳入保活范围（Druid 默认 30 分钟，远晚于 NAT 丢弃空闲连接的时间） */
-    public static final long MIN_EVICTABLE_IDLE_MILLIS = 30_000L;
+    public static final long MIN_EVICTABLE_IDLE_MILLIS = 60_000L;
 
-    /** 保活探测间隔：到点就发一条真 SELECT 1（默认 2 分钟，实测仍被丢） */
-    public static final long KEEP_ALIVE_BETWEEN_MILLIS = 10_000L;
+    /**
+     * 保活探测间隔：到点就发一条真 SELECT 1（默认 2 分钟，实测仍被丢）。
+     *
+     * <p>⚠️ **必须严格大于 {@link #DESTROY_RUN_MILLIS}**，否则 Druid 在 {@code init()} 直接抛
+     * {@code SQLException: keepAliveBetweenTimeMillis must be greater than timeBetweenEvictionRunsMillis}
+     * 并且**拒绝建连**（整个服务起不来）。踩过一次：两个都写 10s。
+     */
+    public static final long KEEP_ALIVE_BETWEEN_MILLIS = 30_000L;
 
-    /** 淘汰/保活线程的检查周期（默认 60s，压到这个值才能保证每 30s 内轮到每条连接） */
+    /** 淘汰/保活线程的检查周期（默认 60s，压小一点才能让每条连接 30s 左右轮到一次） */
     public static final long DESTROY_RUN_MILLIS = 10_000L;
 
     private final ApplicationContext applicationContext;
 
     @Override
     public void afterSingletonsInstantiated() {
+        // Druid 的硬约束：不满足时它在 init() 里直接抛异常、拒绝建连（服务起不来）
+        if (KEEP_ALIVE_BETWEEN_MILLIS <= DESTROY_RUN_MILLIS) {
+            throw new IllegalStateException("保活间隔必须大于淘汰线程周期，否则 Druid 拒绝建连："
+                    + KEEP_ALIVE_BETWEEN_MILLIS + " <= " + DESTROY_RUN_MILLIS);
+        }
         applicationContext.getBeansOfType(DruidDataSource.class).forEach((name, dataSource) -> {
             dataSource.setKeepAlive(true);
             dataSource.setMinEvictableIdleTimeMillis(MIN_EVICTABLE_IDLE_MILLIS);
