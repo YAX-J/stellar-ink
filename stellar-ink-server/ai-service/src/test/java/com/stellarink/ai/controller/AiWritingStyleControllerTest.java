@@ -4,6 +4,7 @@ import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.WritingStyleProfileDTO;
 import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleResultDTO;
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
@@ -55,6 +56,10 @@ class AiWritingStyleControllerTest {
     /** 切片会把同包组件一起装配：模型配置控制器要 Mapper，这里 mock 掉。 */
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
+
+    /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
+    @MockBean
+    private AiModelLibraryService modelLibraryService;
 
     private static WritingStyleResultDTO profileOf(boolean enough) {
         WritingStyleResultDTO result = new WritingStyleResultDTO();

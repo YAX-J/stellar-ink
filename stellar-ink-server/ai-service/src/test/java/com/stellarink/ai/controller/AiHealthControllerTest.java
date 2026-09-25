@@ -3,6 +3,7 @@ package com.stellarink.ai.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.ai.client.PythonHealthProbe;
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import org.junit.jupiter.api.DisplayName;
@@ -62,6 +63,10 @@ class AiHealthControllerTest {
     /** 配置服务的实现在切片测试里没有 Mapper 可用，替换成 Mock（它本身由专门的单测覆盖）。 */
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
+
+    /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
+    @MockBean
+    private AiModelLibraryService modelLibraryService;
 
     @Test
     @DisplayName("公开可访问：不带 token 也能探测")

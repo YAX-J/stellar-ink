@@ -27,6 +27,14 @@ public class AiProviderConfig {
     /** 逻辑角色键：chat / fast / reasoning / embedding / rerank */
     private String role;
 
+    /**
+     * 这份生效配置来自模型库（{@code ai_model}）的哪一条；面板手填时为 null。
+     *
+     * <p>它不是外键（允许库里那条被删掉后这里留个悬空 id）：删库条目时行为是
+     * 「只解绑、不动当前生效配置」，免得正在跑的能力突然取不到模型。
+     */
+    private Long modelId;
+
     /** 协议实现：openai_compatible / fake */
     private String provider;
 

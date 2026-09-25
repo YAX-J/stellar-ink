@@ -1,9 +1,11 @@
 package com.stellarink.ai.controller;
 
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.ai.service.ProviderConnectivityChecker;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.sharedmodel.dto.ai.AiModelBindDTO;
 import com.stellarink.sharedmodel.dto.ai.AiProviderSaveDTO;
 import com.stellarink.sharedmodel.enums.AiModelRole;
 import com.stellarink.sharedmodel.enums.ErrorCode;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -44,6 +47,7 @@ import java.util.Map;
 public class AiProviderAdminController {
 
     private final AiProviderConfigService providerConfigService;
+    private final AiModelLibraryService modelLibraryService;
 
     @GetMapping
     @Operation(summary = "列出所有角色的模型配置（密钥只回掩码）")
@@ -64,6 +68,23 @@ public class AiProviderAdminController {
     public Response<Boolean> delete(@PathVariable("role") String role) {
         AuthHelper.requireAtLeast(Role.ADMIN);
         return Response.success(providerConfigService.delete(requireRole(role)));
+    }
+
+    /**
+     * 把模型库里的某条模型应用到该角色（面板下拉框选完之后走这里）。
+     *
+     * <p>为什么用 PUT 而不是又开一个 POST：这是「把角色的当前选择改成 X」，幂等 ——
+     * 同一个 modelId 提交多次结果一致，也符合「一个角色一份生效配置」的资源语义。
+     */
+    @PutMapping("/{role}/model")
+    @Operation(summary = "为角色选择模型库里的一个模型",
+            description = "会校验能力是否匹配（embedding 角色不能用纯 chat 模型），并复制成该角色当前生效的配置")
+    public Response<AiProviderVO> bind(
+            @PathVariable("role") String role,
+            @Valid @RequestBody AiModelBindDTO dto) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(
+                modelLibraryService.bind(requireRole(role), dto.getModelId(), AuthHelper.loginId()));
     }
 
     @PostMapping("/{role}/check")

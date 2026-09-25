@@ -74,4 +74,21 @@ public enum AiModelRole {
                 .findFirst()
                 .orElse(null);
     }
+
+    /**
+     * 这个角色需要模型具备哪种能力。
+     *
+     * <p><b>必须与 Python 侧 {@code app/providers/registry.py} 的 {@code _ROLE_CAPABILITY} 一致</b>：
+     * 面板按这里的结论过滤下拉框（把纯 chat 模型从 embedding 角色里排除掉），
+     * 而 Python 在取实例时按它自己那份判断能力是否匹配。两边不一致的表现是
+     * 「面板允许你选，选中后一问就报错」或反过来「明明能用的模型不让你选」。
+     */
+    public AiModelCapability capability() {
+        return switch (this) {
+            case EMBEDDING -> AiModelCapability.EMBEDDING;
+            case RERANK -> AiModelCapability.RERANK;
+            // chat / fast / reasoning 都要对话能力：它们是「用哪个档位的对话模型」的区别
+            default -> AiModelCapability.CHAT;
+        };
+    }
 }

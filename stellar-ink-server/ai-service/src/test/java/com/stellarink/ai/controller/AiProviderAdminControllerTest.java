@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -110,6 +111,18 @@ class AiProviderAdminControllerTest {
                 .andExpect(jsonPath("$.code").value(401));
 
         mockMvc.perform(post("/ai/admin/providers/chat/check"))
+                .andExpect(jsonPath("$.code").value(401));
+
+        // 模型库与「给角色选模型」同样只对 ADMIN 开放：它们也能读到端点与掩码
+        mockMvc.perform(get("/ai/admin/models"))
+                .andExpect(jsonPath("$.code").value(401));
+
+        mockMvc.perform(put("/ai/admin/providers/chat/model")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"modelId\":1}"))
+                .andExpect(jsonPath("$.code").value(401));
+
+        mockMvc.perform(delete("/ai/admin/models/1"))
                 .andExpect(jsonPath("$.code").value(401));
 
         mockMvc.perform(get("/ai/admin/providers/runtime"))

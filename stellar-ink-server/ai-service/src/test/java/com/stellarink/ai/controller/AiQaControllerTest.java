@@ -7,6 +7,7 @@ import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.aiclient.enums.DoneReason;
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
@@ -60,6 +61,10 @@ class AiQaControllerTest {
     /** 切片会把同包组件一起装配：模型配置控制器要 Mapper，这里 mock 掉（与其它切片测试一致）。 */
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
+
+    /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
+    @MockBean
+    private AiModelLibraryService modelLibraryService;
 
     private static QaAnswerDTO answered() {
         QaAnswerDTO answer = new QaAnswerDTO();

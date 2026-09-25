@@ -139,8 +139,11 @@ class AiProviderConfigServiceImplTest {
         dto.setModel("deepseek-reasoner");
         AiProviderVO vo = service.save(dto, 7L);
 
-        verify(mapper).updateById(existing);
+        // 走的是 updateWithModelId（不是 updateById）：手填配置要把 model_id 显式置空，
+        // 而 updateById 会忽略 null —— 否则「手填保存了、下拉框还显示绑着库里的模型」
+        verify(mapper).updateWithModelId(existing);
         assertEquals("deepseek-reasoner", existing.getModel());
+        assertNull(existing.getModelId(), "手填配置应解除与模型库条目的绑定");
         assertTrue(java.util.Arrays.equals(originalCipher, existing.getApiKeyCipher()),
                 "留空 Key 时不该改动已存密文");
         assertEquals("sk-…9f3a", vo.getApiKeyMask());

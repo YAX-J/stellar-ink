@@ -63,6 +63,8 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
 
         AiProviderConfig target = existing == null ? new AiProviderConfig() : existing;
         target.setRole(dto.getRole().getKey());
+        // 面板手填 = 不再绑定模型库里某一条（下拉框那边绑定时会写回 modelId）
+        target.setModelId(null);
         target.setProvider(dto.getProvider());
         target.setDisplayName(dto.getDisplayName());
         target.setBaseUrl(stripTrailingSlash(dto.getBaseUrl()));
@@ -86,7 +88,9 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
         if (existing == null) {
             mapper.insert(target);
         } else {
-            mapper.updateById(target);
+            // 走 updateWithModelId：手填配置要把 model_id 置空（解除与模型库条目的绑定），
+            // 而 updateById 会忽略 null —— 表现是「手填保存了、下拉框还显示绑着库里的模型」
+            mapper.updateWithModelId(target);
         }
         log.info("AI 模型配置已保存：role={}, model={}, keyChanged={}, actor={}",
                 dto.getRole().getKey(), dto.getModel(), hasNewKey, actorUserId);
@@ -167,6 +171,7 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
         return AiProviderVO.builder()
                 .id(row.getId())
                 .role(AiModelRole.parse(row.getRole()))
+                .modelId(row.getModelId())
                 .displayName(row.getDisplayName())
                 .provider(row.getProvider())
                 .baseUrl(row.getBaseUrl())

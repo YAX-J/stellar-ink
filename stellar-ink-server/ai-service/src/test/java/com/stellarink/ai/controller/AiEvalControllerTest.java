@@ -7,6 +7,7 @@ import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.EvalStrategySummaryDTO;
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
@@ -75,6 +76,10 @@ class AiEvalControllerTest {
      */
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
+
+    /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
+    @MockBean
+    private AiModelLibraryService modelLibraryService;
 
     private static EvalRunResponseDTO sampleResponse() {
         EvalRunResponseDTO response = new EvalRunResponseDTO();

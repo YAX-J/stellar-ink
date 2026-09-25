@@ -2,6 +2,7 @@ package com.stellarink.ai.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.aiclient.client.PythonAiClient;
+import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.ai.stream.QaSseFrame;
 import com.stellarink.ai.stream.QaStreamClient;
@@ -73,6 +74,10 @@ class AiQaStreamControllerTest {
 
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
+
+    /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
+    @MockBean
+    private AiModelLibraryService modelLibraryService;
 
     private static String body(String question) {
         return """
