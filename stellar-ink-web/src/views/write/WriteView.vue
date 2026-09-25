@@ -1,12 +1,14 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
 import { PROMPTS } from '@/api/mock'
 import { countWords } from '@/utils/wordCount'
+import { MAX_TITLE_LENGTH } from '@/utils/copilot-action'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
+import CopilotPanel from '@/components/ai/CopilotPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -38,6 +40,7 @@ const draftPage = ref(0)
 const draftTotal = ref(0)
 const draftLoading = ref(false)
 const editingPublished = ref(false)
+const bodyInput = ref(null)
 let saveTimer = null
 
 /* 实时字数与后端同口径（见 utils/wordCount.js），发射后列表里的数字与这里一致 */
@@ -184,6 +187,37 @@ async function launch() {
   }
 }
 
+/* ---- Copilot（写作助手）----
+ * 面板只给候选，**改不改、怎么改由这里决定**：正文写入仍走既有自动保存/发射链路。
+ * 不提供「自动应用」开关 —— 一旦有，AI 就能在作者没看的情况下改掉正文。
+ */
+function applyCopilot({ text, target }) {
+  if (target === 'title') {
+    // 与 utils/copilot-action.js 同一个上限：标题栏不该被塞进整段候选
+    title.value = text.slice(0, MAX_TITLE_LENGTH)
+  } else {
+    body.value = text
+  }
+  onInput()
+}
+async function insertCopilot({ text }) {
+  const area = bodyInput.value
+  const current = body.value
+  /* 只有「确实把光标放在编辑区里」时才按光标插：点过面板按钮之后焦点可能已经离开正文，
+     此时 selectionStart 会停在 0，照着它插会把续写塞到文章开头 —— 那样看起来更像被 AI 改坏了。
+     没聚焦就追加到末尾，这是「接着写」唯一说得通的落点。 */
+  const focused = area && document.activeElement === area
+  const at = focused && typeof area.selectionStart === 'number' ? area.selectionStart : current.length
+  const caret = at + text.length
+  body.value = current.slice(0, at) + text + current.slice(at)
+  onInput()
+  await nextTick()
+  if (bodyInput.value) {
+    bodyInput.value.focus()
+    bodyInput.value.setSelectionRange(caret, caret)
+  }
+}
+
 onMounted(async () => {
   await loadDrafts()
   if (route.query.post) await loadPublished(route.query.post)
@@ -229,7 +263,7 @@ onUnmounted(() => {
         <input v-model="title" class="title-input" placeholder="给今晚的思绪起个名字…" @input="onInput">
         <div class="quill-line"></div>
         <textarea
-          v-model="body" class="body-input" @input="onInput"
+          v-model="body" ref="bodyInput" class="body-input" @input="onInput"
           placeholder="从这里开始。不追求完美，只追求诚实。&#10;&#10;提示：情绪会改变舱内的光。"
         ></textarea>
         <div class="desk-foot">
@@ -252,6 +286,10 @@ onUnmounted(() => {
           <div class="prompt-card" :style="{ opacity: promptFading ? 0 : 1 }">{{ prompt }}</div>
           <button class="prompt-refresh" @click="refreshPrompt">↻ 换一签</button>
         </div>
+        <CopilotPanel
+          class="reveal" style="--d:.22s" :draft="body"
+          @replace="applyCopilot" @insert="insertCopilot"
+        />
         <div class="side-card reveal" style="--d:.26s">
           <div class="draft-head">
             <h5>未完的星 · 草稿</h5>
@@ -287,7 +325,8 @@ onUnmounted(() => {
 .gate p{font-size:14px; line-height:2; color:var(--ink-dim); max-width:52ch}
 .gate-actions{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:8px}
 
-.studio{display:grid; grid-template-columns:1fr 300px; gap:28px}
+/* 右栏要放 Copilot 的差异预览：300px 会把每行折成三截，给它一个可伸缩的宽度 */
+.studio{display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,360px); gap:28px; align-items:start}
 .studio-desk{
   border:1px solid var(--line); border-radius:var(--r-lg);
   background:linear-gradient(180deg,var(--bg-2),var(--bg));
