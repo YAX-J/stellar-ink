@@ -150,11 +150,19 @@ AI 技术路线与实施顺序见
 
 | | Redis | MySQL |
 |---|---|---|
-| 谁发心跳 | `RedisKeepAliveHeartbeat`（common-core 与网关各一份） | `DruidKeepAliveConfig` |
-| 怎么发 | 每 30s 借一条池化连接 `PING` | 每 10s 让 Druid 对池内连接做 `SELECT 1` 保活 |
-| 池的配合 | `max-idle: 1` / `min-idle: 0`（业务借到的就是被热过的那条） | 保持 `min-idle` 条，全部纳入保活 |
-| 失败怎么办 | `LettuceConnectionFactory#resetConnection()` 丢掉整池 | Druid 自己淘汰并补一条新连接 |
-| 生效值从哪看 | 启动日志「保活心跳已启动」 | 启动日志「MySQL 空闲保活已生效[…]」 |
+| 谁发心跳 | `RedisKeepAliveHeartbeat`（common-core 与网关各一份） | `DataSourceKeepAliveHeartbeat`（common-core） |
+| 怎么发 | 每 30s 借一条池化连接 `PING` | 每 30s **同时借出 initial-size 条**连接、各跑一次 `SELECT 1` |
+| 池的配合 | `max-idle: 1` / `min-idle: 0`（业务借到的就是被热过的那条） | 保留 Druid `keep-alive` 作为兜底 + `min-evictable-idle-time: 30s` |
+| 失败怎么办 | `LettuceConnectionFactory#resetConnection()` 丢掉整池 | 只记日志，坏连接交给 Druid 淘汰 |
+| 生效值从哪看 | 启动日志「保活心跳已启动」 | 启动日志「MySQL 空闲保活已生效[…]」+「MySQL 保活心跳已启动：每 30000 ms 同时热 N 条连接」 |
+
+⚠️ **为什么 MySQL 这边不能只靠 Druid 自带的 `keep-alive`**（实测）：它在 `shrink()` 里
+只把「超出 `minIdle` 的、以及最近使用的那几条」纳入保活，而且扫描时一旦遇到一条
+「既不够旧到淘汰、又不够旧到保活」的连接就直接 `break`。结果 MySQL 侧能看到
+**一部分连接每十秒被 ping（`time` 归零）、另一部分闲置上千秒** ——
+业务请求恰好借到后者时，命令写进被丢弃的连接，要等 JDBC `socketTimeout`（15s）才失败换连接，
+页面就是「刷新后卡 15 秒」。所以我们自己发心跳，并且**必须同时借出多条**：
+Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会反复热同一条连接。
 
 ⚠️ 两个坑：**① 心跳必须打在实际被用的那个池上** —— Spring Data Redis 的阻塞路径（`getConnection`
 → commons-pool2 的 `pools`）与响应式路径（`getConnectionAsync` → Lettuce 的 `asyncPools`）

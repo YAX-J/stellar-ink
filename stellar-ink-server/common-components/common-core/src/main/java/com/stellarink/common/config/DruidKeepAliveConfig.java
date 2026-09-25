@@ -3,10 +3,18 @@ package com.stellarink.common.config;
 import com.alibaba.druid.pool.DruidDataSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
+
+import javax.sql.DataSource;
+import java.time.temporal.ChronoUnit;
 
 /**
  * 跨公网连 MySQL 时的**空闲保活兜底**：把 Druid 的参数在代码里定死一遍。
@@ -59,5 +67,27 @@ public class DruidKeepAliveConfig implements SmartInitializingSingleton {
                     name, dataSource.isKeepAlive(), dataSource.getKeepAliveBetweenTimeMillis(),
                     dataSource.getTimeBetweenEvictionRunsMillis(), dataSource.getMinEvictableIdleTimeMillis());
         });
+    }
+
+    /**
+     * JDBC 保活心跳。**Druid 自带的 keep-alive 不足以覆盖整池**（实测：MySQL 侧只有一部分连接
+     * 每十秒被 ping 一次，其余闲置上千秒），所以由我们自己对**每一条空闲连接**发真查询，
+     * 见 {@link DataSourceKeepAliveHeartbeat} 的类注释。
+     *
+     * <p>取不到 DataSource 的场合（`@WebMvcTest` 切片）返回 null —— 那样等于不装心跳，
+     * 避免让切片测试因为「没有数据源」启动失败。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "stellar.ink.db.keepalive.enabled", havingValue = "true", matchIfMissing = true)
+    DataSourceKeepAliveHeartbeat dataSourceKeepAliveHeartbeat(
+            ObjectProvider<DataSource> dataSourceProvider,
+            @Value("${stellar.ink.db.keepalive.interval:30s}") String keepAliveInterval) {
+        DataSource dataSource = dataSourceProvider.getIfAvailable();
+        if (dataSource == null) {
+            return null;
+        }
+        // 与 Redis 那份同理：用 Boot 的 DurationStyle 自己解析，别让 @Value 直接转 Duration
+        return new DataSourceKeepAliveHeartbeat(
+                dataSource, DurationStyle.detectAndParse(keepAliveInterval, ChronoUnit.MILLIS));
     }
 }

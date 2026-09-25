@@ -266,13 +266,16 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   MySQL 自己不掐连接（`wait_timeout`=28800），但 NAT 会丢空闲连接（实测 processlist 里
   34 条连接有 24 条 `Time` 上千秒、从没被 ping），空闲后第一个请求就借到半开连接，
   等 JDBC `socketTimeout`（15s）才失败换连接 —— 与浏览器 15s 超时重合。
-  对策：`common-core` 的 **`DruidKeepAliveConfig`** 在**代码里**定死
-  `keep-alive=true`、`keep-alive-between-time-millis=10s`、`min-evictable-idle-time-millis=30s`、
-  `time-between-eviction-runs-millis=10s` 并打印生效值 —— 之所以代码优先，
-  是因为远端 Nacos 的 `user-service-dev.yaml` 里有同名键且**优先级更高**（Druid 默认的
-  30 分钟/2 分钟门限都晚于链路丢包时间，`ai-service` 原先完全没有保活）。
+  对策：`common-core` 的 **`DruidKeepAliveConfig`**（在**代码里**定死
+  `keep-alive=true`、保活间隔、空闲门限、淘汰线程并打印生效值）+ **`DataSourceKeepAliveHeartbeat`**
+  （每 30s **同时借出 initial-size 条**连接各跑一次 `SELECT 1`）。
+  ⚠️ 只靠 Druid 自带的 `keep-alive` **不够**（实测：MySQL 侧一部分连接每十秒被 ping、
+  另一部分闲置上千秒 —— 它只覆盖「超出 minIdle 的 + 最近使用的几条」，业务借到冷的那条照样卡 15s）；
+  ⚠️ 心跳**必须同时借多条**：Druid 借用是 LIFO，借一条还一条只会反复热同一条；
+  ⚠️ 代码优先于 yml 是因为远端 Nacos 的 `user-service-dev.yaml` 里有同名键且优先级更高。
   验收：重启后 `SELECT time FROM information_schema.processlist WHERE host LIKE '<公网IP>%'`，
-  不该有连接空闲超过 ~60 秒。详见 `docs/architecture/README.md` §Redis 与 MySQL 的空闲保活。
+  不该有连接空闲超过 ~60 秒（注意排除**已 kill 的旧 JVM** 留下的僵尸连接 —— 它们空闲上千秒、
+  但要按 id 与重启时间区分）。详见 `docs/architecture/README.md` §空闲保活。
   生产 Docker 里 MySQL 与应用同机同网，不存在这个问题。
 - ⚠️ **「莫名其妙 503」在这条链路上有三个来源，先分清再动手**（用户反馈过，吃过一次亏）：
   ① 服务没启动 / 没注册进 Nacos（`Unable to find instance for xxx`）；
