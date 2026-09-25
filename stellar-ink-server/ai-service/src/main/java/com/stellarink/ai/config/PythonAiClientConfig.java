@@ -1,6 +1,9 @@
 package com.stellarink.ai.config;
 
+import com.stellarink.aiclient.error.PythonErrorDecoder;
+import feign.codec.ErrorDecoder;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -19,8 +22,24 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>签名头由 {@link InternalSignatureFeignInterceptor} 统一注入（它是 {@code RequestInterceptor} Bean，
  * 对上下文里所有 Feign 客户端生效），调用方不需要自己拼 {@code X-AI-*}。
+ * 错误体由 {@code PythonErrorDecoder} 翻成可展示的业务异常（同样是全局 Bean）。
  */
 @Configuration
 @EnableFeignClients(basePackages = "com.stellarink.aiclient.client")
 public class PythonAiClientConfig {
+
+    /**
+     * Python 错误体 → 可展示的业务异常。
+     *
+     * <p>不加这一条时，Python 刻意给出的可读错误（例如「角色 embedding 尚未配置模型」）
+     * 会退化成一个裸的 {@code FeignException}，被全局处理器兜成
+     * {@code code=500「系统繁忙，请稍后重试」} —— 实测确认过。
+     *
+     * <p>注册成普通 Bean 即可生效：Feign 子上下文以主上下文为父，与
+     * {@code RequestInterceptor} 是同一套机制。
+     */
+    @Bean
+    ErrorDecoder pythonErrorDecoder() {
+        return new PythonErrorDecoder();
+    }
 }

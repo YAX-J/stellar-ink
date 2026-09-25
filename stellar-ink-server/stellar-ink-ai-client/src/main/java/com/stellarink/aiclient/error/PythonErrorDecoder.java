@@ -1,0 +1,119 @@
+package com.stellarink.aiclient.error;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stellarink.sharedmodel.enums.ErrorCode;
+import feign.Response;
+import feign.codec.ErrorDecoder;
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
+/**
+ * 把 Python 的错误体翻成**可直接展示**的业务异常。
+ *
+ * <p><b>为什么必须有这一层</b>（实测踩到）：Python 侧刻意把「没配模型」做成可读的 400
+ * （「角色 embedding 尚未配置模型（请在 AI 实验室 → 模型配置里填写）」），
+ * 但没有 ErrorDecoder 时，Feign 只会抛一个 {@code FeignException}，
+ * 全局处理器把它当未知异常 → 用户看到的是 **{@code code=500「系统繁忙，请稍后重试」}**。
+ * 于是「去面板配一个角色」这件三十秒的事，变成了「服务坏了，等运维」。
+ *
+ * <p>错误体形状（Python `app/api/v1/*` 与 `app/main.py` 统一给出）：
+ * {@code {"code": "AI_BAD_REQUEST", "message": "…"}}。认识的才转换，不认识的
+ * （网关 HTML、空体、FastAPI 的 {@code {"detail": …}}）交回 Feign 默认处理 ——
+ * **上游原始报文绝不透给用户**（可能含内网地址与栈）。
+ */
+@Slf4j
+public class PythonErrorDecoder implements ErrorDecoder {
+
+    /** 可读消息的长度上限：正常的可操作提示几十个字，超过它多半不是给人看的 */
+    private static final int MAX_MESSAGE_CHARS = 300;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final ErrorDecoder defaultDecoder = new ErrorDecoder.Default();
+
+    @Override
+    public Exception decode(String methodKey, Response response) {
+        int status = response.status();
+        String message = readableMessage(response);
+        if (message == null) {
+            // 不是我们的错误契约：保留默认行为（FeignException → 上层兜成 5xx），
+            // 但把状态码记下来，否则这类问题在日志里毫无痕迹
+            log.warn("Python 返回了契约外的错误：{} status={}", methodKey, status);
+            return defaultDecoder.decode(methodKey, response);
+        }
+
+        ErrorCode errorCode = errorCodeOf(status);
+        log.warn(
+                "Python 调用失败：{} status={} code={} message={}",
+                methodKey,
+                status,
+                errorCode.getCode(),
+                message);
+        return new PythonApiException(errorCode, status, message);
+    }
+
+    /**
+     * 状态码 → 错误码。
+     *
+     * <p>两处刻意的映射：
+     * <ul>
+     *   <li><b>401/403 不映射成 {@code UNAUTHORIZED/FORBIDDEN}</b>：Python 的这两个码
+     *       只可能来自我们自己的内部签名校验（{@code AI_INTERNAL_SECRET} 两侧不一致之类），
+     *       与用户会话无关。映射成 401 会让前端 {@code isAuthError()} 判定为「登录失效」，
+     *       把用户清出登录态 —— 那是完全错误的动作。</li>
+     *   <li><b>429 映射成 {@code SERVICE_UNAVAILABLE}</b>：被上游限流时服务对我们就等于暂时不可用。
+     *       仓库的 {@code ErrorCode} 没有「限流」档，而「稍后重试」这层意思由 Python 的消息
+     *       （「模型服务限流，请稍后重试」）带给用户。</li>
+     * </ul>
+     */
+    private static ErrorCode errorCodeOf(int status) {
+        return switch (status) {
+            // 400/422 都是「请求方（这里是运维/站长）能自己修」的问题：原样把消息交出去
+            case 400, 422 -> ErrorCode.PARAM_ERROR;
+            case 404 -> ErrorCode.NOT_FOUND;
+            case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
+            case 401, 403, 429 -> ErrorCode.SERVICE_UNAVAILABLE;
+            default -> ErrorCode.SERVICE_UNAVAILABLE;
+        };
+    }
+
+    /** 从错误体里取可展示的消息；取不到（非 JSON、没有 message 字段、空体）返回 null。 */
+    private static String readableMessage(Response response) {
+        String body = bodyOf(response);
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = MAPPER.readTree(body);
+            // `message` 是 Python 的键；`msg` 容错兼容（同一个仓库的 Java 侧用 msg）
+            JsonNode message = node.hasNonNull("message") ? node.get("message") : node.get("msg");
+            if (message == null || !message.isTextual() || message.asText().isBlank()) {
+                return null;
+            }
+            return truncate(message.asText().trim());
+        } catch (IOException malformed) {
+            return null;
+        }
+    }
+
+    private static String bodyOf(Response response) {
+        if (response.body() == null) {
+            return null;
+        }
+        try (InputStream stream = response.body().asInputStream()) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException unreadable) {
+            return null;
+        }
+    }
+
+    private static String truncate(String message) {
+        return message.length() <= MAX_MESSAGE_CHARS
+                ? message
+                : message.substring(0, MAX_MESSAGE_CHARS) + "…";
+    }
+}
