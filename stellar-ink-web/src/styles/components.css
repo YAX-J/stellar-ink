@@ -17,6 +17,14 @@
 .btn-primary:active{transform:translateY(0) scale(.97)}
 .btn-ghost{background:var(--surface); color:var(--ink-dim); border:1px solid var(--line)}
 .btn-ghost:hover{color:var(--ink); background:var(--surface-2)}
+/* 禁用态必须有可见差异：此前 .btn 完全没有 :disabled 样式，禁用按钮与可点按钮长得一模一样，
+   点下去又什么都不发生 —— 表现就是「这个按钮是假的」（AI 实验室的保存按钮踩过）。
+   同时按无障碍要求把 hover/active 的位移与高亮一并关掉。 */
+.btn:disabled, .btn[disabled]{
+  cursor:not-allowed; opacity:.45; filter:saturate(.5);
+}
+.btn:disabled:hover, .btn[disabled]:hover{filter:saturate(.5); transform:none}
+.btn:disabled:active, .btn[disabled]:active{transform:none}
 
 /* 标题行：标题 + 紧跟其后的英文标签（如「技术笔记 — TECH NOTES · 程序员的标本册」）。
    .kicker 本身是自带短横的 flex 行，在标题后面时改成 inline，才能和标题共享同一条基线。 */

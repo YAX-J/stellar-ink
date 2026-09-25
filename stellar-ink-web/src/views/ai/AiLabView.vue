@@ -46,8 +46,19 @@ const form = reactive({
 })
 
 const editingMeta = computed(() => AI_ROLES.find((role) => role.key === editing.value) || null)
-const canSubmit = computed(() => !!editing.value && !!form.displayName.trim()
-  && !!form.baseUrl.trim() && !!form.model.trim())
+
+/** 角色配置表单的保存失败原因（就地显示）与「还差什么」 */
+const roleFormError = ref('')
+const roleFormBlockers = computed(() => {
+  const missing = []
+  if (!editing.value) missing.push('先选一个角色')
+  if (!form.displayName.trim()) missing.push('展示名')
+  if (!form.baseUrl.trim()) missing.push('接口地址')
+  if (!form.model.trim()) missing.push('模型名')
+  // 该角色还没配过时必须带 Key：留空只对「已有配置」表示沿用
+  if (editing.value && !ai.providers[editing.value] && !form.apiKey.trim()) missing.push('API Key')
+  return missing
+})
 
 /* ------------------------------ 评测台 ------------------------------ */
 const selectedDataset = ref('')
@@ -158,6 +169,7 @@ async function runEval() {
 
 function startEdit(roleKey) {
   editing.value = roleKey
+  roleFormError.value = ''
   const meta = AI_ROLES.find((role) => role.key === roleKey)
   const existing = ai.providers[roleKey]
   form.displayName = existing?.displayName || meta.label
@@ -173,6 +185,7 @@ function startEdit(roleKey) {
 
 function cancelEdit() {
   editing.value = ''
+  roleFormError.value = ''
 }
 
 function numberOrNull(value) {
@@ -181,14 +194,15 @@ function numberOrNull(value) {
 }
 
 async function save() {
-  if (!canSubmit.value || saving.value) return
+  // 同模型库表单：按钮不做 disabled 拦截，点得动并说清差什么
+  if (saving.value) return
+  if (roleFormBlockers.value.length) {
+    roleFormError.value = `还差：${roleFormBlockers.value.join('、')}`
+    return
+  }
+  roleFormError.value = ''
   saving.value = true
   try {
-    const firstTime = !ai.providers[editing.value]
-    if (firstTime && !form.apiKey.trim()) {
-      emit(TOAST, { type: 'warn', message: '该角色还没配过，请先填写 API Key' })
-      return
-    }
     await ai.saveProvider(editing.value, {
       displayName: form.displayName.trim(),
       provider: form.provider,
@@ -203,8 +217,8 @@ async function save() {
     })
     form.apiKey = ''
     emit(TOAST, { type: 'success', message: `${editingMeta.value?.label || '配置'}已保存` })
-  } catch {
-    /* 全局 toast 已提示，这里保持面板不关闭以便改错 */
+  } catch (error) {
+    roleFormError.value = error?.message || '保存失败，请重试'
   } finally {
     saving.value = false
   }
@@ -255,9 +269,18 @@ const modelForm = reactive({
   temperature: '',
 })
 
-const canSubmitModel = computed(() => !!modelForm.displayName.trim()
-  && !!modelForm.baseUrl.trim() && !!modelForm.model.trim()
-  && Object.values(modelForm.capabilities).some(Boolean))
+/** 保存失败的原因（就地显示，不只靠会消失的全局 toast） */
+const modelFormError = ref('')
+
+/** 还差什么才能保存；空数组表示可以保存 —— 按钮点不动时必须告诉用户为什么 */
+const modelFormBlockers = computed(() => {
+  const missing = []
+  if (!modelForm.displayName.trim()) missing.push('展示名')
+  if (!modelForm.baseUrl.trim()) missing.push('接口地址')
+  if (!modelForm.model.trim()) missing.push('模型名')
+  if (!Object.values(modelForm.capabilities).some(Boolean)) missing.push('至少一项能力')
+  return missing
+})
 
 function capabilityLabel(key) {
   return AI_CAPABILITIES.find((item) => item.key === key)?.label || key
@@ -277,6 +300,7 @@ function boundRolesText(item) {
 
 function resetModelForm() {
   modelEditing.value = null
+  modelFormError.value = ''
   modelForm.displayName = ''
   modelForm.provider = 'openai_compatible'
   modelForm.baseUrl = ''
@@ -296,6 +320,7 @@ function startAddModel() {
 
 function startEditModel(item) {
   modelEditing.value = item.id
+  modelFormError.value = ''
   modelForm.displayName = item.displayName || ''
   modelForm.provider = item.provider || 'openai_compatible'
   modelForm.baseUrl = item.baseUrl || ''
@@ -315,7 +340,13 @@ function startEditModel(item) {
 }
 
 async function submitModel() {
-  if (!canSubmitModel.value) return
+  // 刻意**不用 disabled 挡**：被禁用的按钮点下去什么都不发生，看起来就是「按钮是假的」。
+  // 点得动、并且说清楚差什么，用户才知道下一步做什么。
+  if (modelFormBlockers.value.length) {
+    modelFormError.value = `还差：${modelFormBlockers.value.join('、')}`
+    return
+  }
+  modelFormError.value = ''
   const capabilities = AI_CAPABILITIES
     .filter((item) => modelForm.capabilities[item.key])
     .map((item) => item.key)
@@ -340,8 +371,9 @@ async function submitModel() {
     })
     modelFormOpen.value = false
     resetModelForm()
-  } catch {
-    /* 全局 toast 已提示；表单保持打开以便改错 */
+  } catch (error) {
+    // 全局 toast 也会提示，但它会消失；表单保持打开，把原因就地留在按钮上方
+    modelFormError.value = error?.message || '保存失败，请重试'
   }
 }
 
@@ -354,8 +386,8 @@ async function removeModelRow(item) {
   try {
     await ai.removeModel(item.id, used)
     emit(TOAST, { type: 'success', message: '已从模型库删除' })
-  } catch {
-    /* 同上 */
+  } catch (error) {
+    emit(TOAST, { type: 'error', message: error?.message || '删除失败，请重试' })
   }
 }
 
@@ -366,8 +398,8 @@ async function checkModelRow(item) {
       type: result.ok ? 'success' : 'warn',
       message: result.ok ? `${item.displayName} 端点可达` : result.message,
     })
-  } catch {
-    /* 同上 */
+  } catch (error) {
+    emit(TOAST, { type: 'error', message: error?.message || '自检失败，请重试' })
   }
 }
 
@@ -379,6 +411,14 @@ function pickValue(item) {
 function canApply(item) {
   const chosen = picked[item.key]
   return !!chosen && chosen !== String(item.config?.modelId ?? '') && !item.binding
+}
+
+/** 「应用」按钮为什么点不动 —— 只禁用不解释，用户会以为按钮坏了 */
+function applyHint(item) {
+  const chosen = picked[item.key]
+  if (!chosen) return '先从下拉框里选一个模型，再点「应用」'
+  if (chosen === String(item.config?.modelId ?? '')) return '当前生效的就是这一条，换一条再点「应用」'
+  return ''
 }
 
 async function applyModel(item) {
@@ -429,7 +469,7 @@ async function applyModel(item) {
 
       <p v-if="ai.loading && !ai.initialized" class="state-text">正在读取模型配置…</p>
       <p v-else-if="ai.error && !ai.initialized" class="state-text error-text">
-        {{ ai.error }} <button class="state-action" @click="ai.fetchProviders()">重新读取</button>
+        {{ ai.error }} <button class="state-action" type="button" @click="ai.fetchProviders()">重新读取</button>
       </p>
 
       <div class="role-grid reveal" style="--d:.08s">
@@ -467,10 +507,17 @@ async function applyModel(item) {
                 {{ option.displayName }} · {{ option.model }}{{ option.enabled ? '' : '（已停用）' }}
               </option>
             </select>
-            <button class="btn btn-ghost" :disabled="!canApply(item)" @click="applyModel(item)">
+            <button
+              class="btn btn-ghost" type="button" :disabled="!canApply(item)"
+              @click="applyModel(item)"
+            >
               {{ item.binding ? '应用中…' : '应用' }}
             </button>
           </div>
+          <!-- 按钮点不动时要说清为什么：没选、选的就是当前这条、还是正在应用 -->
+          <p v-if="item.options.length && !canApply(item) && !item.binding" class="form-hint tight">
+            {{ applyHint(item) }}
+          </p>
           <p v-else-if="ai.modelsLoaded" class="form-hint tight">
             模型库里还没有可用于「{{ item.label }}」的模型 ——
             在下方「模型库」里加一个，并勾上「{{ capabilityLabel(item.capability) }}」能力。
@@ -481,16 +528,21 @@ async function applyModel(item) {
           </p>
 
           <div class="role-actions">
-            <button class="btn btn-ghost" @click="startEdit(item.key)">
+            <button class="btn btn-ghost" type="button" @click="startEdit(item.key)">
               {{ item.config ? '修改' : '配置' }}
             </button>
             <button
-              v-if="item.config" class="btn btn-ghost"
+              v-if="item.config" class="btn btn-ghost" type="button"
               :disabled="item.checking" @click="check(item.key)"
             >
               {{ item.checking ? '自检中…' : '测试连通' }}
             </button>
-            <button v-if="item.config" class="btn btn-ghost danger" @click="remove(item.key)">删除</button>
+            <button
+              v-if="item.config" class="btn btn-ghost danger" type="button"
+              @click="remove(item.key)"
+            >
+              删除
+            </button>
           </div>
         </div>
       </div>
@@ -505,22 +557,23 @@ async function applyModel(item) {
           <span class="form-hint tight">
             {{ ai.models.length }} 个模型 · 角色下拉框只列出能力匹配的那些
           </span>
-          <button class="btn btn-ghost" @click="startAddModel">＋ 新增模型</button>
+          <button class="btn btn-ghost" type="button" @click="startAddModel">＋ 新增模型</button>
         </div>
 
+        <!-- 读失败只加一条横幅，**不顶掉已经读到的列表**（曾经 v-else 链让一次刷新失败清空整屏） -->
         <p v-if="ai.modelsError" class="state-text error-text">
           模型库读不出来：{{ ai.modelsError }}
           <br>
           两种常见原因：① 数据库还没执行 <code>deploy/sql/11_ai_model_library.sql</code>；
           ② 服务还是旧 jar（新接口要重启 ai-service 后才有）。
-          <button class="state-action" @click="ai.loadModels().catch(() => {})">重新读取</button>
+          <button class="state-action" type="button" @click="ai.loadModels().catch(() => {})">重新读取</button>
         </p>
         <p v-else-if="ai.modelsLoading && !ai.modelsLoaded" class="state-text">正在读取模型库…</p>
         <p v-else-if="!ai.models.length" class="state-text">
           还没有模型。点「＋ 新增模型」把端点、模型名与 Key 存进来，之后各角色就能用下拉框选它。
         </p>
 
-        <div v-else class="model-list">
+        <div v-if="ai.models.length" class="model-list">
           <div v-for="item in ai.models" :key="item.id" class="model-row">
             <div class="model-main">
               <b>{{ item.displayName }}</b>
@@ -540,13 +593,13 @@ async function applyModel(item) {
             </p>
             <div class="role-actions">
               <button
-                class="btn btn-ghost" :disabled="ai.checkingModel === item.id"
+                class="btn btn-ghost" type="button" :disabled="ai.checkingModel === item.id"
                 @click="checkModelRow(item)"
               >
                 {{ ai.checkingModel === item.id ? '自检中…' : '测试连通' }}
               </button>
-              <button class="btn btn-ghost" @click="startEditModel(item)">修改</button>
-              <button class="btn btn-ghost danger" @click="removeModelRow(item)">删除</button>
+              <button class="btn btn-ghost" type="button" @click="startEditModel(item)">修改</button>
+              <button class="btn btn-ghost danger" type="button" @click="removeModelRow(item)">删除</button>
             </div>
           </div>
         </div>
@@ -610,11 +663,20 @@ async function applyModel(item) {
             </div>
           </div>
           <div class="role-actions">
-            <button class="btn btn-primary" :disabled="!canSubmitModel || ai.savingModel" @click="submitModel">
+            <button
+              class="btn btn-primary" type="button" :disabled="ai.savingModel"
+              @click="submitModel"
+            >
               {{ ai.savingModel ? '保存中…' : '保存到模型库' }}
             </button>
-            <button class="btn btn-ghost" @click="modelFormOpen = false; resetModelForm()">取消</button>
+            <button class="btn btn-ghost" type="button" @click="modelFormOpen = false; resetModelForm()">
+              取消
+            </button>
           </div>
+          <p v-if="modelFormError" class="form-hint tight error-text">{{ modelFormError }}</p>
+          <p v-else-if="modelFormBlockers.length" class="form-hint tight">
+            还差：{{ modelFormBlockers.join('、') }} —— 填好后点「保存到模型库」
+          </p>
         </div>
       </section>
 
@@ -674,12 +736,16 @@ async function applyModel(item) {
         </div>
 
         <div class="form-actions">
-          <button class="btn btn-primary" :disabled="!canSubmit || saving" @click="save">
+          <button class="btn btn-primary" type="button" :disabled="saving" @click="save">
             {{ saving ? '保存中…' : '保存配置' }}
           </button>
-          <button class="btn btn-ghost" @click="cancelEdit">取消</button>
+          <button class="btn btn-ghost" type="button" @click="cancelEdit">取消</button>
           <span class="form-hint">换嵌入模型时，维度要与已建索引一致，否则需要重建集合</span>
         </div>
+        <p v-if="roleFormError" class="form-hint tight error-text">{{ roleFormError }}</p>
+        <p v-else-if="roleFormBlockers.length" class="form-hint tight">
+          还差：{{ roleFormBlockers.join('、') }}
+        </p>
       </div>
       </template>
 
@@ -692,7 +758,7 @@ async function applyModel(item) {
         <p v-if="ai.evalMetaLoading" class="state-text">正在读取数据集与策略…</p>
         <p v-else-if="ai.evalError && !ai.evalResult" class="state-text error-text">
           {{ ai.evalError }}
-          <button class="state-action" @click="ai.loadEvalMeta()">重新读取</button>
+          <button class="state-action" type="button" @click="ai.loadEvalMeta()">重新读取</button>
         </p>
 
         <div v-else class="side-card eval-setup reveal">
@@ -720,10 +786,12 @@ async function applyModel(item) {
           </div>
 
           <div class="eval-actions">
-            <button class="btn btn-primary" :disabled="!canRunEval" @click="runEval">
+            <button class="btn btn-primary" type="button" :disabled="!canRunEval" @click="runEval">
               {{ ai.evalRunning ? '跑评测中…' : '跑一轮评测' }}
             </button>
             <span class="form-hint">
+              <template v-if="!selectedDataset">先选一个数据集；</template>
+              <template v-else-if="!ai.evalSelected.length">至少勾一组被测策略；</template>
               已选 {{ ai.evalSelected.length }} / {{ ai.evalStrategies.length }} 组；
               不放心的先少勾几组，跑一次几十毫秒。
             </span>

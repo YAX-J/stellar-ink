@@ -234,13 +234,24 @@ export const useAiStore = defineStore('ai', {
       }
     },
 
-    /** 新增或修改一条模型；`apiKey` 留空表示沿用已存密钥。改完会重新拉角色配置（库里改了会同步过去） */
+    /**
+     * 新增或修改一条模型；`apiKey` 留空表示沿用已存密钥。
+     *
+     * 两条刻意的处理（踩过一次「保存按钮是假的」）：
+     * 1. **先就地更新列表**：保存成功这件事，不该被「随后的刷新失败」抹掉；
+     * 2. 刷新走 {@link refreshAfterWrite}，**失败只记状态、不抛** ——
+     *    否则一次 503 会把「已经建好了」显示成「保存失败」，用户再点一次还会看到
+     *    「已经有同名模型」，而列表里一条都没有。
+     */
     async saveModel(payload) {
       this.savingModel = true
       this.error = ''
       try {
         const saved = await request('/ai/admin/models', { method: 'POST', body: payload })
-        await Promise.all([this.loadModels(), this.fetchProviders()])
+        const without = this.models.filter((item) => item.id !== saved.id)
+        this.models = [...without, saved].sort((a, b) => a.id - b.id)
+        this.modelsLoaded = true
+        await this.refreshAfterWrite()
         return saved
       } catch (error) {
         this.error = error.message
@@ -250,13 +261,51 @@ export const useAiStore = defineStore('ai', {
       }
     },
 
+    /**
+     * 写操作之后的刷新：模型库与角色配置各刷一次，**失败只记状态、不抛**。
+     *
+     * 为什么必须这样：这些刷新紧跟在一个**已经成功**的写操作之后。让它抛错，
+     * 上层就会把「保存成功」显示成「保存失败」—— 而数据其实已经落库了。
+     * 这正是「保存按钮是假的」的来源（一次 503 就够）。
+     */
+    async refreshAfterWrite() {
+      try {
+        await this.loadModels()
+      } catch {
+        /* 原因已记进 modelsError，列表保留乐观更新的结果 */
+      }
+      try {
+        await this.fetchProviders()
+      } catch {
+        /* 原因已记进 error */
+      }
+    },
+
+    /**
+     * 删掉库里一条模型。
+     *
+     * 与 {@link saveModel} 同口径：删除成功就**立刻**从列表里拿掉，随后的刷新失败只记状态。
+     * `refreshAfterWrite` 里的 `loadModels` 出错会 `throw`，本方法捕获后不再冒泡。
+     */
     async removeModel(id, force = false) {
       this.error = ''
       const removed = await request(`/ai/admin/models/${id}${force ? '?force=true' : ''}`, {
         method: 'DELETE',
       })
       if (removed) {
-        await Promise.all([this.loadModels(), this.fetchProviders()])
+        const next = this.models.filter((item) => item.id !== id)
+        // 解绑（force）会把角色行上的 model_id 清空，删掉模型即该角色不再指向库里任何模型
+        const providers = { ...this.providers }
+        Object.keys(providers).forEach((role) => {
+          const config = providers[role]
+          if (config && config.modelId === id) {
+            providers[role] = { ...config, modelId: null }
+          }
+        })
+        this.models = next
+        this.providers = providers
+        this.modelsLoaded = true
+        await this.refreshAfterWrite()
       }
       return removed
     },
@@ -266,7 +315,17 @@ export const useAiStore = defineStore('ai', {
       this.error = ''
       try {
         const result = await request(`/ai/admin/models/${id}/check`, { method: 'POST' })
-        await this.loadModels()
+        // 自检结果后端已落库（last_check_*），这里先就地更新，随后刷新只为校准时间戳；
+        // 刷不出来不该让「自检成功」显示成「自检失败」
+        this.models = this.models.map((item) => (item.id === id
+          ? {
+            ...item,
+            lastCheckStatus: result.ok ? 'ok' : 'failed',
+            lastCheckMessage: result.message,
+            lastCheckedAt: new Date().toISOString(),
+          }
+          : item))
+        await this.refreshAfterWrite()
         return result
       } catch (error) {
         this.error = error.message
@@ -285,12 +344,17 @@ export const useAiStore = defineStore('ai', {
           method: 'PUT',
           body: { modelId },
         })
-        this.providers = { ...this.providers, [bound.role]: bound }
+        this.providers = { ...this.providers, [role]: bound }
         const next = { ...this.checkResults }
         delete next[role]
         this.checkResults = next
-        // 绑定关系写在角色行上，库列表里的「正被谁使用」也会变，跟着刷新一次
-        await this.loadModels()
+        // 绑定关系写在角色行上，库列表里的「正被谁使用」也会变 —— 先就地改，
+        // 再 best-effort 刷新（同 saveModel：刷新失败不能把「已应用」显示成「应用失败」）
+        this.models = this.models.map((item) => {
+          const used = (item.boundRoles || []).filter((key) => key !== role)
+          return item.id === modelId ? { ...item, boundRoles: [...used, role] } : { ...item, boundRoles: used }
+        })
+        await this.refreshAfterWrite()
         return bound
       } catch (error) {
         this.error = error.message
