@@ -72,7 +72,9 @@ spring:
           # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
           # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
           max-idle: 1
-          min-idle: 1
+          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，
+          # 于是不会被心跳 ping 到，只会闲到被 NAT 丢掉（实测过）
+          min-idle: 0
           # 池被借空时的等待上限：宁可快速失败（缓存回源），也不要让请求无限等
           max-wait: 500ms
           # 空闲连接每 30s 跑一次淘汰器；配合 RedisLettuceTuningConfig 的 testWhileIdle

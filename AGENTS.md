@@ -306,8 +306,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `RedisPooledObjectFactory.validateObject()` 只做 `StatefulConnection.isOpen()`
   （javap 确认字节码），那是个**本地标志位**，半开连接照样返回 true —— 校验既不发网络包
   也发现不了。上一轮我配了 `testWhileIdle` 并以为治好了，实测 11 分钟后照样 503，已改成心跳。
-  ③ **池里只留一条空闲连接**（`max-idle: 1` / `min-idle: 1`）：LIFO 借用保证业务请求拿到的
-  就是心跳刚热过的那条；并发多出来的连接用完即销毁，没机会闲在池里被丢掉。
+  ③ **池里只留一条空闲连接，且不预造**（`max-idle: 1` / `min-idle: 0`）：
+  借用是 LIFO（取最近归还的那条），所以业务请求拿到的就是心跳刚热过的那条；
+  `min-idle` 必须是 **0** —— 设成 1 会让淘汰线程预造一条没人借的连接，
+  它排在队列第二个位置**永远借不到**、也就永远不被心跳 ping 到，只会闲到被 NAT 丢掉
+  （实测：验证脚本里 `cmd=client|setinfo 且 idle == age` 那几条就是它，生灭成 620 → 624）。
+  并发多出来的连接用完即销毁（超过 max-idle 直接 destroy），不残留。
   代价是并发时不再复用多余连接（每条多 1~2 个 RTT），换来的是不再有「闲死的连接」。
   `commons-pool2` 是池生效的前提（`common-core` 与网关都已引）；
   `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**（四件一组），
