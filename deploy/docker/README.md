@@ -296,7 +296,8 @@ curl -skI --max-time 8 --resolve www.baidu.com:443:<源站IP> https://www.baidu.
 | 网关自动路由 | **已关闭** | `spring.cloud.gateway.discovery.locator.enabled: false`。开启后会生成 `/{serviceId}/**` 自动路由（如 `/content-service/**`），该前缀不在鉴权白名单内，**可绕过网关鉴权直接读写下游**（含 `/internal/**`）。路由一律在 `routes` 中显式声明 |
 | 网关鉴权策略 | **默认拒绝 + 显式白名单** | 除登录、读请求、公开写接口外一律要求有效 token。新增路由默认受保护，不会因漏配置而裸奔 |
 | Actuator | 已收敛 | 仅 `health,info,metrics,loggers`；`heapdump`/`env`/`configprops`/`beans`/`threaddump`/`shutdown` 已单独 `enabled: false`。**heapdump 可导出堆内存明文（含 JWT 密钥），脱敏无效，绝不可暴露** |
-| 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠；**在 Cloudflare 后面时必须靠 `cloudflare_real_ip.inc` 还原真实 IP**，否则全站访客共用一个 CF 边缘 IP，会互相挤掉限额 |
+| 边缘限流 | 已启用 | Nginx `limit_req`：`/auth/login` 10 次/分、`/echos`+`/links`+glow 6 次/分、`/ai/**` 30 次/分、其余 API 50 次/秒。`$binary_remote_addr` 取自 TCP 连接不可伪造，比应用层按 `X-Forwarded-For` 限流可靠；**在 Cloudflare 后面时必须靠 `cloudflare_real_ip.inc` 还原真实 IP**，否则全站访客共用一个 CF 边缘 IP，会互相挤掉限额 |
+| AI 出口反代 | 已启用 | `/ai/**` 转网关 → ai-service。**必须 `proxy_buffering off` + `proxy_read_timeout 120s`**：前者漏了流式问答会被攒成一整块再吐（「逐字生成」变成转圈等到最后），后者漏了长回答会 504（用户看到「答到一半断了」）。`/ai` 不是前端 history 路由，因此没有 `$spa_navigation` 判定。**改前端接口前缀时，`stellar-ink-web/scripts/deploy-selfcheck.mjs`（在 `npm run check` 里）会核对本文件与 vite 代理是否同步** |
 | 头像上传 | 已加固 | 服务端重命名（不用客户端文件名，杜绝 `../` 与可执行后缀）、ImageIO 读魔数认格式、1MB 双拦（multipart + 业务层），Nginx `client_max_body_size 2m` 兜底；`/uploads/` 只读且由 nginx 单独转发到网关（不放静态目录，避免被长缓存规则截走） |
 | 登录防爆破 | 已启用 | user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次锁定 15 分钟，多实例共享状态 |
 | JWT 撤销 | 已启用 | 登出或改密后，当前 JWT 摘要进入 Redis 直到自然过期；网关响应式检查，Redis 故障时返回 503 而不是放行撤销令牌。Redis 已开 AOF，重启不丢撤销记录 |
@@ -389,7 +390,11 @@ docker compose up -d                                      # 起其余服务
 - **磁盘吃紧**：查 `du -sh deploy/docker/logs/*`（日志上限 2G/服务，已从 20G 调小）、
   `docker system df`（构建缓存），定期 `docker builder prune`。
 - **Sentinel dashboard 未部署**：网关会尝试上报 `localhost:8858`，连接失败只是无害告警。
-- **Qdrant 接入**：业务暂未使用；M3 起直接在编排网络内以 `qdrant:6333` 访问。
+- **Qdrant 接入**：Python 侧适配层与索引写路径已就绪（`stellar-ink-ai/app/rag/qdrant_store.py`、
+  `index_pipeline.py`，默认 `http://127.0.0.1:6333`、无鉴权）。编排网络内的服务用 `qdrant:6333` 访问；
+  本地开发走 SSH 隧道，然后 `uv run python scripts/qdrant_smoke.py` 做一次真实冒烟 ——
+  它先验协议（3 个手工向量），再跑端到端（真实切块 + Fake 嵌入 → 写库 → 检索回来），
+  全程用临时集合 `stellar_ink_smoke`，结束即删，不碰生产集合。
 
 ## 十、本地怎么连服务器上的数据库与 Nacos
 
@@ -422,7 +427,7 @@ ssh -L 8080:127.0.0.1:8080 \
 | `localhost:3306` | MySQL | 用户 `stellar` / 密码＝`.env` 的 `MYSQL_PASSWORD` / 库 `stellar_ink`。⚠️ **不要用 root**：官方镜像的 root 默认只允许容器内 `localhost` 登录（`mysqladmin` 健康检查与备份脚本都走容器内，不受影响），本地工具请用 `stellar`（它在建库时被授予了 `stellar_ink.*` 的全部权限） | Navicat、DBeaver、HeidiSQL 连库；导入导出；排查数据 |
 | `localhost:6379` | Redis | 无密码（容器内网才可达） | `redis-cli -h 127.0.0.1 -p 6379`；看缓存与 JWT 撤销列表 |
 | `http://localhost:8848/nacos` | Nacos 控制台 | `nacos` / `nacos`（或你在 `.env` 里改的值） | 看服务注册、改配置 |
-| `localhost:6333` | Qdrant | 无鉴权 | `http://localhost:6333/dashboard`；AI 阶段（M3 起）本地调检索 |
+| `localhost:6333` | Qdrant | 无鉴权 | `http://localhost:6333/dashboard`；AI 检索（B1 起）本地调参 + `scripts/qdrant_smoke.py` 冒烟 |
 | `http://localhost:8080` | 网关 | — | 本地前端 `npm run dev` 会把 `/auth`、`/posts` 等前缀代理到这里（见 `stellar-ink-web/vite.config.js`），所以本地跑前端时**先开隧道就能直接连生产后端** |
 
 **本地开发要用哪套数据，务必分清**：

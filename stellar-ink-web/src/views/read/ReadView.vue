@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore, READ_LIMITS, READ_DEFAULTS } from '@/stores/settings'
 import { useCommentStore } from '@/stores/comments'
 import { useAuthorStore } from '@/stores/authors'
+import { useQaStore } from '@/stores/qa'
 import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
@@ -20,6 +21,7 @@ const auth = useAuthStore()
 const settings = useSettingsStore()
 const commentStore = useCommentStore()
 const authorStore = useAuthorStore()
+const qaStore = useQaStore()
 
 const post = computed(() => postStore.byId(route.params.id))
 const prevPost = computed(() => post.value?.prev || null)
@@ -56,6 +58,34 @@ async function submitComment() {
 async function deleteComment(comment) {
   if (!window.confirm('确定要收回这条回声吗？')) return
   try { await commentStore.remove(comment.id, route.params.id) } catch { /* 全局 toast 已提示 */ }
+}
+
+/* ---- 问星笺（问答入口）----
+ * 问的是**全站已发布文章**，不是只看当前这篇：这样「这篇文章提到的书在哪篇写过」也能问到。
+ * 答案与引用一律来自服务端，前端只负责展示与把引用做成可跳转的链接。
+ *
+ * 默认走**流式**：引用由检索决定、比正文先到，所以先渲染引用再等答案 ——
+ * 读者不用盯着转圈等到整段生成完。中止（停止按钮 / 清空 / 离开页面）会关掉这条流，
+ * 服务端随之取消下游模型调用。
+ */
+const qaDraft = ref('')
+
+async function askStar() {
+  const question = qaDraft.value.trim()
+  if (!question) {
+    qaStore.error = '请先写下一个问题'
+    return
+  }
+  try {
+    const answer = await qaStore.askStream(question, 5)
+    if (answer) qaDraft.value = ''
+  } catch { /* 错误已进 store.error 并有局部/全局提示 */ }
+}
+
+/** 引用可点回原文：跳到那篇文章（当前这篇就不跳，只提示） */
+function openCitation(citation) {
+  if (!citation || Number(citation.postId) === Number(route.params.id)) return
+  router.push({ name: 'read', params: { id: citation.postId } })
 }
 
 /* 正文：Markdown 解析为块级结构交给 MarkdownBody 渲染（首段下沉由该组件判定） */
@@ -188,6 +218,8 @@ onUnmounted(() => {
   removeEventListener('scroll', onScroll)
   clearTimeout(restoreTimer)
   clearTimeout(hintTimer)
+  // 离开页面主动收尾：不中止的话这条流会读到组件卸载之后，而下游模型会继续生成
+  qaStore.abort()
 })
 </script>
 
@@ -285,6 +317,61 @@ onUnmounted(() => {
             @click="router.push({ name: 'write', query: { post: post.id } })"
           >✎ 编辑</button>
         </div>
+
+        <section class="qa-panel reveal" style="--d:.33s" aria-label="问星笺">
+          <div class="qa-head">
+            <div class="title-row"><h3>问星笺</h3><span class="kicker">ASK · 就全站文章提问</span></div>
+            <button v-if="qaStore.answer" class="qa-reset" type="button" @click="qaStore.reset()">清空</button>
+          </div>
+
+          <p v-if="!auth.isLoggedIn" class="qa-hint">
+            提问需要登录（答案要花算力，也要能按人计费）。
+            <RouterLink class="qa-link" :to="{ name: 'login', query: { redirect: route.fullPath } }">去登录</RouterLink>
+          </p>
+
+          <template v-else>
+            <div class="qa-compose">
+              <input
+                v-model="qaDraft" maxlength="500" type="text"
+                placeholder="问点什么，比如：作者为什么坚持写博客？"
+                @keydown.enter="askStar"
+              >
+              <button class="btn btn-primary" :disabled="qaStore.asking" @click="askStar">
+                {{ qaStore.asking ? '生成中…' : '提问' }}
+              </button>
+              <button v-if="qaStore.streaming" class="btn btn-ghost qa-stop" type="button" @click="qaStore.reset()">
+                停止
+              </button>
+            </div>
+            <p class="qa-hint">
+              答案只依据站内文章，并给出引用；找不到依据时会直说「没有找到」，不会编。
+              <span v-if="qaStore.error"> · <b class="qa-err">{{ qaStore.error }}</b></span>
+            </p>
+
+            <!-- 流式时立刻出现：先显示「正在检索」，引用一到就渲染引用，正文边生成边追加 -->
+            <div v-if="qaStore.answer" class="qa-answer">
+              <p v-if="qaStore.question" class="qa-question">问：{{ qaStore.question }}</p>
+              <p v-if="qaStore.offline" class="qa-offline">离线自测：当前用的是 Fake 模型，回答仅用于验证链路。</p>
+              <p v-if="qaStore.answerDone && qaStore.interrupted" class="qa-interrupted">
+                回答中断了，下面是已经生成的部分。
+              </p>
+              <p v-if="qaStore.streaming && !qaStore.answer.answer" class="qa-waiting">正在检索文章…</p>
+              <p class="qa-text" :class="{ refused: qaStore.refused }">{{ qaStore.answer.answer }}<span
+                v-if="qaStore.streaming && qaStore.answer.answer" class="qa-caret" aria-hidden="true"
+              >▍</span></p>
+
+              <ul v-if="qaStore.answer.citations?.length" class="qa-cites">
+                <li v-for="(cite, index) in qaStore.answer.citations" :key="index">
+                  <button class="qa-cite" type="button" @click="openCitation(cite)">
+                    <b>[{{ index + 1 }}] {{ cite.title }}</b>
+                    <span>{{ cite.snippet }}</span>
+                  </button>
+                </li>
+              </ul>
+              <p v-else-if="qaStore.refused" class="qa-hint">这次没有引用可给：文章里确实没有相关段落。</p>
+            </div>
+          </template>
+        </section>
 
         <div class="read-nav reveal" style="--d:.3s">
           <div v-if="prevPost" class="read-nav-cell" @click="go(prevPost)">
@@ -408,6 +495,44 @@ onUnmounted(() => {
 /* 正文排版已抽到 components/common/MarkdownBody.vue（与笔记详情共用），
  * 行宽由其 --prose-max 统一控制，这里不再二次收窄 */
 .read-body{min-width:0}
+
+/* 问星笺：与正文同宽，暖色只用在「离线自测 / 拒答」这两处提醒上 */
+.qa-panel{border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+  padding:20px; margin:6px 0 26px; max-width:var(--prose-max,100%)}
+.qa-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px}
+.qa-head h3{font-size:16px; font-weight:500}
+.qa-reset{border:0; background:transparent; color:var(--ink-faint); font:inherit; font-size:12px;
+  cursor:pointer}
+.qa-reset:hover{color:var(--ink-dim)}
+.qa-compose{display:flex; gap:10px; flex-wrap:wrap}
+.qa-compose input{flex:1 1 260px; min-width:0; background:var(--bg-2); border:1px solid var(--line);
+  border-radius:var(--r-sm); color:var(--ink); padding:10px 14px; font:inherit; font-size:13px;
+  transition:border-color .3s var(--ease-soft)}
+.qa-compose input:focus{outline:none; border-color:var(--primary)}
+.qa-compose .btn{white-space:nowrap}
+.qa-stop{height:auto; padding:10px 16px; font-size:13px}
+.qa-hint{font-size:11px; color:var(--ink-faint); line-height:1.9; margin-top:10px}
+.qa-link{color:var(--primary); margin-left:4px}
+.qa-err{color:var(--rose); font-weight:400}
+.qa-answer{margin-top:16px; padding-top:16px; border-top:1px solid var(--line)}
+.qa-question{font-size:12px; color:var(--ink-faint); margin-bottom:8px}
+.qa-offline{font-size:11px; color:var(--amber); margin-bottom:8px}
+/* 中断提示用暖色：它是「内容可能不完整」的提醒，不是错误（错误走 .qa-err） */
+.qa-interrupted{font-size:11px; color:var(--amber); line-height:1.9; margin-bottom:8px}
+.qa-waiting{font-size:13px; color:var(--ink-faint); animation:qa-pulse 1.6s ease-in-out infinite}
+/* 光标：用一个字宽的下划线块，比动画省略号更能表达「还在写」 */
+.qa-caret{display:inline-block; margin-left:2px; color:var(--primary);
+  animation:qa-pulse 1.1s step-end infinite}
+@keyframes qa-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.qa-text{font-size:14px; line-height:1.95; color:var(--ink-dim); white-space:pre-wrap}
+.qa-text.refused{border-left:2px solid var(--amber); padding-left:12px; color:var(--ink-faint)}
+.qa-cites{list-style:none; margin:16px 0 0; display:flex; flex-direction:column; gap:8px}
+.qa-cite{display:flex; flex-direction:column; gap:4px; width:100%; text-align:left; cursor:pointer;
+  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-2);
+  padding:10px 12px; font:inherit; color:var(--ink-dim); transition:border-color .25s var(--ease-soft)}
+.qa-cite:hover{border-color:var(--primary)}
+.qa-cite b{font-size:12px; font-weight:500}
+.qa-cite span{font-size:11px; color:var(--ink-faint); line-height:1.8}
 
 /* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
 .read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;

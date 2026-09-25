@@ -34,6 +34,10 @@ export default defineConfig({
       '/stats': gatewayProxy,
       '/tags': gatewayProxy,
       '/search': gatewayProxy,
+      // AI 出口（问星笺 / Copilot / 评测台）走 ai-service :8107，经网关同源反代。
+      // ⚠️ 流式问答（SSE）也在这个前缀下：代理必须**不缓冲**才能逐帧到达，
+      // 生产 nginx 那边另有 proxy_buffering off（见 deploy/docker/nginx/default.conf）。
+      '/ai': gatewayProxy,
       // 用户头像等上传文件由 user-service 静态映射提供，经网关同源读取
       '/uploads': gatewayProxy,
     },
