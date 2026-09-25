@@ -22,8 +22,11 @@ from functools import lru_cache
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.providers.fake import FakeProvider
-from app.rag.pipeline import RetrievalConfig, RetrievalPipeline, build_corpus
+from app.providers.config_source import ProviderConfigError, load_provider_configs
+from app.providers.errors import ProviderError
+from app.providers.models import ProviderConfig
+from app.providers.resolver import ProviderResolver
+from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline, build_corpus
 from app.rag.qa import QaService, QaSettings
 from app.rag.seed_corpus import load_seed_posts
 from app.schemas.common import AiErrorCode
@@ -37,12 +40,13 @@ router = APIRouter(tags=["qa"])
 #: SSE 心跳间隔：模型第一个 token 可能要等十几秒，中间的代理会掐掉静默连接
 HEARTBEAT_SECONDS = 10.0
 
-#: 问答用的检索配置：混合召回（BM25 + 向量），暂不设相似度下限。
+#: 问答用的检索配置：混合召回（BM25 + 向量），**不设相似度下限**。
 #:
-#: 关于 `min_dense_score` 为什么是 0：离线自测用的是 Fake 哈希伪向量，余弦在 **0.03 量级**，
-#: 一旦给它设个「看起来合理」的 0.2，向量通路会被**静默清空** —— 混合检索退化成纯 BM25，
-#: 而日志与指标一切正常。这道闸门要等接入真实嵌入模型（bge-m3）后用评测台标定，
-#: 标定方法见 `scripts/calibrate_min_score.py` 与 fast-track-plan §5 的分数重叠结论。
+#: 关于 `min_dense_score` 为什么是 0：给它设一个「看起来合理」的值（曾经是 0.2）会让
+#: 向量通路**静默清空** —— 余弦量级对不对取决于嵌入模型，离线 Fake 的哈希伪向量只有 0.03 量级，
+#: 于是混合检索退化成纯 BM25，而日志、指标、响应全都正常。
+#: 这道闸门必须**接上真实嵌入模型后用评测台标定**（`scripts/calibrate_min_score.py`，
+#: 以及 fast-track-plan §5 的分数重叠结论），不能凭感觉填。
 QA_RETRIEVAL = RetrievalConfig(
     enable_sparse=True,
     enable_dense=True,
@@ -51,21 +55,76 @@ QA_RETRIEVAL = RetrievalConfig(
     label="qa",
 )
 
+#: 配置来源：**只从面板配置**（ai_provider_config / 环境变量注入），没有代码里的默认模型。
+#: 未配置时 `registry.chat_model()` 会抛「请在 AI 实验室 → 模型配置里填写」，
+#: 由端点转成可读的错误 —— 而不是退回 Fake 让「没配好」表现成「回答质量差」。
+resolver = ProviderResolver(source=load_provider_configs)
 
-@lru_cache(maxsize=1)
-def build_qa_service() -> QaService:
-    """装配问答服务并缓存。
 
-    缓存的是**当前这套离线装配**（种子语料 + Fake 模型）。接入真实 Provider 之后要按
-    「配置指纹」缓存：换了嵌入模型或向量库，这份装配就作废了（`ProviderConfig.fingerprint()`
-    已经为此准备好了指纹）。
-    """
+def resolve_corpus() -> list[IndexedChunk]:
+    """语料：种子内容包切块（真实形态是索引/内容服务推过来，见 status.md §4.1）。"""
     corpus = build_corpus(load_seed_posts())
     if not corpus:
         raise ValueError("语料为空：问答没有可检索的内容")
-    provider = FakeProvider()
-    pipeline = RetrievalPipeline(corpus=corpus, config=QA_RETRIEVAL, embedder=provider)
-    return QaService(pipeline=pipeline, chat=provider, settings=QaSettings())
+    return corpus
+
+
+@lru_cache(maxsize=1)
+def _cached_corpus() -> list[IndexedChunk]:
+    return resolve_corpus()
+
+
+def reset_assembly() -> None:
+    """丢掉装配缓存（测试与「改了配置想立刻生效」时用）。
+
+    一次性清两处：语料缓存与 Provider 解析器。**分开清最容易漏一处** ——
+    漏了语料缓存会让人以为「改语料没生效」，漏了解析器会以为「改模型没生效」。
+    """
+    _cached_corpus.cache_clear()
+    resolver.invalidate()
+
+
+def use_provider_configs(configs: list[ProviderConfig]) -> None:
+    """把解析器固定到给定配置（测试与离线脚本用）。
+
+    注意它**不会**替你造一个默认模型：调用方必须显式给出配置，
+    包括「我要用 fake」也要显式写成 `provider="fake"` ——
+    这正是面板里把协议选成 Fake 的等价物。
+    """
+    global resolver  # noqa: PLW0603 - 有意提供这个接缝：装配来源只在启动/测试时确定
+    resolver = ProviderResolver(source=lambda: tuple(configs))
+    reset_assembly()
+
+
+def build_qa_service() -> QaService:
+    """按当前配置装配问答服务。
+
+    语料切块很贵（要建 BM25 索引、预计算向量），所以缓存；
+    **模型实例不在这里缓存** —— 它们由 `ProviderResolver` 按配置指纹管，
+    换模型立刻生效，而语料该不该重建由「语料变没变」决定，两者不该绑在一起。
+    """
+    registry = resolver.registry()
+    pipeline = RetrievalPipeline(
+        corpus=_cached_corpus(),
+        config=QA_RETRIEVAL,
+        embedder=registry.embedding_model(),
+    )
+    return QaService(pipeline=pipeline, chat=registry.chat_model(), settings=QaSettings())
+
+
+def assembly_error(error: Exception) -> JSONResponse:
+    """把「装配不起来」翻译成可读的响应。
+
+    两种情况都是**配置/环境问题**，不该伪装成 500 让人去翻栈：
+    - 语料缺失（`ValueError`）；
+    - 模型角色没配（`UnsupportedCapabilityError` / `ProviderError`）或配置读不出来
+      （`ProviderConfigError`）—— 这类必须说清「去面板配哪个角色」，
+      因为最常见的误判是「服务坏了」，而实际只是没填。
+    """
+    return JSONResponse(
+        status_code=400,
+        content={"code": AiErrorCode.BAD_REQUEST.value, "message": str(error)},
+    )
 
 
 @router.post("/qa", summary="星海问答（非流式）", response_model=None)
@@ -73,12 +132,8 @@ async def ask(request: QaStreamRequest) -> QaAnswer | JSONResponse:
     """一次问答：检索 → 引用 → 提示词 → 模型 → 结论（证据不足时明确拒答）。"""
     try:
         service = build_qa_service()
-    except ValueError as error:
-        # 语料缺失属于环境问题：说清是哪个环节，别伪装成 500 让人去翻栈
-        return JSONResponse(
-            status_code=400,
-            content={"code": AiErrorCode.BAD_REQUEST.value, "message": str(error)},
-        )
+    except (ValueError, ProviderError, ProviderConfigError) as error:
+        return assembly_error(error)
 
     answer = await service.answer(request)
     logger.info(
@@ -103,11 +158,8 @@ async def ask_stream(request: QaStreamRequest) -> StreamingResponse | JSONRespon
     """
     try:
         service = build_qa_service()
-    except ValueError as error:
-        return JSONResponse(
-            status_code=400,
-            content={"code": AiErrorCode.BAD_REQUEST.value, "message": str(error)},
-        )
+    except (ValueError, ProviderError, ProviderConfigError) as error:
+        return assembly_error(error)
 
     return StreamingResponse(
         _sse_frames(service, request),

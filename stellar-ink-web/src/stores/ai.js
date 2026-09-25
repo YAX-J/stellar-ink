@@ -4,6 +4,11 @@ import { request } from '@/api/client'
 /**
  * 逻辑角色：与后端 `AiModelRole`、Python `providers.registry` 逐字一致。
  * 顺序即面板展示顺序 —— 对话/快速/推理都是「文本能力」，随后是嵌入与重排。
+ *
+ * **刻意没有「供应商预设」**：曾经这里有一份 DeepSeek / 硅基流动的端点与模型名列表，
+ * 用作面板的「快速填入」。那等于把默认供应商写进代码 —— 用自建网关、公司代理或别的厂商时，
+ * 它不只是没用，还会诱导人填错。现在端点与模型名**只能由使用者填**，
+ * 系统里不存在「没配也能跑」的默认模型。
  */
 export const AI_ROLES = [
   { key: 'chat', label: '对话模型', hint: '问答、摘要、润色' },
@@ -11,23 +16,6 @@ export const AI_ROLES = [
   { key: 'reasoning', label: '推理模型', hint: '多步分析、深度研究' },
   { key: 'embedding', label: '嵌入模型', hint: '文章切块向量化（换模型要重建索引）' },
   { key: 'rerank', label: '重排模型', hint: '检索候选精排' },
-]
-
-/** 常见厂商的预填建议：只填端点与模型名，**密钥永远由使用者自己填** */
-export const PROVIDER_PRESETS = [
-  {
-    key: 'deepseek',
-    label: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com/v1',
-    models: { chat: 'deepseek-chat', reasoning: 'deepseek-reasoner', fast: 'deepseek-chat' },
-  },
-  {
-    key: 'siliconflow',
-    label: '硅基流动 SiliconFlow',
-    baseUrl: 'https://api.siliconflow.cn/v1',
-    models: { embedding: 'BAAI/bge-m3', rerank: 'BAAI/bge-reranker-v2-m3' },
-  },
-  { key: 'fake', label: 'Fake（离线自测）', baseUrl: 'http://fake.local', models: {} },
 ]
 
 /**

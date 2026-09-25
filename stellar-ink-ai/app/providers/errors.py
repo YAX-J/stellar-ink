@@ -25,6 +25,18 @@ class ProviderError(RuntimeError):
         super().__init__(message)
         self.detail = detail
 
+    def __str__(self) -> str:
+        """把 `detail` 一起带出来。
+
+        为什么重要：端点是拿 `str(error)` 去填响应的（`to_public_dict` 也是），
+        而**可操作的提示往往写在 detail 里**（例如「请在 AI 实验室 → 模型配置里填写该角色」）。
+        只返回 message 会让用户看到「角色 chat 尚未配置模型」却不知道去哪儿配 ——
+        错误信息说清了「哪里不对」，但没说「该怎么办」，等于只说了一半。
+        """
+        if self.detail:
+            return f"{super().__str__()}（{self.detail}）"
+        return super().__str__()
+
     def to_public_dict(self) -> dict[str, Any]:
         """对外可见的最小信息：**不含密钥、不含内网地址、不含上游原始报文**。"""
         return {"code": self.code, "message": str(self), "retryable": self.retryable}

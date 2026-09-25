@@ -11,13 +11,35 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.qa import build_qa_service
+from app.api.v1.qa import reset_assembly, use_provider_configs
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
+from app.providers.models import ProviderCapabilities, ProviderConfig
 from app.schemas.qa_stream import FRAME_TERMINATOR
 from tests.signing import FIXED_TIMESTAMP_MS, call, call_stream, load_vector, signed_headers
 
 QUESTION = "一年写十八万字的方法是什么？"
+
+
+def fake_provider_configs() -> list[ProviderConfig]:
+    """显式声明「这次用 fake」——测试不该依赖代码里有 Fake 默认值。"""
+    return [
+        ProviderConfig(
+            role="chat",
+            provider="fake",
+            base_url="http://fake.local",
+            model="fake",
+            capabilities=ProviderCapabilities(chat=True),
+        ),
+        ProviderConfig(
+            role="embedding",
+            provider="fake",
+            base_url="http://fake.local",
+            model="fake",
+            dimension=64,
+            capabilities=ProviderCapabilities(embedding=True),
+        ),
+    ]
 
 
 @pytest.fixture()
@@ -28,7 +50,9 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    build_qa_service.cache_clear()
+    # 显式注入桩配置再清缓存：装配来源与语料都是进程级缓存
+    use_provider_configs(fake_provider_configs())
+    reset_assembly()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 

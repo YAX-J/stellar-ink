@@ -11,10 +11,36 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.qa import QA_RETRIEVAL, build_qa_service
+from app.api.v1.qa import QA_RETRIEVAL, reset_assembly, use_provider_configs
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
+from app.providers.models import ProviderCapabilities, ProviderConfig
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
+
+
+def fake_provider_configs() -> list[ProviderConfig]:
+    """显式声明「这次用 fake」——等价于面板里把协议选成「Fake（离线自测）」。
+
+    测试**不再是**「因为代码里有 Fake 默认值所以能跑」，而是「显式要求用桩」。
+    这个区别很重要：前者让「忘了配真实模型」也能悄悄通过测试。
+    """
+    return [
+        ProviderConfig(
+            role="chat",
+            provider="fake",
+            base_url="http://fake.local",
+            model="fake",
+            capabilities=ProviderCapabilities(chat=True),
+        ),
+        ProviderConfig(
+            role="embedding",
+            provider="fake",
+            base_url="http://fake.local",
+            model="fake",
+            dimension=64,
+            capabilities=ProviderCapabilities(embedding=True),
+        ),
+    ]
 
 
 @pytest.fixture()
@@ -25,8 +51,9 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    # 语料装配是进程级缓存：测试之间清一次，避免互相影响
-    build_qa_service.cache_clear()
+    # 装配来源与语料都是进程级缓存：先显式注入桩配置，再清缓存，避免测试之间互相影响
+    use_provider_configs(fake_provider_configs())
+    reset_assembly()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 

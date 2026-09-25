@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { AI_ROLES, PROVIDER_PRESETS, useAiStore } from '@/stores/ai'
+import { AI_ROLES, useAiStore } from '@/stores/ai'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
@@ -138,15 +138,6 @@ async function runEval() {
   } catch {
     /* 错误已进 store.evalError 并由全局 toast 提示，面板保持可重试 */
   }
-}
-
-function applyPreset(preset) {
-  form.baseUrl = preset.baseUrl
-  form.provider = preset.key === 'fake' ? 'fake' : 'openai_compatible'
-  /* 预设只覆盖它擅长的角色：给 embedding 选 DeepSeek 不该把对话模型名塞进来 */
-  const suggested = preset.models[editing.value]
-  form.model = suggested || form.model
-  if (preset.key === 'fake') form.model = form.model || 'fake'
 }
 
 function startEdit(roleKey) {
@@ -305,35 +296,32 @@ async function remove(roleKey) {
       <div v-if="editingMeta" class="side-card edit-panel reveal">
         <h5>{{ editingMeta.label }} · {{ editingMeta.hint }}</h5>
 
-        <div class="preset-row">
-          <span class="preset-label">快速填入</span>
-          <button
-            v-for="preset in PROVIDER_PRESETS" :key="preset.key"
-            class="chip" type="button" @click="applyPreset(preset)"
-          >
-            {{ preset.label }}
-          </button>
-        </div>
+        <!-- 刻意**不预填任何厂商**：端点与模型名全部由使用者填。
+             曾经有一排「快速填入 DeepSeek / 硅基流动」的按钮，那等于把默认供应商写进代码 ——
+             用自建网关、公司代理或别的厂商时，它不只是没用，还会诱导人填错。 -->
+        <p class="form-hint">
+          端点与模型名请照你所用服务的文档填；面板不预设任何厂商。
+        </p>
 
         <div class="form-grid">
           <div class="field">
             <label>展示名</label>
-            <input v-model="form.displayName" maxlength="64" placeholder="如 DeepSeek Chat">
+            <input v-model="form.displayName" maxlength="64" placeholder="给它起个名字，如「主力对话模型」">
           </div>
           <div class="field">
             <label>协议</label>
             <select v-model="form.provider">
               <option value="openai_compatible">OpenAI 兼容</option>
-              <option value="fake">Fake（离线自测）</option>
+              <option value="fake">Fake（离线自测，不调用任何服务）</option>
             </select>
           </div>
           <div class="field wide">
             <label>接口地址 baseUrl</label>
-            <input v-model="form.baseUrl" maxlength="255" placeholder="https://api.deepseek.com/v1">
+            <input v-model="form.baseUrl" maxlength="255" placeholder="你的 OpenAI 兼容端点，形如 https://<host>/v1">
           </div>
           <div class="field">
             <label>模型名</label>
-            <input v-model="form.model" maxlength="128" placeholder="deepseek-chat / BAAI/bge-m3">
+            <input v-model="form.model" maxlength="128" placeholder="照服务方的模型列表填">
           </div>
           <div class="field">
             <label>API Key{{ ai.providers[editing] ? '（留空=沿用已存）' : '' }}</label>
@@ -344,7 +332,7 @@ async function remove(roleKey) {
           </div>
           <div class="field">
             <label>向量维度{{ editing === 'embedding' ? '（必填）' : '（可空）' }}</label>
-            <input v-model="form.dimension" type="number" min="1" max="8192" placeholder="bge-m3 为 1024">
+            <input v-model="form.dimension" type="number" min="1" max="8192" placeholder="照嵌入模型的维度填">
           </div>
           <div class="field">
             <label>超时（毫秒）</label>
@@ -572,9 +560,7 @@ async function remove(roleKey) {
 .role-actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; padding-top:10px}
 .role-actions .btn{padding:6px 12px; font-size:12px}
 .role-actions .danger{color:var(--rose); border-color:var(--line)}
-.preset-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 16px}
-.preset-row .chip{cursor:pointer; border:1px solid var(--line)}
-.preset-label{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.2em}
+.form-hint{font-size:11px; line-height:1.8; color:var(--ink-faint); margin:12px 0 16px}
 .form-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:0 14px}
 .form-grid .wide{grid-column:1/-1}
 .form-grid select{
