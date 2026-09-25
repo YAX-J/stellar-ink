@@ -340,6 +340,20 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
   签名与 nonce 防重放已在 A2 落地（Python 侧 nonce 目前是**进程内** + TTL，多实例前换 Redis）。
   密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。
+- **Python 地址只有一个键**：`stellar.ink.ai.python-base-url`（即 `AI_PYTHON_BASE_URL`）。
+  Feign（`PythonAiClient` 的 `@FeignClient(url=…)`）、SSE 客户端（`HttpQaStreamClient`）
+  与探活（`AiProperties`）**必须读同一个键** —— 曾经有三处读 `ai.python.base-url`
+  而这个键哪里都没定义，配置被静默忽略、永远走硬编码的默认地址：
+  本地碰巧一致看不出来，Docker 里就是「探活说可用、功能全挂」。
+- **Java ↔ Python 的错误契约**：Python 的错误体统一是 `{code, message}`（`message` 是**给人看的可操作提示**，
+  例如「角色 X 尚未配置模型（请在 AI 实验室 → 模型配置里填写）」）。Java 侧由
+  `PythonErrorDecoder`（全局 Bean，见 `PythonAiClientConfig`）把它翻成 `PythonApiException`，
+  **消息一字不改地交给用户**；新加 Feign 方法不需要额外处理。
+  ⚠️ 两个刻意的映射：Python 的 401/403 只可能来自内部签名校验，**不能**映射成
+  `UNAUTHORIZED`（前端会据此清会话把用户踢出去）；429 映射成「服务不可用」但保留上游那句「稍后重试」。
+  契约外的错误体（网关 HTML、FastAPI 的 `{detail}`）退回默认行为，**不得回显上游原文**。
+  ⚠️ `PythonAiClientFallbackFactory` 当前**不生效**（ai-service 没有 circuit breaker 依赖，
+  Spring Cloud OpenFeign 会忽略 `fallbackFactory`），别以为它在兜底。
 - **内部签名的标准串（跨语言，改必须两侧同时改）**：
   `METHOD \n PATH \n TIMESTAMP_MS \n NONCE \n SHA256_HEX(BODY) \n USER_ID \n ROLE`；
   签名是 HMAC-SHA256 小写十六进制，放 `X-AI-Signature`。
@@ -354,8 +368,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   JSON 键名一律驼峰，枚举序列化用小写字面量（Java 侧必须 `@JsonValue`，默认会写成大写）。
   改契约要同时改：Python 模型、fixture、Java DTO 与 `docs/api/README.md`。
 - **M0 的诚实降级**：Python 链路未接线时 `/ai/health` 返回 `available=false` 并给出可读原因，
-  不允许假装健康；Python 不可用时 `PythonAiClientFallbackFactory` 抛 503 业务异常，
-  不返回空答案（让前端区分「没有依据」与「服务坏了」）。
+  不允许假装健康（探活是真去问 `GET /health`，不是恒定假信号）；
+  Python 不可用时**不得返回空答案**，让前端能区分「没有依据」与「服务坏了」。
+  ⚠️ 目前这条由「异常穿透 + 全局处理器」实现（表现为 `code=500`），
+  而不是设计里写的 `PythonAiClientFallbackFactory` 503 —— 那个工厂在当前装配下不生效（见上）。
 - 红线详见 `docs/ai/development-workflow.md` §7；每轮开工先读该文件，收尾更新 roadmap 进度清单与 §9。
 
 ## 6. 当前状态与边界（不要越界开发）

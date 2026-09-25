@@ -157,3 +157,20 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
     而真实 Provider 的模型名在 `config.model` 上 —— 于是 SSE 的 `meta.model` 一直是 `unknown`，
     链路完全正常却看起来像「没接上模型」。三处症状的共同点是**都没报错**，
     只有真的打一次真实模型才看得见（`tests/test_chat_response_edges.py` 现在盯着它们）。
+11. **Python 的错误体没有解码器 = 可操作的提示全被丢掉**（实测）：Python 刻意把「没配模型」
+    做成可读的 400，而 `PythonAiClient` 没有 `ErrorDecoder`，非 2xx 一律退化成裸的
+    `FeignException`，用户看到的是 `code=500「系统繁忙，请稍后重试」`。
+    于是「去面板配一个角色」变成了「服务坏了」。现在由 `PythonErrorDecoder` 翻成业务异常，
+    并刻意**不**把上游 401/403 映射成「未授权」—— 那会让前端把用户清出登录态。
+12. **配置键写错不会报错，只会静默退回默认值**：所有 yml 配的是
+    `stellar.ink.ai.python-base-url`，而 Feign 与 SSE 客户端读的是 `ai.python.base-url`
+    （哪里都没定义），于是地址永远走硬编码的 `127.0.0.1:8200`。
+    本地碰巧一致所以看不出来，Docker 里就是「探活说可用、功能全挂」。
+    守住它的是 `PythonAiClientErrorContractTest`：只改那一个键 + 哨兵消息，
+    任何一种静默退回都会让它红。
+13. **`fallbackFactory` 在当前装配下其实不生效**：ai-service 没有 circuit breaker 依赖，
+    Spring Cloud OpenFeign 因此走「忽略降级」的那条路径 —— `PythonAiClientFallbackFactory`
+    写得很完整却从未被调用（异常直接穿到调用方，实测确认）。
+    也就是说「Python 挂了」现在表现为 `code=500` 而不是「服务不可用」。
+    要么补上 circuit breaker 依赖并显式配置超时，要么删掉这个降级工厂 ——
+    **待定，别以为它已经在保护你了**。
