@@ -14,6 +14,7 @@
 | 阶段 | 状态 | 关键产物 | 核验方式 |
 |---|---|---|---|
 | A1 模型配置中心 | ✅ | `ai_*` 表 + AES-GCM 密钥加密 + Provider CRUD 脱敏 + Provider 层 + `/ai-lab` 面板 | `mvn -pl ai-service -am test`；`tests/test_internal_auth_wiring.py` |
+| A1+ 模型库与角色绑定 | ✅ | `ai_model` 素材库（`deploy/sql/11_ai_model_library.sql`）+ `/ai/admin/models` + 角色下拉绑定（`PUT /ai/admin/providers/{role}/model`）；Python 仍只读角色表 | `AiModelLibraryServiceImplTest`；`npm run check`（`scripts/ai-store-selfcheck.mjs` 盯写反馈） |
 | A2 安全调用链 | ✅ | 网关 `/ai/**` 路由与角色门槛；内部 HMAC（**标准串含身份字段**）+ 纯 ASGI 验签 | `mvn -pl gateway-nacos-sentinel -am test`；签名向量 `tests/fixtures/signature_vector.json` |
 | B1 Qdrant 适配 | ⚠️ 代码完成、**真实冒烟未跑** | `app/rag/qdrant_store.py`（幂等 point id、错误分类、`trust_env=False`） | `tests/test_qdrant_store.py`（32 条 MockTransport 协议）；见 §4.2 |
 | B2 切块索引 | ✅ | `app/rag/chunking.py`（父子块、标题路径、锚点、内容哈希） | `tests/test_chunking.py` |
@@ -47,9 +48,9 @@ cd stellar-ink-server
 mvn -pl stellar-ink-ai-client,ai-service -am test   # BUILD SUCCESS：ai-service 92 / client 40 / common-core 27
 mvn -pl common-components/common-core,user-service,content-service,gateway-nacos-sentinel -am test  # BUILD SUCCESS
 
-# 前端：纯逻辑自检 + 部署前缀核对 + 构建
+# 前端：纯逻辑自检 + 部署前缀核对 + 模型库写反馈自检 + 构建
 cd stellar-ink-web
-npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 + vite build
+npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 + 模型库写反馈 14 条 + vite build
 ```
 
 对照基线（与阶段 C 收口时的记录一致，说明这期间没有静默退化）：
@@ -106,8 +107,10 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
 
 ### 4.4 另外两件小事
 
-- **前端只对 `utils/` 里的纯逻辑做了自检**，`AiLabView` / `CopilotPanel` 的交互没有自动化测试
-  （没有引入测试运行器，见 `AGENTS.md` §3）。这些面板的验证目前靠 `npm run check` 的构建 + 人工。
+- **前端只对 `utils/` 里的纯逻辑与 store 的写反馈做了自检**，`AiLabView` / `CopilotPanel` 的
+  DOM 交互仍没有自动化测试（没有引入测试运行器，见 `AGENTS.md` §3）。
+  store 那层由 `scripts/ai-store-selfcheck.mjs` 用 Vite 的 `ssrLoadModule` 加载真实 store 来跑
+  （写成功 + 刷新 503 的时序就是这么测的）；面板本身的验证仍靠 `npm run check` 的构建 + 人工。
 - **配额与 `retrievalAudit` 未实现**：`/ai/**` 只有网关的全局限流与 Nginx 的 `ai` 档（30r/m），
   没有按用户/按模型的成本账。
 
@@ -174,3 +177,14 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
     也就是说「Python 挂了」现在表现为 `code=500` 而不是「服务不可用」。
     要么补上 circuit breaker 依赖并显式配置超时，要么删掉这个降级工厂 ——
     **待定，别以为它已经在保护你了**。
+14. **「保存按钮是假的」不是后端坏了，是写成功之后的刷新失败被当成了写失败**（用户报的）：
+    模型库面板点「保存到模型库」看起来毫无反应。后端探针（POST/GET/DELETE 全 200）排除了接口问题；
+    真正的原因是 `stores/ai.js` 的 `saveModel` 在 POST 成功后又 `await this.loadModels()` +
+    `fetchProviders()`，而这两条 GET 都过网关（撤销校验 fail-closed，抖动时 503）——
+    一次刷新失败就把**已经落库**的保存显示成失败：没有成功提示、表单不关、列表里一条都没有，
+    再点一次还会看到「已经有同名模型」。
+    现在固定两条：写成功**先就地更新本地状态**，刷新走 best-effort（`refreshAfterWrite()` 不抛），
+    并由 `scripts/ai-store-selfcheck.mjs`（在 `npm run check` 里）盯着「刷新全 503 时写操作仍算成功」。
+    同一轮还补了另一个同症状的问题：`.btn` 没有 `:disabled` 样式，
+    **禁用的保存按钮和可点的一模一样**，点下去什么都不发生 —— 现在禁用态有可见差异，
+    且表单不再用 `disabled` 挡校验，而是点得动并就地提示「还差：展示名、接口地址…」。

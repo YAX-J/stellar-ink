@@ -37,7 +37,7 @@ stellar-ink/
 ```bash
 # 前端（端口 5173）
 cd stellar-ink-web && npm install && npm run dev      # 开发
-npm run check                                          # 验证：自检（差异/Copilot 采纳/SSE 切帧 + 部署前缀）+ vite build
+npm run check                                          # 验证：自检（差异/Copilot 采纳/SSE 切帧 + 部署前缀 + 模型库写反馈）+ vite build
 
 # 后端（网关 8080 对外；Nacos 8848；服务 8101-8102；Python AI 8200）
 cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos（若 Nacos 在远端服务器，跳过这步并设 NACOS_ADDR）
@@ -148,6 +148,18 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   避免同一错误提示两遍。
 - 限流有独立文案：`isRateLimited()` 判定 429（Nginx 边缘限流，注意 `GET /echos`、`GET /links`
   也在限流区内），不要退化成「请求失败（429）」。
+- **写成功之后的刷新失败，不得把这次写显示成失败**（踩过一次「保存按钮是假的」）：POST 已返回 200
+  就说明数据落库了，紧跟其后的 `loadModels()` 只是为了让页面好看 —— 它拿到的 503（模型库那条 GET
+  过网关，而网关撤销校验 fail-closed）绝不能冒泡成「保存失败」。做法固定两条：
+  ① **先就地更新本地状态**（列表里插入/替换/删除那条，并 `modelsLoaded = true`），
+  ② 刷新走 best-effort（`stores/ai.js` 的 `refreshAfterWrite()`：失败只记 `modelsError`，不抛）。
+  现象上「保存失败」+「表单不关」+「列表没变」+ 再点一次报「已经有同名模型」= 这个 bug，不是后端坏了。
+  `scripts/ai-store-selfcheck.mjs` 把「刷新全 503 时保存/删除/绑定都不抛错且就地生效」变成 `npm run check` 的一部分。
+- **不要用 `disabled` 挡表单校验，也不要让禁用态看不出来**：`.btn` 曾完全没有 `:disabled` 样式，
+  禁用按钮和可点按钮长得一模一样、点下去又什么都不发生 —— 表现同样是「按钮是假的」。
+  现在两条一起守：`components.css` 里 `.btn:disabled` 有可见差异（降透明 + `not-allowed`），
+  保存类按钮**只在提交中禁用**，字段没填全时点得动并就地显示「还差：展示名、接口地址…」，
+  提交失败的原因也留在按钮上方（`roleFormError` / `modelFormError`），不只靠会消失的全局 toast。
 
 ### 正文渲染与阅读体验
 - 正文 Markdown 由 `utils/markdown.js` 解析成块级结构，视图按白名单标签渲染（**不引依赖**）。
@@ -453,7 +465,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   标题=只改标题、标签/摘要=只复制，未知任务退到「只复制」；
   **面板里没有「自动应用」开关**——正文的每次改动都要作者点一下；
   前端可执行验证 = `npm run check`（`scripts/diff-selfcheck.mjs` 的差异/采纳/SSE 切帧断言
-  + `scripts/deploy-selfcheck.mjs` 的接口前缀代理核对 + `vite build`））。
+  + `scripts/deploy-selfcheck.mjs` 的接口前缀代理核对 + `scripts/ai-store-selfcheck.mjs` 的
+  「写成功后刷新失败不算失败」断言 + `vite build`））。
   Qdrant 连接方式已查清：只绑宿主机 `127.0.0.1:6333`、无鉴权，本地走 SSH 隧道（见 `deploy/docker/README.md` 第十节）。
   D2s SSE 的 **Python 侧已完成**（`app/schemas/qa_stream.py` 定事件契约：帧是 `data: {json}`、
   类型写在 JSON 里，顺序固定 `meta → citation → delta → done`，`error` 是旁路事件；

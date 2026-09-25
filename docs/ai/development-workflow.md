@@ -111,6 +111,16 @@ dev 下被 Vite 当 history 路由回退到 index.html，生产同样回退 SPA�
 并顺带检查 nginx 的 `/ai` 是否关掉了响应缓冲（SSE 逐帧到达的前提）。
 新增接口前缀时同步它的 `KNOWN_PREFIXES`。
 
+**store 的写反馈也要被检查（踩过一次「保存按钮是假的」）**：`.vue` 里的纯逻辑能抽就抽，
+但**读写时序**抽不出来，它住在 store 里。用户报过一次「添加模型的保存按钮是假的」，
+后端探针证明 POST/GET/DELETE 全是 200 —— 是 `saveModel` 在 POST 成功后又 `await this.loadModels()`，
+而那条 GET 过网关、网关撤销校验 fail-closed，抖动时 503。于是一次刷新失败就把**已经落库**的保存
+显示成「保存失败」（列表没变、表单不关、再点一次报「已经有同名模型」）。
+`scripts/ai-store-selfcheck.mjs` 用 Vite 的 `ssrLoadModule` 加载**真实 store**，
+把刷新接口全打成 503，断言保存/删除/绑定都不抛错且就地生效；`npm run check` 里跑。
+判据是一句话：**写已经返回成功，之后的刷新失败不许把它变成失败**。
+新增这类「写 + 刷新」的 store action 时照此办理（先就地改本地状态，再 best-effort 刷新）。
+
 改到真实接口后，还要按顺序起服务再验一次：
 `Nacos → 四个 Java 服务（含 ai-service）→ stellar-ink-ai → 前端`，
 经网关（不是直连服务）跑通改动路径；中文请求体写成 UTF-8 文件或用 Node Fetch（git-bash 的 curl 会发 GBK）。
