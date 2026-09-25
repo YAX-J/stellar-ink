@@ -7,13 +7,16 @@ REM  ASCII-only file (no Chinese) to avoid codepage issues.
 REM =========================================================
 
 setlocal
-echo Stopping services on ports 8080 / 8101 / 8102, and local nacos 8848/9848 if any ...
+echo Stopping services on ports 8080 / 8101 / 8102 / 8107, and local nacos 8848/9848 if any ...
 call :kill_port 8080
 call :kill_port 8101
 call :kill_port 8102
+call :kill_port 8107
 call :kill_port 8848
 call :kill_port 9848
 echo Done.
+echo Note: the Python AI service (:8200) is NOT started by start-all.bat
+echo       (it runs from stellar-ink-ai via uv), so stop it separately if running.
 endlocal
 exit /b 0
 
