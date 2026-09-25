@@ -11,12 +11,14 @@ dependencies = [
     "uvicorn[standard]>=0.30,<1.0",
     # API Key 的静态解密（AES-256-GCM）：与 Java 侧 AesGcmCipher 共用同一套密文格式
     "cryptography>=43.0,<47.0",
+    # HTTP 客户端是**运行时**依赖：OpenAI 兼容 Provider 与 Qdrant 适配都要用它。
+    # 它曾经只写在 dev 里，而 app/providers/openai_compatible.py 在模块顶层 import httpx ——
+    # 生产环境按 main 依赖安装会直接 ImportError（本地装了 dev 所以没暴露）。
+    "httpx>=0.27,<1.0",
 ]
 
 [project.optional-dependencies]
-# 真实模型与向量库依赖在对应里程碑（M2/M3）再引入，M0 全程 Fake Adapter
 dev = [
-    "httpx>=0.27,<1.0",
     "pytest>=8.2,<10.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
@@ -25,7 +27,6 @@ dev = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.27,<1.0",
     "pytest>=8.2,<10.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
@@ -55,7 +56,9 @@ ignore = ["S105", "S106"]
 "tests/**" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+# `console` 是 scripts/ 下的同目录模块（不是安装包）：显式登记成 first-party，
+# 否则 isort 会把它当成第三方包，与标准库的相对顺序来回摆动、每次 lint 都报 organize imports
+known-first-party = ["app", "console"]
 
 [tool.mypy]
 python_version = "3.11"

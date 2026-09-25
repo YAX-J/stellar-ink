@@ -12,6 +12,9 @@ import hmac
 import json
 from pathlib import Path
 
+# 控制台编码助手与本文件同目录：uv run python scripts/x.py 时该目录就是 sys.path[0]
+from console import use_utf8_console
+
 FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "signature_vector.json"
 
 
@@ -66,4 +69,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # 控制台编码：Windows 默认 GBK，脚本里的箭头/勾叉/破折号会让 print 抛异常
+    use_utf8_console()
     main()
