@@ -11,36 +11,11 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.qa import QA_RETRIEVAL, reset_assembly, use_provider_configs
+from app.api.v1.qa import QA_RETRIEVAL
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
-from app.providers.models import ProviderCapabilities, ProviderConfig
+from tests.fake_providers import install_fake_providers, install_no_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
-
-
-def fake_provider_configs() -> list[ProviderConfig]:
-    """显式声明「这次用 fake」——等价于面板里把协议选成「Fake（离线自测）」。
-
-    测试**不再是**「因为代码里有 Fake 默认值所以能跑」，而是「显式要求用桩」。
-    这个区别很重要：前者让「忘了配真实模型」也能悄悄通过测试。
-    """
-    return [
-        ProviderConfig(
-            role="chat",
-            provider="fake",
-            base_url="http://fake.local",
-            model="fake",
-            capabilities=ProviderCapabilities(chat=True),
-        ),
-        ProviderConfig(
-            role="embedding",
-            provider="fake",
-            base_url="http://fake.local",
-            model="fake",
-            dimension=64,
-            capabilities=ProviderCapabilities(embedding=True),
-        ),
-    ]
 
 
 @pytest.fixture()
@@ -51,9 +26,9 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    # 装配来源与语料都是进程级缓存：先显式注入桩配置，再清缓存，避免测试之间互相影响
-    use_provider_configs(fake_provider_configs())
-    reset_assembly()
+    # 显式注入「用桩」这件事：测试不再是「因为代码里有 Fake 默认值所以能跑」，
+    # 而是「显式要求用桩」——前者让「忘了配真实模型」也能悄悄通过测试
+    install_fake_providers()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 
@@ -131,3 +106,20 @@ def test_offline_config_does_not_silently_disable_the_dense_path() -> None:
     """
     assert QA_RETRIEVAL.enable_dense is True
     assert QA_RETRIEVAL.min_dense_score == 0.0, "接入真实嵌入模型前，别给 Fake 向量设下限"
+
+
+async def test_missing_model_config_is_a_readable_400(app: FastAPI, secret: str) -> None:
+    """面板没配模型时：**说清去配哪个角色**，而不是退回 Fake 或报 500。
+
+    这是「代码里没有默认模型」这条红线的守门测试。退回 Fake 的后果不是「功能差一点」，
+    而是「没配好」表现成「回答质量差」—— 那是最难查的一类问题，日志里一切正常。
+    """
+    install_no_providers()
+
+    status, payload = await post(app, secret, {"question": "作者为什么坚持写博客？"})
+
+    assert status == 400, "配置缺失是请求方（运维/站长）能修的问题，不该是 500"
+    assert payload["message"].startswith("角色")
+    assert "embedding" in payload["message"], "要说清缺的是哪个角色"
+    assert "模型配置" in payload["message"], "只说「没配」等于只说了一半，要给出下一步"
+    assert "来源" in payload["message"], "空配置要说明配置是从哪读的（真没配 / 读不到）"

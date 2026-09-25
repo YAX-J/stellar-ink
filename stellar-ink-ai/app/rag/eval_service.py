@@ -4,13 +4,18 @@
 本模块只负责「请求 → 语料 + 策略 + 模型」的装配与结果整形。
 这样命令行脚本、HTTP 接口、将来的定时任务都走同一条路径。
 
+语料与模型**由调用方注入**（`EvalCorpus` / `EvalModels`），本模块不自己去读数据库、
+也不自己挑模型 —— 这里最容易出的事就是「脚本用 Fake、接口用真实模型」，
+于是同一句「评测 Recall@1 = 0.83」在两边含义不同却看起来一样。
+
 语料与数据集从哪来（这一层必须说清，否则「评测数字」会失去意义）：
 - **数据集**：仓库里的黄金集 fixture（`tests/fixtures/eval/golden_v1.json`），
   与 `scripts/eval_local_baseline.py` 用的是同一份；将来改由 `ai_eval_dataset` 表提供时只换这一处。
-- **语料**：种子内容包 `deploy/sql/02_init-data.sql`（29 篇文章）。生产环境没有这个仓库文件，
-  因此接口把「语料来源」写进响应（`corpus_source`），并允许将来换成 Java 推过来的真实文章。
-- **模型**：目前只用 `FakeProvider`（确定性、零成本）。真实模型评测要等 Java 传 Provider
-  运行期配置；响应里的 `models` 与 `notes` 会如实说明，避免把 Fake 的数字当成真实质量。
+- **语料**：种子内容包 `deploy/sql/02_init-data.sql`（`seed_corpus()`）。生产环境没有这个仓库文件，
+  因此响应里带 `corpus_source`，将来换成 Java 推过来的真实文章时只换 `seed_corpus()`。
+- **模型**：`EvalModels`。真实模型评测走面板配置（`source=panel`）；
+  命令行与 fixture 生成器显式用 `fake_models()`（`source=fake`），
+  响应里的 `models` 与 `notes` 会如实说明，避免把 Fake 的数字当成真实质量。
 """
 
 from __future__ import annotations
@@ -21,11 +26,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from app.providers.base import EmbeddingModel, RerankModel
 from app.providers.fake import FakeProvider
+from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset, StrategySpec, run_dataset
 from app.rag.metrics import DEFAULT_KS, CaseResult
-from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline, build_corpus
-from app.rag.seed_corpus import SeedPost, default_seed_sql, load_seed_posts
+from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline
 from app.schemas.eval import (
     EvalCaseResultRow,
     EvalModelSource,
@@ -56,6 +62,55 @@ DEFAULT_STRATEGIES: tuple[EvalStrategySpec, ...] = (
 )
 
 _FIXTURE_RELATIVE = Path("tests") / "fixtures" / "eval"
+
+
+@dataclass(frozen=True, slots=True)
+class EvalCorpus:
+    """评测语料。`source` 会原样出现在响应里，所以它是**给人看的**（要能对上仓库文件）。"""
+
+    chunks: list[IndexedChunk]
+    source: str
+    posts: int
+
+
+@dataclass(frozen=True, slots=True)
+class EvalModels:
+    """评测要用的模型。
+
+    两者都可以是 `None`：纯稀疏策略一次模型都不碰，因此「只跑 BM25」不该被
+    「没配嵌入模型」挡住 —— 否则最省钱的对照实验反而跑不起来。
+    """
+
+    embedder: EmbeddingModel | None = None
+    reranker: RerankModel | None = None
+    source: EvalModelSource = EvalModelSource.FAKE
+    #: 实际用到的模型名（写进 notes，让人知道「这个 Dense 是谁算的」）
+    names: tuple[str, ...] = ()
+
+
+def seed_corpus() -> EvalCorpus:
+    """当前语料：种子内容包（与问答、Agent 共用同一份缓存与切块口径）。"""
+    return EvalCorpus(
+        chunks=corpus_module.cached_corpus(),
+        source=corpus_module.corpus_source(),
+        posts=len(corpus_module.cached_posts()),
+    )
+
+
+def fake_models() -> EvalModels:
+    """离线模型（哈希伪向量 + 伪重排）。
+
+    **必须显式取用**：命令行脚本与 fixture 生成器用它，业务接口不用 ——
+    这样「面板没配模型」与「故意用桩」在代码里就是两个不同的调用，
+    不会因为某处忘了传参而悄悄退化成桩。
+    """
+    provider = FakeProvider()
+    return EvalModels(
+        embedder=provider,
+        reranker=provider,
+        source=EvalModelSource.FAKE,
+        names=("fake",),
+    )
 
 
 def default_dataset_path(name: str) -> Path:
@@ -106,23 +161,49 @@ def _config_of(spec: EvalStrategySpec) -> RetrievalConfig:
     )
 
 
-def _strategies_of(request: EvalRunRequest) -> list[EvalStrategySpec]:
+def strategy_specs(request: EvalRunRequest) -> list[EvalStrategySpec]:
+    """请求里的策略（为空则标准五组）；重复 key 直接拒绝。
+
+    重复 key 会让对比表两列同名、逐题明细无法区分策略 —— 与其在表里显示两列一样的名字，
+    不如在跑之前就说清楚。
+    """
     specs = list(request.strategies) or list(DEFAULT_STRATEGIES)
     keys = [spec.key for spec in specs]
     duplicated = sorted({key for key in keys if keys.count(key) > 1})
     if duplicated:
-        # 重复 key 会让对比表两列同名、且逐题明细无法区分策略
         raise ValueError(f"策略 key 重复：{duplicated}")
     return specs
 
 
-def _corpus_of(posts: Sequence[SeedPost]) -> tuple[list[IndexedChunk], str]:
-    chunks = build_corpus(list(posts))
-    source = f"seed-sql:{default_seed_sql().name}"
-    return chunks, source
+def required_roles(specs: Sequence[EvalStrategySpec]) -> list[str]:
+    """这些策略要用到哪些模型角色。
+
+    接口层据它在**跑之前**预检：一轮评测要先嵌入整个语料，
+    等第一路 Dense 跑到一半才发现「嵌入模型没配」的话，用户是白等几十秒再拿到错误。
+    """
+    roles: list[str] = []
+    if any(spec.enable_dense for spec in specs):
+        roles.append("embedding")
+    if any(spec.enable_rerank for spec in specs):
+        roles.append("rerank")
+    return roles
 
 
-async def run_evaluation(request: EvalRunRequest) -> EvalRunOutcome:
+def _require_models(specs: Sequence[EvalStrategySpec], models: EvalModels) -> None:
+    """策略要用模型但调用方没给：在这里说清是哪一路。
+
+    不做这件事的话，`RetrievalPipeline` 会抛「启用 dense 通路必须注入 embedder」——
+    那句话对写管道的人有意义，对点面板的人没有。
+    """
+    if any(spec.enable_dense for spec in specs) and models.embedder is None:
+        raise ValueError("有策略启用 dense 通路，但没有可用嵌入模型：请在面板配置 embedding 角色")
+    if any(spec.enable_rerank for spec in specs) and models.reranker is None:
+        raise ValueError("有策略启用 rerank，但没有可用重排模型：请在面板配置 rerank 角色")
+
+
+async def run_evaluation(
+    request: EvalRunRequest, *, corpus: EvalCorpus, models: EvalModels
+) -> EvalRunOutcome:
     """跑一轮评测。失败一律抛 ValueError（接口层转 400），不吞成空结果。"""
     started = time.perf_counter()
     dataset_path = default_dataset_path(request.dataset)
@@ -130,21 +211,20 @@ async def run_evaluation(request: EvalRunRequest) -> EvalRunOutcome:
     if request.max_cases is not None:
         dataset = replace(dataset, cases=dataset.cases[: request.max_cases])
 
-    posts = load_seed_posts()
-    chunks, corpus_source = _corpus_of(posts)
+    chunks = corpus.chunks
     if not chunks:
         raise ValueError("语料为空：没有可检索的子块，评测没有意义")
 
-    provider = FakeProvider()
-    specs = _strategies_of(request)
+    specs = strategy_specs(request)
+    _require_models(specs, models)
     plans: list[StrategySpec] = []
     summaries: list[tuple[str, str]] = []
     for spec in specs:
         pipeline = RetrievalPipeline(
             corpus=chunks,
             config=_config_of(spec),
-            embedder=provider if spec.enable_dense else None,
-            reranker=provider if spec.enable_rerank else None,
+            embedder=models.embedder if spec.enable_dense else None,
+            reranker=models.reranker if spec.enable_rerank else None,
         )
         description = ", ".join(
             part
@@ -171,16 +251,16 @@ async def run_evaluation(request: EvalRunRequest) -> EvalRunOutcome:
     return EvalRunOutcome(
         dataset_name=dataset.name,
         dataset_description=dataset.description,
-        corpus_source=corpus_source,
-        posts=len(load_seed_posts()),
+        corpus_source=corpus.source,
+        posts=corpus.posts,
         chunks=len(chunks),
-        models=EvalModelSource.FAKE,
+        models=models.source,
         ks=tuple(DEFAULT_KS),
         strategies=summaries,
         per_strategy=result.per_strategy,
         cases=result.cases,
         elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
-        notes=_notes(),
+        notes=_notes(models),
     )
 
 
@@ -221,12 +301,35 @@ def to_response(outcome: EvalRunOutcome) -> EvalRunResponse:
     )
 
 
-def _notes() -> list[str]:
-    """把「这些数字能说明什么、不能说明什么」写进响应，别让面板用户自己猜。"""
+def _notes(models: EvalModels) -> list[str]:
+    """把「这些数字能说明什么、不能说明什么」写进响应，别让面板用户自己猜。
+
+    第一条随模型来源变化，这是整个评测台最容易误读的地方：同样是「Dense 列 0.9」，
+    离线伪向量和真实嵌入模型完全是两回事，而表格长得一模一样。
+    """
+    if models.source is EvalModelSource.NONE:
+        head = (
+            "本次没有用到模型：所选策略只有稀疏（BM25）召回，"
+            "这组数字衡量的是词法匹配，与模型质量无关。"
+        )
+        tail = (
+            "要比较向量与重排，先在「AI 实验室 → 模型配置」里配好 "
+            "embedding / rerank 角色，再勾上对应策略。"
+        )
+    elif models.source is EvalModelSource.FAKE:
+        head = (
+            "本次使用 FakeProvider 的哈希伪向量：Dense 两列只证明向量通路接对了，"
+            "不代表真实语义质量。"
+        )
+        tail = "想看真实质量：在「AI 实验室 → 模型配置」里配好 embedding / rerank 角色后重跑本页。"
+    else:
+        names = "、".join(models.names) or "未记录模型名"
+        head = f"本次向量与重排来自面板配置的模型（{names}）：这两列反映的是真实链路质量。"
+        tail = "拒答阈值（minScore / minDenseScore）随嵌入模型而变，换模型后必须用本页重新标定。"
     return [
-        "本次使用 FakeProvider 的哈希伪向量：Dense 两列只证明向量通路接对了，不代表真实语义质量。",
+        head,
         "拒答率的分母是「无答案题」，误拒率的分母是「有答案题」——两者不能相加。",
         "BM25 的 minScoreRatio 只提精度、永远不会让结果为空；"
         "能拒答的只有 minScore 与 minDenseScore。",
-        "真实模型（bge-m3 / bge-reranker）评测需等 Provider 运行期配置从 Java 传入后开放。",
+        tail,
     ]

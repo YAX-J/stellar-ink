@@ -11,11 +11,11 @@
 
 import logging
 from dataclasses import asdict
-from functools import lru_cache
 
 from fastapi import APIRouter
 
-from app.rag.seed_corpus import SeedPost, load_seed_posts
+from app.rag.corpus import cached_posts
+from app.rag.seed_corpus import SeedPost
 from app.rag.style import StyleSettings, build_style_profile
 from app.schemas.style import WritingStyleProfile, WritingStyleRequest, WritingStyleResult
 
@@ -29,11 +29,9 @@ NOTES = (
     "长度按「中日韩字符按字 + 拉丁按词」计；字组只在反复出现（≥3 次）时给出。"
 )
 
-
-@lru_cache(maxsize=1)
-def load_corpus() -> tuple[SeedPost, ...]:
-    """读一次种子语料并缓存（画像与问答共用同一份内容包口径）。"""
-    return tuple(load_seed_posts())
+#: 画像要的是**文章**而不是切好的检索块，因此直接用共享的语料缓存（同一份内容包只解析一次）。
+#: 名字保留 `load_corpus`：接口测试用它核对「画像统计的样本与我理解的一致」。
+load_corpus = cached_posts
 
 
 def _samples_for(author_id: int, max_samples: int) -> list[SeedPost]:

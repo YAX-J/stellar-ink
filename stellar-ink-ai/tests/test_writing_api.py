@@ -2,6 +2,8 @@
 
 最后一条是关键：离线桩如果不按提示词要求的格式回答，所有润色请求都会以 502 结束，
 而链路其实完全正常 —— 那种「功能看起来是坏的」最容易被误判成实现问题。
+**注意桩是显式配出来的**（`install_fake_providers`），不是代码里的默认值：
+面板没配时接口必须报「角色 chat 尚未配置模型」，见最后一条测试。
 """
 
 from __future__ import annotations
@@ -11,9 +13,9 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.writing import build_copilot
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
+from tests.fake_providers import install_fake_providers, install_no_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
 
 
@@ -25,7 +27,7 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    build_copilot.cache_clear()
+    install_fake_providers()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 
@@ -105,3 +107,18 @@ async def test_response_does_not_echo_the_whole_draft(app: FastAPI, secret: str)
     assert len(body) < len(long_draft), "响应不该比草稿还长（那说明整段回显了）"
     for forbidden in ("8200", "127.0.0.1", "AI_INTERNAL_SECRET"):
         assert forbidden not in body
+
+
+async def test_missing_chat_model_is_a_readable_400(app: FastAPI, secret: str) -> None:
+    """面板没配 chat 角色：报 400 并指路，**不能**退回离线桩。
+
+    退回桩的后果很具体：站长以为自己在用真实模型润色，实际看到的是「取草稿前两句」，
+    而响应里 `usage.model=fake-copilot` 是唯一的线索 —— 那太隐晦了，必须在入口就拦住。
+    """
+    install_no_providers()
+
+    status, payload = await post(app, secret, {"task": "polish", "draft": DRAFT})
+
+    assert status == 400
+    assert "chat" in payload["message"]
+    assert "模型配置" in payload["message"]

@@ -11,35 +11,14 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.qa import reset_assembly, use_provider_configs
+from app.api.v1.assembly import CorpusError
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
-from app.providers.models import ProviderCapabilities, ProviderConfig
 from app.schemas.qa_stream import FRAME_TERMINATOR
+from tests.fake_providers import install_fake_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, call_stream, load_vector, signed_headers
 
 QUESTION = "一年写十八万字的方法是什么？"
-
-
-def fake_provider_configs() -> list[ProviderConfig]:
-    """显式声明「这次用 fake」——测试不该依赖代码里有 Fake 默认值。"""
-    return [
-        ProviderConfig(
-            role="chat",
-            provider="fake",
-            base_url="http://fake.local",
-            model="fake",
-            capabilities=ProviderCapabilities(chat=True),
-        ),
-        ProviderConfig(
-            role="embedding",
-            provider="fake",
-            base_url="http://fake.local",
-            model="fake",
-            dimension=64,
-            capabilities=ProviderCapabilities(embedding=True),
-        ),
-    ]
 
 
 @pytest.fixture()
@@ -50,9 +29,8 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    # 显式注入桩配置再清缓存：装配来源与语料都是进程级缓存
-    use_provider_configs(fake_provider_configs())
-    reset_assembly()
+    # 显式注入桩配置（装配来源与语料都是进程级缓存，注入即已清缓存）
+    install_fake_providers()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 
@@ -153,7 +131,10 @@ async def test_missing_corpus_gives_a_readable_error_frame(
     """
 
     def boom() -> None:
-        raise ValueError("语料为空：问答没有可检索的内容")
+        # 语料不可用是一个**独立类型**（`CorpusError`）而不是裸 `ValueError`：
+        # 后者同时也是「模型没按格式回答」的类型，混用会让「环境坏了」和「上游答歪了」
+        # 被同一条 except 吞掉，报出同一个状态码
+        raise CorpusError("语料为空：问答没有可检索的内容")
 
     monkeypatch.setattr("app.api.v1.qa.build_qa_service", boom)
 

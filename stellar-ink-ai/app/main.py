@@ -28,6 +28,11 @@ from app.core.internal_auth import (
 from app.core.internal_auth_middleware import InternalAuthMiddleware, require_internal_identity
 from app.core.logging import configure_logging
 from app.core.trace import TraceIdMiddleware, current_trace_id
+from app.providers.errors import (
+    ProviderError,
+    ProviderRateLimitError,
+    UnsupportedCapabilityError,
+)
 from app.schemas.common import AiErrorCode
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,24 @@ logger = logging.getLogger(__name__)
 SELF_CHECK_PATH = "/internal/whoami"
 
 internal_router = APIRouter(tags=["internal"])
+
+
+def provider_error_status(error: ProviderError) -> int:
+    """Provider 失败的 HTTP 状态码：**按「谁该动手」分档，不按异常名字分档**。
+
+    - 429：被限流（上游让我们慢一点，可退避重试）；
+    - 400：配置问题（角色没配 / 能力不符）—— 让用户去面板改，重试一万次也没用；
+    - 502：上游坏了（超时 / 5xx / 鉴权被拒）—— 这是「服务下游的问题」，不是请求错了。
+
+    为什么必须有这一层：真实模型接上之后，超时与限流是**常态**。
+    没有它，一次模型超时就是一个带栈的 500，前端只能显示「服务器错误」，
+    而用户真正需要知道的是「这次是模型超时，可以重试」。
+    """
+    if isinstance(error, ProviderRateLimitError):
+        return 429
+    if isinstance(error, UnsupportedCapabilityError):
+        return 400
+    return 502
 
 
 @internal_router.get(SELF_CHECK_PATH, summary="内部签名自检（仅非生产）")
@@ -103,6 +126,19 @@ def create_app(verifier: InternalRequestVerifier | None = None) -> FastAPI:
                 "traceId": current_trace_id(),
             },
         )
+
+    @application.exception_handler(ProviderError)
+    async def handle_provider_error(_: Request, error: ProviderError) -> JSONResponse:
+        """模型调用的统一出口。
+
+        放在全局而不是每个端点各写一遍：问答、Copilot、Agent、评测都会调模型，
+        逐端点写必然漏掉一处，而漏掉的那处就是「带栈的 500」。
+        响应体用 `to_public_dict()` —— 它刻意不含密钥、内网地址与上游原始报文；
+        可读原因里那句「请在 AI 实验室里填该角色」是给人看的，不是给运维看的。
+        """
+        payload = {**error.to_public_dict(), "traceId": current_trace_id()}
+        logger.warning("模型调用失败：%s", payload)
+        return JSONResponse(status_code=provider_error_status(error), content=payload)
 
     logger.info(
         "ai service starting",

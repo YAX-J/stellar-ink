@@ -56,6 +56,20 @@ const onlyProblems = ref(true)
 const canRunEval = computed(() => !!selectedDataset.value && ai.evalSelected.length > 0
   && !ai.evalRunning)
 
+/**
+ * 模型来源的显示：三种取值对应三种完全不同的结论，而表格长得一模一样 ——
+ * 「离线桩」下 Dense 两列没有语义，「未用模型」下这两列根本不存在，
+ * 都不能让人误以为自己在看真实质量。暖色只留给「用了桩」这一种。
+ */
+const evalModelLabel = computed(() => {
+  const source = ai.evalResult?.models
+  if (source === 'panel') return '模型：面板配置的真实模型'
+  if (source === 'fake') return '模型：离线桩（向量无语义）'
+  if (source === 'none') return '未使用任何模型（仅词法召回）'
+  return `模型：${source ?? '未知'}`
+})
+const evalModelTone = computed(() => (ai.evalResult?.models === 'fake' ? 'warm' : 'cool'))
+
 /** 逐题明细：标注「漏召 / 误拒」两类问题，面板默认只看问题行 */
 const caseRows = computed(() => ai.evalCases.map((row) => {
   const relevant = Array.isArray(row.relevantPosts) ? row.relevantPosts : []
@@ -415,9 +429,7 @@ async function remove(roleKey) {
             <span class="meta-item">语料 {{ ai.evalResult.corpusSource }}</span>
             <span class="meta-item">{{ ai.evalResult.corpusPosts }} 篇 / {{ ai.evalResult.corpusChunks }} 块</span>
             <span class="meta-item">耗时 {{ ai.evalResult.elapsedMs }}ms</span>
-            <span class="chip" :class="ai.evalResult.models === 'fake' ? 'warm' : 'cool'">
-              模型：{{ ai.evalResult.models }}
-            </span>
+            <span class="chip" :class="evalModelTone">{{ evalModelLabel }}</span>
           </div>
 
           <ul v-if="(ai.evalResult.notes || []).length" class="note-list reveal">

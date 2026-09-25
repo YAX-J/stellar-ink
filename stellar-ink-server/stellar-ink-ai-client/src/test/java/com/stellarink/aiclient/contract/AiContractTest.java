@@ -254,7 +254,9 @@ class AiContractTest {
     void evalRunResponseRoundTrips() throws IOException {
         EvalRunResponseDTO response = roundTrip("eval_run_response.json", EvalRunResponseDTO.class);
 
-        assertEquals("fake", response.getModels(), "当前口径：Fake 向量，不代表真实语义质量");
+        // 样例固定由离线桩生成（契约样例必须任何机器都能复现），
+        // 但字段本身有三种取值：fake（离线桩）/ panel（面板配的真实模型）/ none（只跑稀疏）
+        assertEquals("fake", response.getModels(), "样例取自离线路径：Fake 向量，不代表真实语义质量");
         assertEquals(29, response.getCorpusPosts());
         assertEquals(4, response.getKs().size());
         assertEquals(5, response.getStrategies().size());

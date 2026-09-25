@@ -61,8 +61,8 @@
       "citationAccuracy": 1.0,
       "refusalRate": null,
       "falseRefusalRate": 0.0,
-      "latencyP50": 0.2,
-      "latencyP95": 0.3
+      "latencyP50": 0.0,
+      "latencyP95": 0.0
     },
     "hybrid": {
       "cases": 4,
@@ -91,8 +91,8 @@
       "citationAccuracy": 1.0,
       "refusalRate": null,
       "falseRefusalRate": 0.0,
-      "latencyP50": 0.5,
-      "latencyP95": 0.5
+      "latencyP50": 0.0,
+      "latencyP95": 0.0
     },
     "hybrid+rerank": {
       "cases": 4,
@@ -121,8 +121,8 @@
       "citationAccuracy": 1.0,
       "refusalRate": null,
       "falseRefusalRate": 0.0,
-      "latencyP50": 1.3,
-      "latencyP95": 1.5
+      "latencyP50": 0.0,
+      "latencyP95": 0.0
     },
     "sparse": {
       "cases": 4,
@@ -151,8 +151,8 @@
       "citationAccuracy": 1.0,
       "refusalRate": null,
       "falseRefusalRate": 0.0,
-      "latencyP50": 0.1,
-      "latencyP95": 0.2
+      "latencyP50": 0.0,
+      "latencyP95": 0.0
     },
     "sparse+floor": {
       "cases": 4,
@@ -181,8 +181,8 @@
       "citationAccuracy": 1.0,
       "refusalRate": null,
       "falseRefusalRate": 0.0,
-      "latencyP50": 0.1,
-      "latencyP95": 0.2
+      "latencyP50": 0.0,
+      "latencyP95": 0.0
     }
   },
   "cases": [
@@ -209,7 +209,7 @@
         9
       ],
       "refused": false,
-      "latencyMs": 0.219
+      "latencyMs": 0.0
     },
     {
       "caseId": "q002",
@@ -232,7 +232,7 @@
         8
       ],
       "refused": false,
-      "latencyMs": 0.128
+      "latencyMs": 0.0
     },
     {
       "caseId": "q003",
@@ -256,7 +256,7 @@
         3
       ],
       "refused": false,
-      "latencyMs": 0.146
+      "latencyMs": 0.0
     },
     {
       "caseId": "q004",
@@ -279,7 +279,7 @@
         5
       ],
       "refused": false,
-      "latencyMs": 0.15
+      "latencyMs": 0.0
     },
     {
       "caseId": "q001",
@@ -304,7 +304,7 @@
         9
       ],
       "refused": false,
-      "latencyMs": 0.261
+      "latencyMs": 0.0
     },
     {
       "caseId": "q002",
@@ -327,7 +327,7 @@
         8
       ],
       "refused": false,
-      "latencyMs": 0.234
+      "latencyMs": 0.0
     },
     {
       "caseId": "q003",
@@ -351,7 +351,7 @@
         3
       ],
       "refused": false,
-      "latencyMs": 0.226
+      "latencyMs": 0.0
     },
     {
       "caseId": "q004",
@@ -374,7 +374,7 @@
         5
       ],
       "refused": false,
-      "latencyMs": 0.232
+      "latencyMs": 0.0
     },
     {
       "caseId": "q001",
@@ -399,7 +399,7 @@
         9
       ],
       "refused": false,
-      "latencyMs": 0.547
+      "latencyMs": 0.0
     },
     {
       "caseId": "q002",
@@ -422,7 +422,7 @@
         8
       ],
       "refused": false,
-      "latencyMs": 0.414
+      "latencyMs": 0.0
     },
     {
       "caseId": "q003",
@@ -446,7 +446,7 @@
         3
       ],
       "refused": false,
-      "latencyMs": 0.424
+      "latencyMs": 0.0
     },
     {
       "caseId": "q004",
@@ -469,7 +469,7 @@
         5
       ],
       "refused": false,
-      "latencyMs": 0.481
+      "latencyMs": 0.0
     },
     {
       "caseId": "q001",
@@ -493,7 +493,7 @@
         9
       ],
       "refused": false,
-      "latencyMs": 1.31
+      "latencyMs": 0.0
     },
     {
       "caseId": "q002",
@@ -516,7 +516,7 @@
         8
       ],
       "refused": false,
-      "latencyMs": 1.109
+      "latencyMs": 0.0
     },
     {
       "caseId": "q003",
@@ -539,7 +539,7 @@
         3
       ],
       "refused": false,
-      "latencyMs": 1.561
+      "latencyMs": 0.0
     },
     {
       "caseId": "q004",
@@ -561,7 +561,7 @@
         5
       ],
       "refused": false,
-      "latencyMs": 1.208
+      "latencyMs": 0.0
     },
     {
       "caseId": "q001",
@@ -578,7 +578,7 @@
         9
       ],
       "refused": false,
-      "latencyMs": 0.209
+      "latencyMs": 0.0
     },
     {
       "caseId": "q002",
@@ -592,7 +592,7 @@
         8
       ],
       "refused": false,
-      "latencyMs": 0.096
+      "latencyMs": 0.0
     },
     {
       "caseId": "q003",
@@ -612,7 +612,7 @@
         3
       ],
       "refused": false,
-      "latencyMs": 0.128
+      "latencyMs": 0.0
     },
     {
       "caseId": "q004",
@@ -626,14 +626,14 @@
         5
       ],
       "refused": false,
-      "latencyMs": 0.133
+      "latencyMs": 0.0
     }
   ],
-  "elapsedMs": 46.679,
+  "elapsedMs": 0.0,
   "notes": [
     "本次使用 FakeProvider 的哈希伪向量：Dense 两列只证明向量通路接对了，不代表真实语义质量。",
     "拒答率的分母是「无答案题」，误拒率的分母是「有答案题」——两者不能相加。",
     "BM25 的 minScoreRatio 只提精度、永远不会让结果为空；能拒答的只有 minScore 与 minDenseScore。",
-    "真实模型（bge-m3 / bge-reranker）评测需等 Provider 运行期配置从 Java 传入后开放。"
+    "想看真实质量：在「AI 实验室 → 模型配置」里配好 embedding / rerank 角色后重跑本页。"
   ]
 }

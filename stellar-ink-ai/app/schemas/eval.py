@@ -3,9 +3,9 @@
 字段口径：
 - `strategies` 省略时用**标准五组**（sparse / dense / hybrid / hybrid+rerank / sparse+floor），
   与 `scripts/compare_strategies.py` 完全一致 —— 命令行与面板不该是两套默认值；
-- `models` 目前固定为 `"fake"`：真实模型评测需要 Java 先传 Provider 运行期配置（A1 已就绪的
-  `/ai/admin/providers/runtime`），在那之前面板显示的 Dense 两列**只代表通路接对了**，
-  这一点由 `notes` 明确写进响应，不靠用户猜。
+- `models` 如实说明这次评测的向量与重排**是谁提供的**：`fake` = 离线桩（哈希伪向量，
+  无语义，只证明通路接对了），`panel` = 前端面板里配的真实模型。
+  两种都可能出现，所以它不能是个常量 —— 面板用户必须一眼看出「这些数字能不能当质量结论」。
 """
 
 from enum import StrEnum
@@ -23,7 +23,13 @@ MAX_CASES = 500
 class EvalModelSource(StrEnum):
     """评测用的模型来源。"""
 
+    #: 离线桩：确定、零成本，但向量没有语义
     FAKE = "fake"
+    #: 面板里配的真实模型（`ai_provider_config`）
+    PANEL = "panel"
+    #: 本次一组策略都没用到模型（只跑稀疏召回）—— 与「用了桩」必须分开，
+    #: 否则「纯 BM25 的对照实验」会被读成「拿假向量跑出来的结论」
+    NONE = "none"
 
 
 class EvalStrategySpec(ContractRequest):

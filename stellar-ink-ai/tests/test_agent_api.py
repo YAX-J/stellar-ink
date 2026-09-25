@@ -3,6 +3,9 @@
 编排逻辑由 `tests/test_agent.py` 覆盖（用脚本化模型精确断言循环）；
 这里只关心**接口层**：受内部签名保护、字段与契约一致、
 离线装配下不会假装「答得很好」（`doneReason` 要如实反映预算触顶）。
+
+「离线装配」是**显式配出来的**（`install_fake_providers`）：Agent 会反复调用模型，
+代码里留默认值等于让「忘了配模型」也能跑起来 —— 那正是要拦住的事。
 """
 
 from __future__ import annotations
@@ -12,11 +15,12 @@ import json
 import pytest
 from fastapi import FastAPI
 
-from app.api.v1.agent import build_agent, to_result
+from app.api.v1.agent import to_result
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
 from app.rag.agent import AgentRun, AgentStep, StopReason
 from app.schemas.common import Citation
+from tests.fake_providers import install_fake_providers, install_no_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
 
 QUESTION = "一年写十八万字的方法是什么？"
@@ -42,7 +46,7 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    build_agent.cache_clear()
+    install_fake_providers()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 
@@ -110,6 +114,21 @@ async def test_agent_does_not_leak_internals(app: FastAPI, secret: str) -> None:
     body = json.dumps(payload, ensure_ascii=False)
     for forbidden in ("8200", "127.0.0.1", "AI_INTERNAL_SECRET", "apiKey", "sk-"):
         assert forbidden not in body, f"响应泄露了内部信息：{forbidden}"
+
+
+async def test_missing_chat_model_is_a_readable_400(app: FastAPI, secret: str) -> None:
+    """面板没配 chat 角色：报 400 并指路，而不是退回桩。
+
+    Agent 是**最贵**的一条链路（每一步都要问一次模型、还要调检索），
+    让它在一个「没配好」的环境里跑起来，烧的是钱、拿到的是噪声。
+    """
+    install_no_providers()
+
+    status, payload = await post_agent(app, secret, {"question": QUESTION})
+
+    assert status == 400
+    assert "chat" in payload["message"]
+    assert "模型配置" in payload["message"]
 
 
 def test_to_result_maps_every_field_without_judgement() -> None:

@@ -1,39 +1,24 @@
 """星海问答接口（仅内网可达，由 Java `ai-service` 转发给前端）。
 
-当前是**非流式**版本：一次请求拿完整答案。流式（`/qa/stream` 的 SSE 事件）等 Java 侧
-协议转换与前端消费方一起做 —— 先造一条没人用的流式通道是本仓库明确避免的事
-（见 `development-workflow.md` §9）。
+非流式 `POST /qa` 与流式 `POST /qa/stream` 共用同一套编排：检索 → 引用 → 提示词 →
+模型 → 拒答。两者差别只在「怎么把答案交出去」，不在「答案怎么来」。
 
-语料与模型从哪来：与评测台同一套 —— 语料取自种子内容包，模型用 `FakeProvider`。
-**这不是最终形态**：真实问答要在索引建好之后走 Qdrant、模型用面板里配的 Provider。
-在那之前这个接口的价值是「把检索 → 引用 → 提示词 → 拒答这条编排跑通且可测」，
-响应里的 `usage.model` 会如实显示 `fake`，前端据此提示「当前是离线自测」。
-
-关于缓存：装配（读语料 + 切块 + 建 BM25 + 预计算向量）必须**只做一次**。
-每次请求重建的话，接上真嵌入模型后会变成「每问一句就把整库嵌入一遍」——
-那不是慢一点的问题，是费用问题。
+模型与语料从哪来：`app/api/v1/assembly.py`。**模型只有面板一个来源**（没有代码里的默认值），
+未配置时返回 400 并说清去配哪个角色；`usage.model` 会如实显示实际用的模型名，
+配置成 fake 时前端据此提示「当前是离线自测」。
 """
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from functools import lru_cache
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.providers.config_source import (
-    ProviderConfigError,
-    describe_sources,
-    load_provider_configs,
-)
-from app.providers.errors import ProviderError
-from app.providers.models import ProviderConfig
-from app.providers.resolver import ProviderResolver
-from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline, build_corpus
+from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error, pipeline_for, roles_for
+from app.providers import runtime
+from app.rag.pipeline import RetrievalConfig
 from app.rag.qa import QaService, QaSettings
-from app.rag.seed_corpus import load_seed_posts
-from app.schemas.common import AiErrorCode
 from app.schemas.qa import QaAnswer, QaStreamRequest
 from app.schemas.qa_stream import StreamEvent, heartbeat
 
@@ -59,81 +44,21 @@ QA_RETRIEVAL = RetrievalConfig(
     label="qa",
 )
 
-#: 配置来源：**只从面板配置**（ai_provider_config / 环境变量注入），没有代码里的默认模型。
-#: 未配置时 `registry.chat_model()` 会抛「请在 AI 实验室 → 模型配置里填写」，
-#: 由端点转成可读的错误 —— 而不是退回 Fake 让「没配好」表现成「回答质量差」。
-resolver = ProviderResolver(source=load_provider_configs)
-
-
-def resolve_corpus() -> list[IndexedChunk]:
-    """语料：种子内容包切块（真实形态是索引/内容服务推过来，见 status.md §4.1）。"""
-    corpus = build_corpus(load_seed_posts())
-    if not corpus:
-        raise ValueError("语料为空：问答没有可检索的内容")
-    return corpus
-
-
-@lru_cache(maxsize=1)
-def _cached_corpus() -> list[IndexedChunk]:
-    return resolve_corpus()
-
-
-def reset_assembly() -> None:
-    """丢掉装配缓存（测试与「改了配置想立刻生效」时用）。
-
-    一次性清两处：语料缓存与 Provider 解析器。**分开清最容易漏一处** ——
-    漏了语料缓存会让人以为「改语料没生效」，漏了解析器会以为「改模型没生效」。
-    """
-    _cached_corpus.cache_clear()
-    resolver.invalidate()
-
-
-def use_provider_configs(configs: list[ProviderConfig]) -> None:
-    """把解析器固定到给定配置（测试与离线脚本用）。
-
-    注意它**不会**替你造一个默认模型：调用方必须显式给出配置，
-    包括「我要用 fake」也要显式写成 `provider="fake"` ——
-    这正是面板里把协议选成 Fake 的等价物。
-    """
-    global resolver  # noqa: PLW0603 - 有意提供这个接缝：装配来源只在启动/测试时确定
-    resolver = ProviderResolver(source=lambda: tuple(configs))
-    reset_assembly()
-
 
 def build_qa_service() -> QaService:
-    """按当前配置装配问答服务。
+    """按当前面板配置装配问答服务。
 
-    语料切块很贵（要建 BM25 索引、预计算向量），所以缓存；
-    **模型实例不在这里缓存** —— 它们由 `ProviderResolver` 按配置指纹管，
-    换模型立刻生效，而语料该不该重建由「语料变没变」决定，两者不该绑在一起。
+    **装配本身不做缓存**：语料与检索管道都由 `assembly` 按语料版本 + 配置指纹缓存，
+    这里只是把已经预热好的管道和模型实例拼起来，代价可以忽略。
+    反过来说，任何一层要是漏了缓存，接上真实嵌入模型后就会变成
+    「每问一句把整库嵌入一遍」—— 那不是慢一点，是费用问题。
     """
-    registry = resolver.registry()
-    pipeline = RetrievalPipeline(
-        corpus=_cached_corpus(),
-        config=QA_RETRIEVAL,
-        embedder=registry.embedding_model(),
-    )
-    return QaService(pipeline=pipeline, chat=registry.chat_model(), settings=QaSettings())
-
-
-def assembly_error(error: Exception) -> JSONResponse:
-    """把「装配不起来」翻译成可读的响应。
-
-    两种情况都是**配置/环境问题**，不该伪装成 500 让人去翻栈：
-    - 语料缺失（`ValueError`）；
-    - 模型角色没配（`UnsupportedCapabilityError` / `ProviderError`）或配置读不出来
-      （`ProviderConfigError`）—— 这类必须说清「去面板配哪个角色」，
-      因为最常见的误判是「服务坏了」，而实际只是没填。
-
-    「角色尚未配置」还会附上 `describe_sources()`：空配置有两个完全不同的原因
-    （真没配 / MYSQL_* 没给齐导致读不到），混成一句话会把排查方向带偏。
-    """
-    message = str(error)
-    if "尚未配置" in message:
-        message = f"{message}；{describe_sources()}"
-    return JSONResponse(
-        status_code=400,
-        content={"code": AiErrorCode.BAD_REQUEST.value, "message": message},
+    # 先一次性预检全部角色：缺 chat 又缺 embedding 时报两次，用户要跑两趟
+    runtime.require_roles(*roles_for(QA_RETRIEVAL))
+    return QaService(
+        pipeline=pipeline_for(QA_RETRIEVAL),
+        chat=runtime.registry().chat_model(),
+        settings=QaSettings(),
     )
 
 
@@ -142,7 +67,7 @@ async def ask(request: QaStreamRequest) -> QaAnswer | JSONResponse:
     """一次问答：检索 → 引用 → 提示词 → 模型 → 结论（证据不足时明确拒答）。"""
     try:
         service = build_qa_service()
-    except (ValueError, ProviderError, ProviderConfigError) as error:
+    except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
     answer = await service.answer(request)
@@ -168,7 +93,7 @@ async def ask_stream(request: QaStreamRequest) -> StreamingResponse | JSONRespon
     """
     try:
         service = build_qa_service()
-    except (ValueError, ProviderError, ProviderConfigError) as error:
+    except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
     return StreamingResponse(

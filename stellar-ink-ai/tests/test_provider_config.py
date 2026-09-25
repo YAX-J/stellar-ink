@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.api.v1.assembly import ASSEMBLY_ERRORS, CorpusError
 from app.providers.config_source import (
     ProviderConfigError,
     configs_from_env,
@@ -222,7 +223,16 @@ def test_env_source_empty_means_no_configs() -> None:
 
 
 def test_provider_error_is_the_common_base_for_callers() -> None:
-    """端点按 `(ValueError, ProviderError, ProviderConfigError)` 捕获：
-    三者都要能被同一个 except 收到，否则「没配好」会漏成 500。"""
+    """端点按 `ASSEMBLY_ERRORS`（`ProviderError` / `ProviderConfigError` / `CorpusError`）捕获：
+    三者都要能被同一个 except 收到，否则「没配好」会漏成 500。
+
+    `CorpusError` 不在 `ProviderError` 树下是有意的：它是「环境里的语料不可用」，
+    与「模型配错了」是两类问题，只有状态码相同（400），排查方向完全不同。
+    """
     assert issubclass(UnsupportedCapabilityError, ProviderError)
     assert issubclass(ProviderConfigError, RuntimeError)
+    assert not issubclass(CorpusError, ProviderError)
+    assert all(
+        issubclass(error_type, ASSEMBLY_ERRORS)
+        for error_type in (ProviderError, ProviderConfigError, CorpusError)
+    )
