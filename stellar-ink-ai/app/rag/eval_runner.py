@@ -36,12 +36,29 @@ class Retriever(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievedHit:
+    """一条命中的细节：名次之外的分数与原文。
+
+    为什么单独给这个（而不是只给 chunk_id 列表）：引用组装要用「原文片段 + 分数」，
+    而分数在名次里已经丢了。让检索层一次把细节带回来，避免上层为了拿分数再检索一遍 ——
+    那不仅浪费，还会因为两次检索的候选池不同而出现「引用的东西和排名对不上」。
+    """
+
+    chunk_id: str
+    post_id: int
+    score: float
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalOutcome:
     posts: list[int]
     chunks: list[str] = field(default_factory=list)
     cited_chunks: list[str] = field(default_factory=list)
     refused: bool = False
     latency_ms: float = 0.0
+    #: 与 `chunks` 同序同长的细节（检索层填；评测指标不用它）
+    hits: list[RetrievedHit] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.latency_ms < 0:

@@ -124,10 +124,26 @@ class Bm25Index:
     用法：`index = Bm25Index(); index.fit(documents); index.search(query, top_k=5)`。
     文档以字符串列表传入（调用方传切块后的文本），索引内部只保存统计量，
     不持有原文，避免在内存里复制一份语料。
+
+    关于拒答相关的两个阈值：
+    - `min_score_ratio`：**相对**门限，按「最高分 × ratio」过滤弱候选。
+      注意它**永远不会清空结果**（最高分自己一定过门限），所以它只提升精度，不能拒答。
+    - `min_score`：**绝对**下限，低于它的候选一律丢弃；全部低于下限就返回空列表，
+      调用方据此拒答。这是唯一能让 `search` 返回空的机制。
+
+    绝对下限必须在真实黄金集上标定。本地基线实测过一个重要事实：
+    **有低分题（问法与原文用词差异大）与高分的无答案题会重叠**，
+    因此「只看 BM25 分数决定拒答」不可靠 ——
+    产品上还需要主题相关性判定（查询是否在语料范围内）或 Dense 相似度下限。
+    这条结论写在 `docs/ai/fast-track-plan.md`，不要在实现里假装它不存在。
     """
 
     k1: float = DEFAULT_K1
     b: float = DEFAULT_B
+    #: 相对门限：候选分数低于「最高分 × ratio」视为不相关；0 表示不过滤
+    min_score_ratio: float = 0.0
+    #: 绝对下限：低于它直接丢弃；0 表示不设下限（则 search 不会返回空）
+    min_score: float = 0.0
     _doc_tokens: list[list[str]] = field(default_factory=list, init=False)
     _doc_len: list[int] = field(default_factory=list, init=False)
     _term_freqs: list[Counter[str]] = field(default_factory=list, init=False)
@@ -139,6 +155,10 @@ class Bm25Index:
             raise ValueError("k1 必须为正：否则词频饱和项会失效")
         if not 0 <= self.b <= 1:
             raise ValueError("b 必须在 [0, 1]：它表示长度归一化的强度")
+        if not 0 <= self.min_score_ratio < 1:
+            raise ValueError("min_score_ratio 必须在 [0, 1)：等于 1 会把所有候选都过滤掉")
+        if self.min_score < 0:
+            raise ValueError("min_score 不能为负")
 
     def fit(self, documents: list[str]) -> Bm25Index:
         """重建索引。重复调用等价于「换一批文档」，不会累加旧统计。"""
@@ -187,6 +207,14 @@ class Bm25Index:
 
         # 同分时按下标升序：保证结果稳定可复现（否则评测台每次跑出来的顺序都可能不同）
         scores.sort(key=lambda item: (-item[1], item[0]))
+
+        if self.min_score > 0:
+            scores = [item for item in scores if item[1] >= self.min_score]
+        if self.min_score_ratio > 0 and scores:
+            top_score = scores[0][1]
+            threshold = top_score * self.min_score_ratio
+            scores = [item for item in scores if item[1] >= threshold]
+
         return [
             ScoredChunk(chunk_index=index, score=round(score, 6), source="sparse")
             for index, score in scores[:top_k]
