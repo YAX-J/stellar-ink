@@ -272,7 +272,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   ⚠️ 只靠 Druid 自带的 `keep-alive` **不够**（实测：MySQL 侧一部分连接每十秒被 ping、
   另一部分闲置上千秒 —— 它只覆盖「超出 minIdle 的 + 最近使用的几条」，业务借到冷的那条照样卡 15s）；
   ⚠️ 心跳**必须同时借多条**：Druid 借用是 LIFO，借一条还一条只会反复热同一条；
-  ⚠️ 代码优先于 yml 是因为远端 Nacos 的 `user-service-dev.yaml` 里有同名键且优先级更高。
+  ⚠️ 远端 Nacos 也有同名键：实测它**并不覆盖**本地（见 `docs/architecture/README.md` §Nacos 动态配置），
+  代码里定死仍是最稳的一层。
   验收：重启后 `SELECT time FROM information_schema.processlist WHERE host LIKE '<公网IP>%'`，
   不该有连接空闲超过 ~60 秒（注意排除**已 kill 的旧 JVM** 留下的僵尸连接 —— 它们空闲上千秒、
   但要按 id 与重启时间区分）。详见 `docs/architecture/README.md` §空闲保活。
@@ -297,9 +298,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   池被占满或连接全卡死时它会永远不返回，网关一直挂着，用户只能等浏览器自己的 15s 超时
   （截图里那两个 `(canceled) @15s` 就是这么来的，日志与响应体什么都没留下）。
   有上限之后最坏情况是 2s 内回一个带 hint 的 503，前端能直接显示「哪一环断了」。
-  ⚠️ **网关的 Redis 参数以 Nacos 上的 `gateway-nacos-sentinel-dev.yaml` 为准**：
-  远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
-  `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
+  ⚠️ **网关的 Redis 参数有第二份来源**：远端 Nacos 有 `gateway-nacos-sentinel-dev.yaml`（含 redis 段）。
+  它此前因字符集问题整份没生效（启动脚本已加 `-Dfile.encoding=UTF-8`），而**实测其值仍不覆盖本地**
+  `application-dev.yml` —— 调超时请两处都改，别只改一处（依据见 `docs/architecture/README.md` §Nacos 动态配置）。
   同理 `Nacos` 不可达时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503。
 - **Lettuce 三处加固（远端 Redis 必配）**：`common-core` 的 `RedisLettuceTuningConfig` +
   `RedisKeepAliveHeartbeat`，网关各有一份等价实现（WebFlux 不能依赖带 servlet 的 common-core），

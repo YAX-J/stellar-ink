@@ -268,6 +268,52 @@ JCE 预热完成：[Sa-Token-JWT(create+parse), HmacSHA256, AES/GCM/NoPadding, S
 别用客户端的数字下结论（`curl` 参数被 shell 拆错、PowerShell 的 `Invoke-RestMethod`
 首次调用开销都会伪装成「服务慢」）。
 
+### Nacos 动态配置：本机上的两个坑（2026-09-25 实测）
+
+远端 Nacos（2.4.3，命名空间 `f0350c82-…`）上存在 `user-service-dev.yaml`（2429 字节）与
+`gateway-nacos-sentinel-dev.yaml`（1437 字节），`content-service` / `ai-service` 的 dataId
+**不存在**（HTTP 404）。这两份配置踩了两个坑，且都是**静默**的：
+
+**坑一：整份配置因为字符集解析失败而根本没生效。** 启动日志里是：
+
+```
+ERROR NacosConfigDataLoader - Error getting properties from nacos: … dataId='user-service-dev.yaml'
+org.yaml.snakeyaml.error.YAMLException: java.nio.charset.MalformedInputException: Input length = 1
+```
+
+而导入写的是 `optional:`，所以**失败只留一行 ERROR，服务继续用 `application-dev.yml` 跑**，
+表现得就像那份 Nacos 配置不存在。原因不在 Nacos 服务端：
+`Content-Type: text/plain;charset=UTF-8`、内容也是合法 UTF-8（严格 UTF-8 解码通过），
+但把这些字节按 **cp936（GBK）严格解码**会在**第 19 字节**抛错 —— 那正是第一处中文注释的位置，
+与 Java 的 `Input length = 1` 形态一致。也就是说**解码用了 JVM 默认字符集，而这台中文 Windows 上
+JDK 17 的默认字符集是 GBK**（JDK 18+ 起 `file.encoding` 默认才是 UTF-8，Linux 容器通常也是 UTF-8，
+所以这是**本机开发独有**的问题）。
+
+对策与验证（临时实例、端口 8301、不注册 Nacos，逐个变体独立工作目录）：
+
+| 变体 | 结果 |
+|---|---|
+| 基线 | 失败（复现） |
+| `--spring.cloud.nacos.config.encode=UTF-8` | **仍失败**（这个键救不了） |
+| `-Dfile.encoding=UTF-8` | **修好，配置正常加载** |
+| 两者都加 | 修好（起作用的是 JVM 参数） |
+
+`start-all.bat` 的 4 条 java 启动线因此都带上了 `-Dfile.encoding=UTF-8`，
+**删掉它 gateway / user-service 会重新静默忽略各自的 Nacos 配置**。
+
+**坑二：同名键仍然不是 Nacos 赢。** 修好字符集之后解析不再报错，
+但**不能**据此认为「Nacos 覆盖本地」—— 反例：Nacos 里写着
+`spring.datasource.druid.initial-size: 5`，而本地 yml 里根本没有这个键，
+运行时 `DruidDataSource.getInitialSize()` 仍是 **0**（证据：`DataSourceKeepAliveHeartbeat`
+启动日志「同时热 **1** 条连接」，而它算的是 `max(1, initialSize)`）。
+因此本文档与 `AGENTS.md` 里原先那句「Nacos 上的同名键会覆盖本地 yml，改本地是白改」
+**已被推翻**：目前能确认的是「不再报错」，而「Nacos 的值是否真的进入 Environment」仍是**未证实**，
+并且已有一个反例。结论按实际口径写：**要调参数就两处都改**，别赌哪一份生效。
+
+> 附带教训：`optional:` 导入把配置中心故障降级成一行日志，方向是对的（配置中心挂了不该拖垮服务），
+> 但**必须有人看这行日志** —— 排查时先 `Select-String 'Error getting properties from nacos'`，
+> 别只看服务起没起来。
+
 ## Redis 基础设施
 - `common-core` 通过 Spring Data Redis 提供阻塞式 `RedisUtils` 与 `RedisCache`，供 Servlet 业务服务注入；网关单独使用 Reactive Redis 检查 JWT 撤销列表，禁止在 Netty 事件循环里调用阻塞式工具。撤销键规则由 `shared-model` 共享。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。
