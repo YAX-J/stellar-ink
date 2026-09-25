@@ -2,14 +2,20 @@ package com.stellarink.gateway.config;
 
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
+
+import java.time.temporal.ChronoUnit;
 
 /**
  * 关掉 Lettuce 的「共享原生连接」：一条连接坏掉不该让整站判成 503。
@@ -34,9 +40,7 @@ import org.springframework.data.redis.connection.lettuce.LettucePoolingClientCon
  * <p>⚠️ 业务服务（user / content / ai）用的是 <b>common-core 里的同名类
  * {@code com.stellarink.common.redis.RedisLettuceTuningConfig}</b> —— 网关是 WebFlux，
  * 不能依赖带 servlet 的 common-core，所以这里必须独立存在一份。
- * 两份的 BeanPostProcessor 完全一致，common-core 那份还多了「让池验活空闲连接」
- * （跨公网的空闲连接会被 NAT 静默掐断，idle 后第一个命令必然等到超时）。
- * <b>改动要同步两处</b>（网关这份也建议补上 testWhileIdle：Reactive Lettuce 同样是池化的）。
+ * 两份实现完全一致（关共享连接 + 池子配置 + 保活心跳），<b>改动要同步两处</b>。
  */
 @Configuration
 @ConditionalOnClass({LettuceConnectionFactory.class, RedisProperties.class})
@@ -57,21 +61,19 @@ public class RedisConnectionTuningConfig {
     }
 
     /**
-     * 让连接池**校验空闲连接**：跨公网的连接会被 NAT / 防火墙静默掐断，而它在池里是「空闲」的、
-     * 借出来才发命令 —— 于是 **idle 之后的第一个命令必然等到 timeout**（dev 是 500ms）。
-     * 对网关来说这正好是「莫名其妙的一次 503，下一个请求又好了」。
+     * 按 yml 重建连接池配置（含把空闲连接压到一条的 {@code max-idle: 1}）。
+     *
+     * <p>⚠️ **刻意不开 {@code testWhileIdle} / {@code testOnBorrow}**：Lettuce 的池化工厂
+     * {@code RedisPooledObjectFactory.validateObject()} 只做 {@code isOpen()}
+     * （javap 确认字节码），那是个**本地标志位** —— 被 NAT 静默丢弃的半开连接照样返回 true，
+     * 校验既不发网络包也发现不了。真正管用的是下面的 {@link RedisKeepAliveHeartbeat}。
      *
      * <p>Spring Boot 在 {@code PoolBuilderFactory} 里只设 maxIdle/minIdle/maxWait/
-     * timeBetweenEvictionRuns 四项（javap 确认），**不暴露** {@code testWhileIdle}，
-     * 而 commons-pool2 的默认值是 false（同样 javap 确认），淘汰器只按时间清理、不验活。
-     * 所以这里按 {@link RedisProperties.Pool} 重建一份等价配置，只把 testWhileIdle 打开；
-     * 刻意不用 {@code testOnBorrow}（那会给每个 Redis 操作加一次跨公网 PING）。
-     *
-     * <p>与 {@code common-core} 的 {@code RedisLettuceTuningConfig} 是同一套逻辑的另一份实现：
-     * 网关是 WebFlux，不能依赖带 servlet 的 common-core。<b>改动要同步两处</b>。
+     * timeBetweenEvictionRuns 四项，而 maxWait 默认 -1ms、timeBetweenEvictionRuns 默认 **null**
+     * （照搬 setter 会在没配 pool 的 profile 上 NPE），因此只覆盖真的配了的项。
      */
     @Bean
-    LettuceClientConfigurationBuilderCustomizer validateIdleConnections(
+    LettuceClientConfigurationBuilderCustomizer tuneConnectionPool(
             ObjectProvider<RedisProperties> propertiesProvider) {
         return builder -> {
             if (!(builder instanceof LettucePoolingClientConfiguration.LettucePoolingClientConfigurationBuilder pooling)) {
@@ -84,8 +86,6 @@ public class RedisConnectionTuningConfig {
             if (pool != null) {
                 config.setMaxIdle(pool.getMaxIdle());
                 config.setMinIdle(pool.getMinIdle());
-                // maxWait 默认 -1ms、timeBetweenEvictionRuns 默认 **null**：照搬 setter 会在
-                // 没配 pool 的 profile（例如只写了 host/port 的 prod yml）上 NPE，只覆盖配了的项
                 if (pool.getMaxWait() != null) {
                     config.setMaxWait(pool.getMaxWait());
                 }
@@ -93,8 +93,26 @@ public class RedisConnectionTuningConfig {
                     config.setTimeBetweenEvictionRuns(pool.getTimeBetweenEvictionRuns());
                 }
             }
-            config.setTestWhileIdle(true);
             pooling.poolConfig(config);
         };
+    }
+
+    /**
+     * Redis 保活心跳（网关版）。生产环境 Redis 与网关同机，也照样开：同机同样有
+     * keepalive 超时（Docker 网桥 / 宿主防火墙），代价只是每 30s 一次 PING。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "stellar.ink.redis.keepalive.enabled", havingValue = "true", matchIfMissing = true)
+    RedisKeepAliveHeartbeat redisKeepAliveHeartbeat(
+            ObjectProvider<RedisConnectionFactory> connectionFactoryProvider,
+            @Value("${stellar.ink.redis.keepalive.interval:30s}") String keepAliveInterval) {
+        RedisConnectionFactory connectionFactory = connectionFactoryProvider.getIfAvailable();
+        if (connectionFactory == null) {
+            return null;
+        }
+        // 用 Boot 的 DurationStyle 自己解析：@Value 直接转 Duration 依赖 Boot 注册的
+        // ApplicationConversionService，而 ApplicationContextRunner 那种最小上下文里没有它
+        return new RedisKeepAliveHeartbeat(connectionFactory,
+                DurationStyle.detectAndParse(keepAliveInterval, ChronoUnit.MILLIS));
     }
 }

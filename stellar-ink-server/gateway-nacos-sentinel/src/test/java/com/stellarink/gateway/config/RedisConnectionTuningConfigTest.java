@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
@@ -17,16 +18,17 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 共享连接必须被关掉 —— 这是「全站 5~16 秒 503」那条链路的开关。
+ * 网关侧 Redis 加固的回归测试。
  *
- * <p>这条断言看着很小，但它守的是一个**只在故障时才看得见**的差异：
- * 开着共享连接时，一条命令超时会让整条流水线的应答错位，之后每个撤销校验都超时；
- * 关掉之后坏连接最多影响一个操作。而它不是配置项（Boot 3.2 没有这个键），
- * 只能由这里的 BeanPostProcessor 设 —— 所以必须有用例盯着，否则哪天有人删了它，
- * 表现会是「偶尔全站 503 又自己好了」，没人能联想到这行代码。
+ * <p>共享连接必须关掉 —— 这是「全站 5~16 秒 503」那条链路的开关；而**真正**解决
+ * 「一段时间不操作就 503」的是 {@link RedisKeepAliveHeartbeat}：
+ * 撤销校验是 fail-closed，一条被 NAT 静默丢弃的空闲连接会直接变成 503，
+ * 而 Lettuce 的池化工厂 validateObject() 只做 `isOpen()`（本地标志位），
+ * 配 `testWhileIdle` / `testOnBorrow` 都发现不了 —— 必须真发一次 PING。
  */
 class RedisConnectionTuningConfigTest {
 
@@ -54,7 +56,24 @@ class RedisConnectionTuningConfigTest {
     }
 
     @Test
-    @DisplayName("真的接进 Spring：自动配置造出的工厂就是「关共享连接 + 池验活空闲」")
+    @DisplayName("心跳真的发 PING；失败就把整池丢掉（半开连接只有重建才能摆脱）")
+    void heartbeatPingsAndResetsOnFailure() {
+        LettuceConnectionFactory healthy = mock(LettuceConnectionFactory.class);
+        RedisConnection connection = mock(RedisConnection.class);
+        when(healthy.getConnection()).thenReturn(connection);
+        new RedisKeepAliveHeartbeat(healthy, java.time.Duration.ofSeconds(30)).beat();
+        verify(connection).ping();
+
+        LettuceConnectionFactory broken = mock(LettuceConnectionFactory.class);
+        RedisConnection dead = mock(RedisConnection.class);
+        when(broken.getConnection()).thenReturn(dead);
+        when(dead.ping()).thenThrow(new IllegalStateException("Redis command timed out"));
+        new RedisKeepAliveHeartbeat(broken, java.time.Duration.ofSeconds(30)).beat();
+        verify(broken).resetConnection();
+    }
+
+    @Test
+    @DisplayName("真的接进 Spring：自动配置造出的工厂就是「关共享连接 + 单条空闲连接」")
     void wiringIsAppliedToTheRealConnectionFactory() {
         redisContext().withUserConfiguration(RedisConnectionTuningConfig.class)
                 .run(context -> {
@@ -64,22 +83,24 @@ class RedisConnectionTuningConfigTest {
                     LettucePoolingClientConfiguration client = assertInstanceOf(
                             LettucePoolingClientConfiguration.class, factory.getClientConfiguration(),
                             "配了 pool 就该走池");
-                    assertTrue(client.getPoolConfig().getTestWhileIdle(),
-                            "池必须验活空闲连接，否则 idle 后第一个请求必然 503");
+                    assertTrue(client.getPoolConfig().getMaxIdle() == 1,
+                            "池里只留一条空闲连接：心跳热的就是业务要借的那条");
+                    assertFalse(client.getPoolConfig().getTestWhileIdle(),
+                            "别开这个：它只做 isOpen()，对半开连接无效，会给人虚假的安全感");
+                    // 心跳 bean 也要真的被装上（撤销校验 fail-closed，没有它就会周期性 503）
+                    assertTrue(context.containsBean("redisKeepAliveHeartbeat"));
                 });
     }
 
     @Test
-    @DisplayName("反向对照：没有本类时，Spring Boot 自己不会关共享连接、也不会验活空闲连接")
+    @DisplayName("反向对照：没有本类时，Spring Boot 自己不会关共享连接")
     void springBootAloneDoesNotHardenAnything() {
         redisContext().run(context -> {
             LettuceConnectionFactory factory = context.getBean(LettuceConnectionFactory.class);
             assertTrue(factory.getShareNativeConnection(),
                     "这就是「配了 pool 也没用」的原因：这个开关只能由代码改");
-            LettucePoolingClientConfiguration client = assertInstanceOf(
-                    LettucePoolingClientConfiguration.class, factory.getClientConfiguration());
-            assertFalse(client.getPoolConfig().getTestWhileIdle(),
-                    "Spring Boot 不暴露 test-while-idle，commons-pool2 的默认值就是 false");
+            assertInstanceOf(LettucePoolingClientConfiguration.class, factory.getClientConfiguration(),
+                    "池本身是 Boot 开的，我们只调整尺寸");
         });
     }
 
@@ -91,11 +112,18 @@ class RedisConnectionTuningConfigTest {
 
         LettucePoolingClientConfiguration.LettucePoolingClientConfigurationBuilder builder =
                 LettucePoolingClientConfiguration.builder();
-        new RedisConnectionTuningConfig()
-                .validateIdleConnections(providerOf(properties))
-                .customize(builder);
+        new RedisConnectionTuningConfig().tuneConnectionPool(providerOf(properties)).customize(builder);
 
-        assertTrue(((LettucePoolingClientConfiguration) builder.build()).getPoolConfig().getTestWhileIdle());
+        assertInstanceOf(LettucePoolingClientConfiguration.class, builder.build());
+    }
+
+    @Test
+    @DisplayName("关掉心跳后不该有那个 bean（ai-service 就按边界这么关的）")
+    void heartbeatCanBeDisabled() {
+        redisContext()
+                .withUserConfiguration(RedisConnectionTuningConfig.class)
+                .withPropertyValues("stellar.ink.redis.keepalive.enabled=false")
+                .run(context -> assertFalse(context.containsBean("redisKeepAliveHeartbeat")));
     }
 
     @SuppressWarnings("unchecked")
@@ -112,8 +140,8 @@ class RedisConnectionTuningConfigTest {
                 .withPropertyValues(
                         "spring.data.redis.host=127.0.0.1",
                         "spring.data.redis.lettuce.pool.enabled=true",
-                        "spring.data.redis.lettuce.pool.max-idle=8",
-                        "spring.data.redis.lettuce.pool.min-idle=2",
+                        "spring.data.redis.lettuce.pool.max-idle=1",
+                        "spring.data.redis.lettuce.pool.min-idle=1",
                         "spring.data.redis.lettuce.pool.time-between-eviction-runs=30s");
     }
 }

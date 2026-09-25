@@ -54,8 +54,10 @@ spring:
         pool:
           enabled: true
           max-active: 16
-          max-idle: 8
-          min-idle: 2
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
+          # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
+          max-idle: 1
+          min-idle: 1
           max-wait: 1s
           time-between-eviction-runs: 30s
 
@@ -69,6 +71,13 @@ spring:
 # 生产推荐 type=cos：图片与数据库解耦，多实例/重建容器都不丢头像；此时该目录不再使用。
 stellar:
   ink:
+    # Redis 连接保活心跳：远端 Redis 与本机之间的空闲连接会被 NAT/防火墙**静默**丢弃
+    # （实测：重启 11 分钟后第一批请求全部 503/500，而 Redis 那边早就没这条连接了），
+    # 30s 一次真 PING 让链路永不空闲；失败就把整池丢掉重建（见 RedisKeepAliveHeartbeat）。
+    redis:
+      keepalive:
+        enabled: true
+        interval: 30s
     storage:
       type: ${STORAGE_TYPE:local}
       cos:

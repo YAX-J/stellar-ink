@@ -138,7 +138,7 @@ AI 技术路线与实施顺序见
 - 浏览去重、点赞明细及文章/笔记计数仍以 MySQL 为事实来源。登录用户的每日闸门用条件更新 + `INSERT IGNORE` 原子抢占，并与计数更新处于同一事务；浏览与点赞成功后只清理详情缓存，列表计数允许在短 TTL 内最终一致。
 - 普通缓存采用故障放行：Redis 不可用时回源 MySQL，并短暂熔断 30 秒；登录锁定和令牌撤销是安全状态，不故障放行。尚未实现 Redis 限流或分布式锁。
 - 连接参数统一来自 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE`；命令超时 dev 500ms / prod 1s，连接超时 2s（缓存超时到点即回源；网关撤销校验 fail-closed，缩短超时只是更快暴露 503，不放行）。
-- **Lettuce 两处加固**（远端 Redis 必配）：`common-core` 的 `RedisLettuceTuningConfig` 关掉共享原生连接（一条坏连接不再拖垮所有命令），并让连接池验活空闲连接（`testWhileIdle`，跨公网连接被 NAT 掐断后不再让 idle 后的第一个命令等到超时）；网关是 WebFlux，自带一份等价实现 `RedisConnectionTuningConfig`，改动要同步两处。`commons-pool2` 是池生效的前提。
+- **Lettuce 三处加固**（远端 Redis 必配）：`common-core` 的 `RedisLettuceTuningConfig` 关掉共享原生连接（一条坏连接不再拖垮所有命令）、把池里的空闲连接压到一条；`RedisKeepAliveHeartbeat` 每 30s 借一条连接发**真 PING** —— 这一条才是治「一段时间不操作就 503」的关键：本机与远端 Redis 之间空闲十几分钟的连接会被 NAT/防火墙**静默丢弃**（本机还是 ESTABLISHED、Redis 那边已无此连接，实测 11 条对 6 条，且服务端 `CONFIG GET timeout`=0），之后第一个命令就是写进黑洞。⚠️ 连接池的 `testWhileIdle`/`testOnBorrow` 在这里**没用**：Lettuce 的池化工厂只做 `StatefulConnection.isOpen()`（本地标志位），不会发网络包。网关是 WebFlux，自带一份等价的 `RedisConnectionTuningConfig` + `RedisKeepAliveHeartbeat`，改动要同步两处。`commons-pool2` 是池生效的前提；心跳开关 `stellar.ink.redis.keepalive.enabled`（ai-service 显式关掉）。
 - Actuator 会自动加入 Redis 健康项；Redis 不可达时三个 Java 服务的 `/actuator/health` 为 `DOWN`。
 
 ## 配置与部署

@@ -276,23 +276,31 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
   `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
   同理 `Nacos` 不可达时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503。
-- **Lettuce 两处加固（远端 Redis 必配，否则 ② 会反复复发）**：都在 `common-core` 的
-  `RedisLettuceTuningConfig`，网关有一份等价实现（它是 WebFlux，不能依赖带 servlet 的
-  common-core），**改一处要同步另一处**：
+- **Lettuce 三处加固（远端 Redis 必配）**：都在 `common-core` 的
+  `RedisLettuceTuningConfig` + `RedisKeepAliveHeartbeat`，网关各有一份等价实现
+  （它是 WebFlux，不能依赖带 servlet 的 common-core），**改一处要同步另一处**：
   ① **关掉共享原生连接**（`shareNativeConnection=false`）：Lettuce 默认所有命令复用一条连接，
-  这条连接上只要有一次命令超时，后续应答就与请求错位，于是**每个** Redis 操作都超时 ——
-  现象是「连续几秒全站 503，然后自己好了」，Lettuce 一条日志都不打。
-  这个开关**只能由代码改**：`spring.data.redis.lettuce` 下没有这个键，配了 pool 也不会自动关
-  （`RedisLettuceTuningTest` 的反向对照断言就钉住这点）。
-  ② **让池验活空闲连接**（`testWhileIdle=true` + `time-between-eviction-runs: 30s`）：
-  Spring Boot 在 `PoolBuilderFactory` 里只设 maxIdle/minIdle/maxWait/timeBetweenEvictionRuns，
-  commons-pool2 默认 `testWhileIdle=false`，而跨公网的连接会被 NAT/防火墙**静默掐断** ——
-  连接在池里是「空闲」的，借出来才发命令，于是 **idle 之后的第一个命令必然等到 timeout**。
-  实测：user-service 重启 12 分钟后第一次登录就撞上「Redis command timed out」，表现是登录 500。
-  刻意不用 `testOnBorrow`：那会给每个 Redis 操作加一次跨公网 PING（30-50ms）。
-  前提是 `commons-pool2` 在 classpath 上（`common-core` 已引，网关也已引）。
-  另外 `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**
-  （四个文件一组）：缺了不会报错，只是淘汰器不跑 —— 那就退化成「空闲校验配了等于没配」。
+  这条连接上只要有一次命令超时，后续应答就与请求错位，于是**每个** Redis 操作都超时。
+  这个开关**只能由代码改**：`spring.data.redis.lettuce` 下没有这个键，配了 pool 也不会自动关。
+  ② **保活心跳 `RedisKeepAliveHeartbeat`（治「一段时间不操作就 503」的正主）**：
+  本机与远端 Redis 之间那条空闲十几分钟的连接会被 **NAT/防火墙静默丢弃** ——
+  本机 `netstat` 还是 ESTABLISHED，Redis 那边早就没这条连接了（实测 11 条对 6 条，
+  且服务端 `CONFIG GET timeout` = 0，**不是 Redis 掐的**）。之后**第一个命令就写进了黑洞**，
+  等到命令超时（dev 500ms）才发现：网关 fail-closed 回 503、业务服务回 500。
+  心跳每 `stellar.ink.redis.keepalive.interval`（默认 30s）借一条连接发一次**真 PING**：
+  链路永不空闲、借到的连接被真实验证、失败即 `resetConnection()` 丢掉整池让下一条请求重建。
+  ⚠️ **别指望 `testWhileIdle` / `testOnBorrow`**：Lettuce 的池化工厂
+  `RedisPooledObjectFactory.validateObject()` 只做 `StatefulConnection.isOpen()`
+  （javap 确认字节码），那是个**本地标志位**，半开连接照样返回 true —— 校验既不发网络包
+  也发现不了。上一轮我配了 `testWhileIdle` 并以为治好了，实测 11 分钟后照样 503，已改成心跳。
+  ③ **池里只留一条空闲连接**（`max-idle: 1` / `min-idle: 1`）：LIFO 借用保证业务请求拿到的
+  就是心跳刚热过的那条；并发多出来的连接用完即销毁，没机会闲在池里被丢掉。
+  代价是并发时不再复用多余连接（每条多 1~2 个 RTT），换来的是不再有「闲死的连接」。
+  `commons-pool2` 是池生效的前提（`common-core` 与网关都已引）；
+  `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**（四件一组），
+  心跳开关是 `stellar.ink.redis.keepalive`（ai-service 按边界设计显式关掉）。
+  回归测试：`RedisKeepAliveHeartbeatTest`（真发 PING / 失败丢池 / 守护线程）、
+  `RedisLettuceTuningTest` 与网关同名测试（含「Boot 自己不会关共享连接」的反向对照）。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
@@ -444,8 +452,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
   草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
-  **Lettuce 已做两处加固**（关共享原生连接 + 池验活空闲连接，见 §5「Lettuce 两处加固」）：
-  这是「莫名其妙 503 / 登录 500」那类**偶发一次、重试就好**的故障的对策。
+  **Lettuce 已做三处加固**（关共享原生连接 + **保活心跳** + 池里只留一条空闲连接，
+  见 §5「Lettuce 三处加固」）：这是「一段时间不操作就 503 / 登录 500」那类
+  **空闲后被 NAT 静默丢包**故障的对策 —— 别指望连接池的空闲校验，它只做 `isOpen()`。
 - **AI 当前状态**：**逐阶段状态与已知缺口见 `docs/ai/status.md`**（那份文件把「未开始」
   明确写出来，避免把计划读成进度）。技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
   开发流程（`docs/ai/development-workflow.md`）均已定稿，**排序以 `docs/ai/fast-track-plan.md` 为准**

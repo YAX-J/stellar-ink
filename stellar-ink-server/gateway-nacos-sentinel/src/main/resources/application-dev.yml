@@ -98,8 +98,10 @@ spring:
         pool:
           enabled: true
           max-active: 16
-          max-idle: 8
-          min-idle: 2
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
+          # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
+          max-idle: 1
+          min-idle: 1
           # 池被借空时的等待上限：宁可快速失败（上层转 503），也不要让请求无限等
           max-wait: 500ms
           # 空闲连接每 30s 跑一次淘汰器，把已经死掉的连接清出去
@@ -181,3 +183,13 @@ logging:
     io.lettuce.core: WARN
     # 本地同样没起 Sentinel dashboard：心跳失败告警压到 ERROR，避免刷屏掩盖真实错误
     com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR
+
+stellar:
+  ink:
+    # Redis 连接保活心跳：远端 Redis 与本机之间的空闲连接会被 NAT/防火墙**静默**丢弃
+    # （实测：重启 11 分钟后第一批请求全部 503/500，而 Redis 那边早就没这条连接了），
+    # 30s 一次真 PING 让链路永不空闲；失败就把整池丢掉重建（见 RedisKeepAliveHeartbeat）。
+    redis:
+      keepalive:
+        enabled: true
+        interval: 30s

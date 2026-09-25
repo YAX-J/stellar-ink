@@ -26,8 +26,10 @@ spring:
         pool:
           enabled: true
           max-active: 16
-          max-idle: 8
-          min-idle: 2
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
+          # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
+          max-idle: 1
+          min-idle: 1
           max-wait: 1s
           time-between-eviction-runs: 30s
   datasource:

@@ -47,6 +47,13 @@ spring:
 # AI 服务配置
 stellar:
   ink:
+    # Redis 连接保活心跳：远端 Redis 与本机之间的空闲连接会被 NAT/防火墙**静默**丢弃
+    # （实测：重启 11 分钟后第一批请求全部 503/500，而 Redis 那边早就没这条连接了），
+    # 30s 一次真 PING 让链路永不空闲；失败就把整池丢掉重建（见 RedisKeepAliveHeartbeat）。
+    redis:
+      keepalive:
+        enabled: false
+        interval: 30s
     ai:
       # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}

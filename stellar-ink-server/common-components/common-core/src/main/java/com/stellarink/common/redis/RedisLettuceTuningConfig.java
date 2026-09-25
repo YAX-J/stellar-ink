@@ -2,14 +2,21 @@ package com.stellarink.common.redis;
 
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
+
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 
 /**
  * Lettuce 的两处加固：**别让一条坏连接毁掉整个服务**。
@@ -64,26 +71,29 @@ public class RedisLettuceTuningConfig {
     }
 
     /**
-     * 让连接池**校验空闲连接**（借出前不校验，省掉每个命令一次 PING 的往返）。
+     * 按 yml 重建连接池配置，并**顺手把空闲连接压到一条**（`max-idle: 1`，yml 里写）。
      *
      * <p>为什么自己造一份 {@link GenericObjectPoolConfig}：Spring Boot 在
      * {@code LettuceConnectionConfiguration$PoolBuilderFactory} 里只设
      * {@code maxIdle / minIdle / maxWait / timeBetweenEvictionRuns} 四项（javap 确认），
-     * 且**不暴露** {@code testWhileIdle}；而 commons-pool2 的默认值是 {@code false}
-     * （同样 javap 确认），也就是淘汰器只是「按时间清理」，不检查连接是不是还活着。
-     * 对远端 Redis 来说这正是漏网的那一类失败，所以这里按 {@link RedisProperties.Pool}
-     * 重建一份完全等价的配置，只把 {@code testWhileIdle} 打开。
+     * 且**不暴露**别的开关；而 {@code maxWait} / {@code timeBetweenEvictionRuns}
+     * 在 {@link RedisProperties.Pool} 里**没有默认值**（前者 -1ms、后者 null），
+     * 照搬 setter 会在没配 pool 的 profile（如 ai-service）上 NPE —— 所以只覆盖真的配了的项。
      *
-     * <p>没有用 {@code testOnBorrow}：那会给**每个** Redis 操作加一次 PING 往返
-     * （跨公网 30~50ms），代价太大；空闲校验是后台线程每
-     * {@code time-between-eviction-runs}（约定 30s）做一次，够用且几乎免费。
+     * <p>⚠️ **刻意不开 {@code testWhileIdle} / {@code testOnBorrow}**：Lettuce 的池化工厂
+     * {@code RedisPooledObjectFactory.validateObject()} 只做 {@code StatefulConnection.isOpen()}
+     * （javap 确认），那是个**本地标志位** —— 被 NAT 静默丢弃的半开连接它照样返回 true，
+     * 校验既不发网络包也发现不了问题。真正管用的是 {@link RedisKeepAliveHeartbeat}：
+     * 每 30s 发一次真 PING，让链路永远不空闲，失败就把整池丢掉重建。
+     * 之所以把空闲连接压到一条，就是为了让心跳热的那条**正好**是业务要借的那条
+     * （LIFO 借用）；并发时多出来的连接用完即销毁，没机会闲到被丢。
      *
      * <p>{@link RedisProperties} 用 {@link ObjectProvider} 取而不是构造器注入：
      * 各服务有 `@WebMvcTest` 切片（启动类的显式 {@code @ComponentScan} 会把本类一起装进去），
      * 而切片里没有 Redis 自动配置，硬依赖会让切片启动失败。
      */
     @Bean
-    LettuceClientConfigurationBuilderCustomizer validateIdleConnections(
+    LettuceClientConfigurationBuilderCustomizer tuneConnectionPool(
             ObjectProvider<RedisProperties> propertiesProvider) {
         return builder -> {
             if (!(builder instanceof LettucePoolingClientConfiguration.LettucePoolingClientConfigurationBuilder pooling)) {
@@ -96,9 +106,6 @@ public class RedisLettuceTuningConfig {
             if (pool != null) {
                 config.setMaxIdle(pool.getMaxIdle());
                 config.setMinIdle(pool.getMinIdle());
-                // 这两个在 RedisProperties.Pool 里**没有默认值**（maxWait 默认 -1ms，
-                // timeBetweenEvictionRuns 默认 null），照搬 setter 会在没配 pool 的服务上 NPE
-                // （ai-service 就没配）—— 只覆盖真的配了的项，其余保持 Boot/池的默认。
                 if (pool.getMaxWait() != null) {
                     config.setMaxWait(pool.getMaxWait());
                 }
@@ -106,8 +113,34 @@ public class RedisLettuceTuningConfig {
                     config.setTimeBetweenEvictionRuns(pool.getTimeBetweenEvictionRuns());
                 }
             }
-            config.setTestWhileIdle(true);
             pooling.poolConfig(config);
         };
+    }
+
+    /**
+     * Redis 保活心跳（远端 Redis 必开）。取不到连接工厂的场合（`@WebMvcTest` 切片）返回 null，
+     * 那样等于不装心跳；要显式关掉就配 {@code stellar.ink.redis.keepalive.enabled=false}
+     * （ai-service 按边界设计就是这么关的：它不碰 Redis）。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "stellar.ink.redis.keepalive.enabled", havingValue = "true", matchIfMissing = true)
+    RedisKeepAliveHeartbeat redisKeepAliveHeartbeat(
+            ObjectProvider<RedisConnectionFactory> connectionFactoryProvider,
+            @Value("${stellar.ink.redis.keepalive.interval:30s}") String keepAliveInterval) {
+        RedisConnectionFactory connectionFactory = connectionFactoryProvider.getIfAvailable();
+        if (connectionFactory == null) {
+            return null;
+        }
+        return new RedisKeepAliveHeartbeat(connectionFactory, parseKeepAliveInterval(keepAliveInterval));
+    }
+
+    /**
+     * 用 Boot 自己的 {@link DurationStyle} 解析（支持 {@code 30s} / {@code PT30S} / 裸毫秒数），
+     * 而不是让 Spring 把 {@code @Value} 直接转成 {@link Duration}：那个转换依赖
+     * Boot 注册的 {@code ApplicationConversionService}，而 {@code ApplicationContextRunner}
+     * 那种最小上下文里没有它 —— 装配会直接失败（踩过：只在这类测试里红）。
+     */
+    static Duration parseKeepAliveInterval(String raw) {
+        return DurationStyle.detectAndParse(raw, ChronoUnit.MILLIS);
     }
 }
