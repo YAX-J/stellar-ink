@@ -15,6 +15,11 @@ dependencies = [
     # 它曾经只写在 dev 里，而 app/providers/openai_compatible.py 在模块顶层 import httpx ——
     # 生产环境按 main 依赖安装会直接 ImportError（本地装了 dev 所以没暴露）。
     "httpx>=0.27,<1.0",
+    # `.env` 的显式加载：pydantic-settings 只会把 .env 喂给 Settings 字段，
+    # **不会**放进 os.environ，而密钥（AI_INTERNAL_SECRET / AI_SECRET_MASTER_KEY）
+    # 是从 os.environ 直读的。没有它，「把密钥写进 .env」这件事不成立。
+    # 它本来就是 pydantic-settings 的传递依赖，这里显式声明是为了不依赖巧合。
+    "python-dotenv>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]

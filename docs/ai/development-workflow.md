@@ -62,6 +62,28 @@ M0–M5 未完成前，不并行开发 Agent、GraphRAG 与微调（roadmap §3 
 
 环境变量清单见 roadmap §18。**本地密钥只放 `.env`（已 gitignore），不入库、不进日志与前端产物。**
 
+### Python 侧本地配置：`stellar-ink-ai/.env`
+
+```bash
+cd stellar-ink-ai
+cp .env.example .env      # Windows: copy .env.example .env
+# 只需填 AI_INTERNAL_SECRET 与 AI_SECRET_MASTER_KEY
+uv sync && uv run uvicorn app.main:app --host 127.0.0.1 --port 8200
+```
+
+| 变量 | 必填 | 作用 |
+|---|---|---|
+| `AI_INTERNAL_SECRET` | ✅ | 内部签名密钥，**与 ai-service 逐字一致**；缺失则所有受保护接口 401 |
+| `AI_SECRET_MASTER_KEY` | ✅（当前暂未用到） | 解 `ai_provider_config` 的密文；接真实 Provider 后必需 |
+| `AI_APP_ENV` / `AI_PORT` / `AI_SERVICE_NAME` / `AI_LOG_LEVEL` | 否 | 有默认值（dev / 8200 / stellar-ink-ai / INFO） |
+
+**为什么非得显式 `load_dotenv`（踩过一次）**：`pydantic-settings` 只把 `.env` 里的键
+喂给 `Settings` 的字段，**不会**放进 `os.environ`；而两个密钥是从 `os.environ` 直读的。
+于是「密钥写进 `.env` 就能用」这件事**不会自动成立** —— `AI_PORT` 生效、密钥却报未配置，
+现象像密钥填错了，排查方向会跑到 Java 侧去。现在 `app/core/config.py` 在 import 期
+`load_dotenv`（默认 `override=False`，**真实环境变量优先于文件**，生产注入的不会被盖掉），
+并由 `tests/test_config_env.py` 用子进程盯着「两条路都要通」。
+
 ## 5. 每轮的最低验证门槛
 
 ```bash

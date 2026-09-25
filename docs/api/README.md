@@ -235,6 +235,12 @@ curl -s http://127.0.0.1:8107/ai/health
 - `available=false` 不等于故障：下游尚未接线时会**如实上报**（假装健康比暴露未接线更危险）
 - 失败形态沿用全局约定：鉴权类错误由网关给出 HTTP 401/403；`/ai/**` 的服务端错误按 `code` 判定
 - `stellar-ink-ai`（Python, 8200）**没有对外接口**：它只提供 `/health` 等内部路由，仅供 ai-service 调用
+- **本地把 Python 跑起来**：`cd stellar-ink-ai && cp .env.example .env`（Windows：`copy`），
+  填两个密钥后 `uv sync && uv run uvicorn app.main:app --host 127.0.0.1 --port 8200`。
+  两个密钥都**没有默认值**：`AI_INTERNAL_SECRET`（与 ai-service 逐字一致）缺失时受保护接口一律 401，
+  `AI_SECRET_MASTER_KEY` 缺失时面板的「保存 Key」被拒。
+  ⚠️ 直接 curl `/qa`、`/writing/*`、`/agent/ask` 会 401，那是**正常**的（必须由 Java 带 `X-AI-*` 签名头调用）；
+  非生产环境可用 `GET /internal/whoami` 验证签名链路是否通了
 
 **模型配置（全部 ADMIN）**
 
@@ -400,8 +406,7 @@ curl -N -s -X POST http://127.0.0.1:8080/ai/qa/stream \
 **星海问答（Python 内部，供 ai-service 调用）**
 
 | 方法 | 路径（Python 内部，:8200） | 说明 |
-|---|---|---|
-| POST | `/qa` | 一次问答：检索 → 引用 → 提示词 → 模型 → 结论。请求体是既有的 `QaStreamRequest`（`question` / `conversationId` / `topK`），响应是 `QaAnswer`（`answer` / `citations` / `doneReason` / `usage` / `evidenceSufficient`） |
+|---|---|---|| POST | `/qa` | 一次问答：检索 → 引用 → 提示词 → 模型 → 结论。请求体是既有的 `QaStreamRequest`（`question` / `conversationId` / `topK`），响应是 `QaAnswer`（`answer` / `citations` / `doneReason` / `usage` / `evidenceSufficient`） |
 | POST | `/qa/stream` | 同一套编排的 SSE 版本：`text/event-stream`，事件顺序 `meta → citation* → delta* → done`（`error` 是旁路事件）。空问题在契约层 422；语料缺失在开流前返回 JSON 400 |
 
 ```bash
