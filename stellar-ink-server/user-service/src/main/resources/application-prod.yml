@@ -48,6 +48,16 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 连接池（与 dev 同尺寸；max-wait 跟随 prod 的 1s 超时）。
+        # 「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开 ——
+        # 不写 pool 段也不会报错，但淘汰器不跑，空闲连接被 NAT 掐断后第一个命令仍要等到超时。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 1s
+          time-between-eviction-runs: 30s
 
   # 头像上传：单文件 1MB，整个请求 2MB 与 Nginx client_max_body_size 对齐
   servlet:

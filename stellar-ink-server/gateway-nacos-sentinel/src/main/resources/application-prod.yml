@@ -76,6 +76,16 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 连接池（与 dev 同尺寸；max-wait 跟随 prod 的 1s 超时）。
+        # 撤销校验是 fail-closed：不写 pool 段也能跑，但空闲连接被 NAT 掐断后
+        # 第一个带 token 的请求必然 503（下一个又好了）—— 那正是「莫名其妙 503」。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 1s
+          time-between-eviction-runs: 30s
 
 sa-token:
   token-name: Authorization

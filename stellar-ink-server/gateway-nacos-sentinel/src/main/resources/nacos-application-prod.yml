@@ -36,6 +36,15 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 池子尺寸；「共享连接」与「验活空闲连接」由 RedisConnectionTuningConfig 关/开
+        # （不是配置项）。不写这段也能跑，但空闲连接被掐断后第一个带 token 的请求会 503。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 1s
+          time-between-eviction-runs: 30s
   cloud:
     sentinel:
       eager: true

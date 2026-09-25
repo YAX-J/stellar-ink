@@ -276,6 +276,23 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
   `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
   同理 `Nacos` 不可达时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503。
+- **Lettuce 两处加固（远端 Redis 必配，否则 ② 会反复复发）**：都在 `common-core` 的
+  `RedisLettuceTuningConfig`，网关有一份等价实现（它是 WebFlux，不能依赖带 servlet 的
+  common-core），**改一处要同步另一处**：
+  ① **关掉共享原生连接**（`shareNativeConnection=false`）：Lettuce 默认所有命令复用一条连接，
+  这条连接上只要有一次命令超时，后续应答就与请求错位，于是**每个** Redis 操作都超时 ——
+  现象是「连续几秒全站 503，然后自己好了」，Lettuce 一条日志都不打。
+  这个开关**只能由代码改**：`spring.data.redis.lettuce` 下没有这个键，配了 pool 也不会自动关
+  （`RedisLettuceTuningTest` 的反向对照断言就钉住这点）。
+  ② **让池验活空闲连接**（`testWhileIdle=true` + `time-between-eviction-runs: 30s`）：
+  Spring Boot 在 `PoolBuilderFactory` 里只设 maxIdle/minIdle/maxWait/timeBetweenEvictionRuns，
+  commons-pool2 默认 `testWhileIdle=false`，而跨公网的连接会被 NAT/防火墙**静默掐断** ——
+  连接在池里是「空闲」的，借出来才发命令，于是 **idle 之后的第一个命令必然等到 timeout**。
+  实测：user-service 重启 12 分钟后第一次登录就撞上「Redis command timed out」，表现是登录 500。
+  刻意不用 `testOnBorrow`：那会给每个 Redis 操作加一次跨公网 PING（30-50ms）。
+  前提是 `commons-pool2` 在 classpath 上（`common-core` 已引，网关也已引）。
+  另外 `spring.data.redis.lettuce.pool` 段在 **dev / prod 与两份 nacos 模板里都要写**
+  （四个文件一组）：缺了不会报错，只是淘汰器不跑 —— 那就退化成「空闲校验配了等于没配」。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
@@ -427,6 +444,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
   草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
+  **Lettuce 已做两处加固**（关共享原生连接 + 池验活空闲连接，见 §5「Lettuce 两处加固」）：
+  这是「莫名其妙 503 / 登录 500」那类**偶发一次、重试就好**的故障的对策。
 - **AI 当前状态**：**逐阶段状态与已知缺口见 `docs/ai/status.md`**（那份文件把「未开始」
   明确写出来，避免把计划读成进度）。技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
   开发流程（`docs/ai/development-workflow.md`）均已定稿，**排序以 `docs/ai/fast-track-plan.md` 为准**

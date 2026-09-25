@@ -24,6 +24,16 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 连接池（键名以 Spring Boot 3.2 为准，没有 test-while-idle）：
+        # 「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开，
+        # 这里只放池子尺寸；改这里请同时改本地 application-dev.yml。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
   datasource:
     druid:
       # 只放池子参数，url/账号仍由本地文件（环境变量）提供

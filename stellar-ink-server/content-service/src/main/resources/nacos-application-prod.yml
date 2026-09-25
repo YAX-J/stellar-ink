@@ -23,6 +23,15 @@ spring:
       connect-timeout: 2s
       lettuce:
         shutdown-timeout: 200ms
+        # 池子尺寸；「共享连接」与「验活空闲连接」由 common-core 的
+        # RedisLettuceTuningConfig 关/开（不是配置项）。改这里请同步 application-prod.yml。
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 1s
+          time-between-eviction-runs: 30s
   datasource:
     druid:
       initial-size: 5

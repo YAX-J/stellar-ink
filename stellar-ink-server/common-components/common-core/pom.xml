@@ -35,6 +35,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <!-- Lettuce 连接池：没有它 `spring.data.redis.lettuce.pool` 全部被忽略，
+             RedisLettuceTuningConfig 关掉共享连接后就退化成「每个操作新建一条连接」。
+             版本由 spring-boot-dependencies 管理（2.12.0），不要写死。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>

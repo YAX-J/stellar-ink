@@ -2,12 +2,22 @@ package com.stellarink.gateway.config;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 共享连接必须被关掉 —— 这是「全站 5~16 秒 503」那条链路的开关。
@@ -41,5 +51,69 @@ class RedisConnectionTuningConfigTest {
         Object other = new Object();
 
         assertTrue(processor.postProcessBeforeInitialization(other, "anything") == other);
+    }
+
+    @Test
+    @DisplayName("真的接进 Spring：自动配置造出的工厂就是「关共享连接 + 池验活空闲」")
+    void wiringIsAppliedToTheRealConnectionFactory() {
+        redisContext().withUserConfiguration(RedisConnectionTuningConfig.class)
+                .run(context -> {
+                    // 这条最容易假绿：BeanPostProcessor 若晚于 afterPropertiesSet 就完全不起作用
+                    LettuceConnectionFactory factory = context.getBean(LettuceConnectionFactory.class);
+                    assertFalse(factory.getShareNativeConnection(), "工厂级开关必须真的被改到");
+                    LettucePoolingClientConfiguration client = assertInstanceOf(
+                            LettucePoolingClientConfiguration.class, factory.getClientConfiguration(),
+                            "配了 pool 就该走池");
+                    assertTrue(client.getPoolConfig().getTestWhileIdle(),
+                            "池必须验活空闲连接，否则 idle 后第一个请求必然 503");
+                });
+    }
+
+    @Test
+    @DisplayName("反向对照：没有本类时，Spring Boot 自己不会关共享连接、也不会验活空闲连接")
+    void springBootAloneDoesNotHardenAnything() {
+        redisContext().run(context -> {
+            LettuceConnectionFactory factory = context.getBean(LettuceConnectionFactory.class);
+            assertTrue(factory.getShareNativeConnection(),
+                    "这就是「配了 pool 也没用」的原因：这个开关只能由代码改");
+            LettucePoolingClientConfiguration client = assertInstanceOf(
+                    LettucePoolingClientConfiguration.class, factory.getClientConfiguration());
+            assertFalse(client.getPoolConfig().getTestWhileIdle(),
+                    "Spring Boot 不暴露 test-while-idle，commons-pool2 的默认值就是 false");
+        });
+    }
+
+    @Test
+    @DisplayName("只配了 host/port（prod yml 就没有 pool 段）也不炸：那两个属性在 Boot 里没有默认值")
+    void toleratesUnconfiguredPool() {
+        RedisProperties properties = new RedisProperties();
+        assertNull(properties.getLettuce().getPool().getTimeBetweenEvictionRuns());
+
+        LettucePoolingClientConfiguration.LettucePoolingClientConfigurationBuilder builder =
+                LettucePoolingClientConfiguration.builder();
+        new RedisConnectionTuningConfig()
+                .validateIdleConnections(providerOf(properties))
+                .customize(builder);
+
+        assertTrue(((LettucePoolingClientConfiguration) builder.build()).getPoolConfig().getTestWhileIdle());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<RedisProperties> providerOf(RedisProperties properties) {
+        ObjectProvider<RedisProperties> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(properties);
+        return provider;
+    }
+
+    /** 只装 Redis 自动配置的最小上下文（不连真 Redis：连接是懒建的） */
+    private static ApplicationContextRunner redisContext() {
+        return new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(RedisAutoConfiguration.class))
+                .withPropertyValues(
+                        "spring.data.redis.host=127.0.0.1",
+                        "spring.data.redis.lettuce.pool.enabled=true",
+                        "spring.data.redis.lettuce.pool.max-idle=8",
+                        "spring.data.redis.lettuce.pool.min-idle=2",
+                        "spring.data.redis.lettuce.pool.time-between-eviction-runs=30s");
     }
 }
