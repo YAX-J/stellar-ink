@@ -7,10 +7,18 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.stellarink.aiclient.dto.AgentAskRequestDTO;
+import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.EvalCaseResultDTO;
+import com.stellarink.aiclient.dto.EvalRunRequestDTO;
+import com.stellarink.aiclient.dto.EvalRunResponseDTO;
+import com.stellarink.aiclient.dto.EvalStrategySpecDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
 import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleResultDTO;
 import com.stellarink.aiclient.dto.WritingSuggestRequestDTO;
 import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
 import org.junit.jupiter.api.DisplayName;
@@ -22,9 +30,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -159,6 +170,42 @@ class AiContractTest {
     }
 
     @Test
+    @DisplayName("写作画像：请求与结果都能与 Python 契约互通（E1）")
+    void writingStyleRoundTrips() throws IOException {
+        WritingStyleRequestDTO request =
+                roundTrip("writing_style_request.json", WritingStyleRequestDTO.class);
+        WritingStyleResultDTO result =
+                roundTrip("writing_style_result.json", WritingStyleResultDTO.class);
+
+        assertEquals(1L, request.getAuthorId());
+        assertEquals(20, request.resolvedMaxSamples());
+        assertTrue(result.getEvidenceSufficient());
+        assertNotNull(result.getProfile());
+        // 画像里**不含原句**：字组只能是短字组，出现标点就说明有人把句子塞了进来
+        for (String phrase : result.getProfile().getCommonPhrases()) {
+            assertTrue(phrase.length() >= 3 && phrase.length() <= 6, "字组长度异常：" + phrase);
+            assertFalse(
+                    phrase.chars().anyMatch(ch -> "。！？，、；：".indexOf(ch) >= 0),
+                    "字组里混进了标点：" + phrase);
+        }
+        assertFalse(result.getProfile().getTransitions().isEmpty());
+    }
+
+    @Test
+    @DisplayName("画像 DTO 不得多序列化出契约外的键（hasContent 只是给调用方的便利方法）")
+    void writingStyleProfileDoesNotLeakHelperFields() throws IOException {
+        WritingStyleResultDTO result = parse("writing_style_result.json", WritingStyleResultDTO.class);
+        JsonNode profile = MAPPER.valueToTree(result.getProfile());
+
+        // 便利方法漏进 JSON 是个真实存在过的坑：`@JsonProperty(READ_ONLY)` 只挡反序列化，
+        // 序列化时它会以方法名出现在报文里，两侧契约随即对不上
+        assertFalse(profile.has("hasContent"), "便捷方法漏进了 JSON：@JsonIgnore 掉了？");
+        assertFalse(profile.has("content"), "便捷方法以别的名字漏进了 JSON");
+        assertTrue(profile.has("commonPhrases"), "字组字段不见了");
+        assertTrue(profile.has("medianSentenceChars"), "键名不是驼峰（Jackson 默认应当是驼峰）");
+    }
+
+    @Test
     void indexRebuildRequestRoundTrips() throws IOException {
         IndexRebuildRequestDTO request =
                 roundTrip("index_rebuild_request.json", IndexRebuildRequestDTO.class);
@@ -180,6 +227,53 @@ class AiContractTest {
         assertEquals(
                 java.time.Instant.parse("2026-09-24T13:02:13Z"),
                 job.getFinishedAt());
+    }
+
+    @Test
+    @DisplayName("评测请求：只跑前 4 题的调试配置，开关原样传给 Python")
+    void evalRunRequestRoundTrips() throws IOException {
+        EvalRunRequestDTO request = roundTrip("eval_run_request.json", EvalRunRequestDTO.class);
+
+        assertEquals("golden_v1", request.getDataset());
+        assertEquals(30, request.getMaxCases());
+        assertEquals(3, request.getStrategies().size());
+
+        EvalStrategySpecDTO sparse = request.getStrategies().get(0);
+        assertEquals("sparse", sparse.getKey());
+        assertTrue(sparse.getEnableSparse());
+        assertEquals(Boolean.FALSE, sparse.getEnableDense(), "单路 Sparse 不该开向量通路");
+
+        EvalStrategySpecDTO floor = request.getStrategies().get(2);
+        assertEquals("sparse+floor", floor.getKey());
+        assertEquals(11.0, floor.getMinScore());
+        assertEquals(0.5, floor.getMinScoreRatio());
+    }
+
+    @Test
+    @DisplayName("评测响应：对比表 + 逐题明细都要能反序列化（面板直接渲染）")
+    void evalRunResponseRoundTrips() throws IOException {
+        EvalRunResponseDTO response = roundTrip("eval_run_response.json", EvalRunResponseDTO.class);
+
+        assertEquals("fake", response.getModels(), "当前口径：Fake 向量，不代表真实语义质量");
+        assertEquals(29, response.getCorpusPosts());
+        assertEquals(4, response.getKs().size());
+        assertEquals(5, response.getStrategies().size());
+        assertEquals("sparse+floor", response.getStrategies().get(4).getKey());
+        assertTrue(response.getNotes().stream().anyMatch(note -> note.contains("FakeProvider")));
+
+        // 对比表形状：每组策略都有一份指标，且含面板要展示的列
+        Map<String, Object> sparse = response.getPerStrategy().get("sparse");
+        assertNotNull(sparse, "对比表缺少 sparse 列");
+        assertTrue(sparse.containsKey("recall@1"));
+        assertTrue(sparse.containsKey("refusalRate"));
+
+        // 逐题明细：5 组策略 × 4 题
+        assertEquals(20, response.getCases().size());
+        EvalCaseResultDTO first = response.getCases().get(0);
+        assertEquals("q001", first.getCaseId());
+        assertEquals("answerable", first.getCaseType());
+        assertEquals(Boolean.FALSE, first.getRefused());
+        assertFalse(first.getRetrievedPosts().isEmpty(), "有答案题应当检索到文章");
     }
 
     @Test
@@ -224,6 +318,24 @@ class AiContractTest {
     }
 
     @Test
+    @DisplayName("只读 Agent：预算触顶仍带回引用（不能因为 answer 为空就丢掉 citations）")
+    void agentAskRoundTrips() throws IOException {
+        AgentAskRequestDTO request = roundTrip("agent_ask_request.json", AgentAskRequestDTO.class);
+        AgentAskResultDTO result = roundTrip("agent_ask_result.json", AgentAskResultDTO.class);
+
+        assertEquals("一年写十八万字的方法是什么？", request.getQuestion());
+        assertEquals(4, request.getMaxSteps());
+        assertEquals("length", result.getDoneReason());
+        assertEquals("", result.getAnswer(), "预算触顶时答案为空是**正常**形态");
+        assertEquals(2, result.getCitations().size(), "没收敛也必须带回已经查到的引用");
+        assertEquals(2, result.getSteps().size());
+        assertEquals("budget", result.getInterruptedBy());
+        assertTrue(
+                result.getSteps().stream().anyMatch(step -> step.getError() != null && !step.getError().isEmpty()),
+                "格式不符那一步要留下原因，否则前端看不到「为什么没收敛」");
+    }
+
+    @Test
     @DisplayName("fixture 里的键名不得出现蛇形（出现即说明某侧私自换了命名）")
     void fixtureKeysAreCamelCase() throws IOException {
         Set<String> files = Set.of(
@@ -231,8 +343,14 @@ class AiContractTest {
                 "qa_answer.json",
                 "writing_suggest_request.json",
                 "writing_suggest_result.json",
+                "writing_style_request.json",
+                "writing_style_result.json",
+                "agent_ask_request.json",
+                "agent_ask_result.json",
                 "index_rebuild_request.json",
                 "index_job.json",
+                "eval_run_request.json",
+                "eval_run_response.json",
                 "error_body.json");
 
         for (String fileName : files) {

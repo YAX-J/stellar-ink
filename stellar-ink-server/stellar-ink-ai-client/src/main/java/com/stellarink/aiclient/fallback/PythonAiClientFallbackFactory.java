@@ -1,9 +1,16 @@
 package com.stellarink.aiclient.fallback;
 
 import com.stellarink.aiclient.client.PythonAiClient;
+import com.stellarink.aiclient.dto.EvalRunRequestDTO;
+import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
 import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
+import com.stellarink.aiclient.dto.AgentAskRequestDTO;
+import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleResultDTO;
 import com.stellarink.aiclient.dto.WritingSuggestRequestDTO;
 import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
@@ -12,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.openfeign.FallbackFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,8 +55,30 @@ public class PythonAiClientFallbackFactory implements FallbackFactory<PythonAiCl
             }
 
             @Override
+            public QaAnswerDTO qaAsk(QaStreamRequestDTO request) {
+                // 不返回空答案：前端必须能区分「文章里没有依据」（拒答）与「服务坏了」（可重试）
+                log.warn("AI 问答降级：{}", describe(cause));
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
             public WritingSuggestResultDTO writingSuggest(WritingSuggestRequestDTO request) {
                 log.warn("AI 写作建议降级：{}", describe(cause));
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
+            public WritingStyleResultDTO writingStyle(WritingStyleRequestDTO request) {
+                // 同样不返回「空画像」：那会被前端显示成「你还没写出风格」，而实际是服务坏了
+                log.warn("AI 写作画像降级：{}", describe(cause));
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
+            public AgentAskResultDTO agentAsk(AgentAskRequestDTO request) {
+                // 绝不返回「空答案 + stop」：那会被前端当成「答完了但没内容」，
+                // 而实际是服务坏了。降级一律 503，让调用方知道该重试
+                log.warn("AI Agent 降级：{}", describe(cause));
                 throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
             }
 
@@ -61,6 +91,25 @@ public class PythonAiClientFallbackFactory implements FallbackFactory<PythonAiCl
             @Override
             public IndexJobDTO indexJob(String jobId) {
                 log.warn("AI 索引任务查询降级：jobId={}", jobId);
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
+            public List<Map<String, Object>> evalDatasets() {
+                log.warn("AI 评测数据集清单降级：{}", describe(cause));
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
+            public List<Map<String, Object>> evalStrategies() {
+                log.warn("AI 评测策略清单降级：{}", describe(cause));
+                throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
+            }
+
+            @Override
+            public EvalRunResponseDTO evalRun(EvalRunRequestDTO request) {
+                // 评测不可用时不能返回空对比表：那会让面板显示「0 分」而不是「服务没连上」
+                log.warn("AI 评测运行降级：{}", describe(cause));
                 throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, UNAVAILABLE_MSG);
             }
         };

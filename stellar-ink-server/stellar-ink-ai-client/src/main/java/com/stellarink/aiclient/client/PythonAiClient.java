@@ -1,10 +1,16 @@
 package com.stellarink.aiclient.client;
 
 import com.stellarink.aiclient.constant.AiContractPaths;
+import com.stellarink.aiclient.dto.AgentAskRequestDTO;
+import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.EvalRunRequestDTO;
+import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
 import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
+import com.stellarink.aiclient.dto.WritingStyleResultDTO;
 import com.stellarink.aiclient.dto.WritingSuggestRequestDTO;
 import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
 import com.stellarink.aiclient.fallback.PythonAiClientFallbackFactory;
@@ -15,48 +21,122 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
+import java.util.List;
 import java.util.Map;
 
 /**
- * Java 鈫?Python 鐨勫唴閮ㄥ鎴风濂戠害锛團eign锛夈€? *
- * <p>杩欐槸**鍐呯綉鍗忚**锛氳矾寰勪笌 8200 绔彛閮戒笉缁忕綉鍏筹紝娴忚鍣ㄦ棤娉曠洿杈撅紙绾㈢嚎 搂7.2锛夈€? * 瀵瑰鎺ュ彛鏄?ai-service 鐨?{@code /ai/**}锛屼袱鑰呬笉瑕佹贩涓轰竴璋堛€? *
- * <p>M0 鍙喕缁撳绾︼細鏂规硶绛惧悕涓?DTO 宸插畾锛岀湡姝ｇ殑璋冪敤銆佺鍚嶅ご娉ㄥ叆锛圡1锛夌敱 ai-service 瑁呴厤銆? * URL 璧伴厤缃」 {@code ai.python.base-url}锛堥粯璁?{@code http://127.0.0.1:8200}锛夛紝
- * 涓嶆敞鍐?Nacos锛歅ython 涓嶅弬涓?Java 鏈嶅姟鍙戠幇銆? */
+ * Java → Python 的内部客户端契约（Feign）。
+ *
+ * <p>这是**内网协议**：路径与 8200 端口都不经网关，浏览器无法直达（红线 §7.2）。
+ * 对外接口是 ai-service 的 {@code /ai/**}，两者不要混为一谈。
+ *
+ * <p>M0 只冻结契约：方法签名与 DTO 已定，真正的调用与签名头注入（A2 落地）
+ * 由 ai-service 装配。URL 走配置项 {@code ai.python.base-url}
+ * （默认 {@code http://127.0.0.1:8200}），不注册 Nacos：Python 不参与 Java 服务发现。
+ */
 @FeignClient(
         name = "python-ai",
         url = "${ai.python.base-url:http://127.0.0.1:8200}",
         fallbackFactory = PythonAiClientFallbackFactory.class)
 public interface PythonAiClient {
 
-    /** Python 渚ф帰娲伙紙鍘熷 JSON锛屼究浜?ai-service 鍒ゅ畾闄嶇骇鍘熷洜锛夈€?*/
+    /** Python 侧探活（原始 JSON，便于 ai-service 判定降级原因）。 */
     @GetMapping(AiContractPaths.HEALTH)
     Map<String, Object> health();
 
     /**
-     * 娴佸紡闂瓟銆?     *
-     * <p>杩斿洖绫诲瀷鏆傚畾 {@code Object}锛歁1 鎵撻€?SSE 鏃跺啀鎹㈡垚鍏蜂綋鐨勪簨浠舵祦绫诲瀷
-     * 锛圫pring 渚х敤 {@code ResponseBodyEmitter} / WebClient 娴侊紝鐢?ai-service 鍐冲畾锛?     * 瀹㈡埛绔笉鎻愬墠缁戝畾鏌愮浼犺緭瀹炵幇锛夈€?     */
+     * 流式问答。
+     *
+     * <p>返回类型暂定 {@code Object}：打通 SSE 时再换成具体的事件流类型
+     * （Spring 侧用 {@code ResponseBodyEmitter} / WebClient 流，由 ai-service 决定；
+     * 客户端不提前绑定某种传输实现）。
+     */
     @PostMapping(
             value = AiContractPaths.QA_STREAM,
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     Object qaStream(@RequestBody QaStreamRequestDTO request);
 
-    /** 鍐欎綔寤鸿锛堣崏绋垮彧鍦ㄦ湰娆¤姹傚唴浣跨敤锛夈€?*/
+    /**
+     * 非流式问答：一次请求拿完整答案（含引用与拒答标记）。
+     *
+     * <p>与 {@link #qaStream} 并存是有意的：SSE 那条要等 Java 协议转换与前端消费方一起接，
+     * 而「检索 → 引用 → 拒答」的编排已经能用了 —— 先用它把功能交付出去，
+     * 而不是让用户等一条还没人消费的流式通道。
+     */
+    @PostMapping(
+            value = AiContractPaths.QA_ASK,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    QaAnswerDTO qaAsk(@RequestBody QaStreamRequestDTO request);
+
+    /** 写作建议（草稿只在本次请求内使用）。 */
     @PostMapping(
             value = AiContractPaths.WRITING_SUGGEST,
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     WritingSuggestResultDTO writingSuggest(@RequestBody WritingSuggestRequestDTO request);
 
-    /** 瑙﹀彂绱㈠紩閲嶅缓浠诲姟锛圓DMIN锛夈€?*/
+    /**
+     * 写作风格画像（E1）：按作者统计已发表文章的习惯。
+     *
+     * <p>只读、可重算、不落库。它是 E2 只读 Agent 的前置上下文，
+     * 也让 Copilot 的润色能贴合作者本来的语气。
+     */
+    @PostMapping(
+            value = AiContractPaths.WRITING_STYLE,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    WritingStyleResultDTO writingStyle(@RequestBody WritingStyleRequestDTO request);
+
+    /**
+     * 只读 Agent 问答（E2）：预算受限的多步检索，工具全部只读。
+     *
+     * <p>它比一次问答慢、也更贵（可能调多次模型与检索），因此预算由 ai-service 定，
+     * 不由客户端传。
+     */
+    @PostMapping(
+            value = AiContractPaths.AGENT_ASK,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    AgentAskResultDTO agentAsk(@RequestBody AgentAskRequestDTO request);
+
+    /** 触发索引重建任务（ADMIN）。 */
     @PostMapping(
             value = AiContractPaths.INDEX_REBUILD,
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     IndexJobDTO rebuildIndex(@RequestBody IndexRebuildRequestDTO request);
 
-    /** 鏌ヨ绱㈠紩浠诲姟鐘舵€侊紙ADMIN锛夈€?*/
+    /** 查询索引任务状态（ADMIN）。 */
     @GetMapping(value = AiContractPaths.INDEX_JOB, produces = MediaType.APPLICATION_JSON_VALUE)
     IndexJobDTO indexJob(@PathVariable("id") String jobId);
+
+    /**
+     * 可评测的数据集清单（评测台下拉框）。
+     *
+     * <p>返回原始列表而不是自定义 DTO：这是**给面板读的展示数据**
+     * （id / 名称 / 题目数），字段由 Python 侧 `EvalDataset.summary()` 决定，
+     * 前端按字段名渲染即可；Java 不解析、不加工，避免多一层需要同步的映射。
+     */
+    @GetMapping(value = AiContractPaths.EVAL_DATASETS, produces = MediaType.APPLICATION_JSON_VALUE)
+    List<Map<String, Object>> evalDatasets();
+
+    /**
+     * 标准策略组（评测台首次打开时的默认勾选）。
+     *
+     * <p>同样原样转发：默认五组由 Python 定义（与命令行脚本同一份），
+     * 前端若自己写一份默认值，两边迟早会分叉。
+     */
+    @GetMapping(
+            value = AiContractPaths.EVAL_STRATEGIES,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    List<Map<String, Object>> evalStrategies();
+
+    /** 跑一轮检索评测：返回对比表 + 逐题明细（ADMIN；只读，不改数据）。 */
+    @PostMapping(
+            value = AiContractPaths.EVAL_RUN,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    EvalRunResponseDTO evalRun(@RequestBody EvalRunRequestDTO request);
 }
