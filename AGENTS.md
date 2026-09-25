@@ -37,7 +37,7 @@ stellar-ink/
 ```bash
 # 前端（端口 5173）
 cd stellar-ink-web && npm install && npm run dev      # 开发
-npm run build                                          # 构建验证
+npm run check                                          # 验证：自检（差异/Copilot 采纳/SSE 切帧 + 部署前缀）+ vite build
 
 # 后端（网关 8080 对外；Nacos 8848；服务 8101-8102）
 cd tools/nacos/bin && startup.cmd -m standalone       # 1. 先起 Nacos
@@ -327,7 +327,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   一致性由 `stellar-ink-ai/tests/fixtures/key_vector.json` 的固化向量守住（两侧单测都读它）。
 - **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
-  M1 实现签名与 nonce 防重放。密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。
+  签名与 nonce 防重放已在 A2 落地（Python 侧 nonce 目前是**进程内** + TTL，多实例前换 Redis）。
+  密钥 `AI_INTERNAL_SECRET` 无默认值，缺失即拒绝启动相关能力。
 - **内部签名的标准串（跨语言，改必须两侧同时改）**：
   `METHOD \n PATH \n TIMESTAMP_MS \n NONCE \n SHA256_HEX(BODY) \n USER_ID \n ROLE`；
   签名是 HMAC-SHA256 小写十六进制，放 `X-AI-Signature`。
@@ -354,11 +355,95 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - Redis 接入已完成：`common-core` 提供 `RedisUtils` 与故障回源的 `RedisCache`；登录失败计数与账号锁定、
   JWT 撤销、公开作者摘要、公开文章/笔记及标签/统计/评论/友链/流星/回声读模型已接 Redis。完整用户资料、
   草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细和持久计数不进缓存；Redis 限流与分布式锁尚未实现。
-- **AI 当前状态**：技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
-  开发流程（`docs/ai/development-workflow.md`）均已定稿，**M0「契约与工程骨架」已完成**：
-  `stellar-ink-ai`（Python 骨架 + 契约 + fixture）、`stellar-ink-ai-client`（Feign 契约 + DTO + 降级）、
-  `ai-service :8107`（公开 `/ai/health`）三个模块可构建可测试，**全程 Fake Adapter、无任何密钥**；
-  下一阶段是 M1「Java/Python 安全调用链」（网关 `/ai/**` 路由 + HMAC 签名 + SSE）。
+- **AI 当前状态**：**逐阶段状态与已知缺口见 `docs/ai/status.md`**（那份文件把「未开始」
+  明确写出来，避免把计划读成进度）。技术路线（`docs/ai/README.md`）、实施顺序（`docs/ai/implementation-roadmap.md`）、
+  开发流程（`docs/ai/development-workflow.md`）均已定稿，**排序以 `docs/ai/fast-track-plan.md` 为准**
+  （A 控制面 → B 检索内核 → C 评测台 → D 前端实验室 → E 扩展）。已完成：
+  M0 契约与骨架（Python 骨架 + 契约 fixture + Feign 客户端 + `ai-service :8107`）、
+  A1 模型配置中心（`ai_*` 表 + AES-GCM 密钥加密 + Provider 配置 CRUD 脱敏 + Python Provider 层 + 前端面板）、
+  A2 安全调用链（网关 `/ai/**` 路由与角色门槛 + 内部 HMAC 签名，**标准串含身份字段** + Python 纯 ASGI 验签）、
+  B2/B3a 切块与 BM25/RRF/Dense/混合开关、B3b-1 检索管道（`app/rag/pipeline.py`：召回 → RRF → Rerank
+  → post 级去重 → 空即拒答，`RetrievalConfig` 就是前端实验室的开关，**评测与线上共用同一条编排**）、
+  B1 Qdrant 适配（`app/rag/qdrant_store.py`：薄 HTTP 客户端 + 幂等 point id + 错误分类，
+  32 条协议测试用 MockTransport 锁协议，**真实冒烟待跑** `uv run python scripts/qdrant_smoke.py`）、
+  B3b-2 索引写路径（`app/rag/index_pipeline.py`：切块 → 嵌入 → 建集合 → 清旧点 → 分批写入；
+  `RetrievalPipeline.dense_store` 让 Dense 通路可走向量库，不给则走本地余弦，
+  5 条离线端到端测试用内存 Qdrant 模拟器把写路径与读路径接起来跑通）、
+  C1–C3 指标层 + 黄金集 v1（30 题，标注经证据自检）+ 策略对比运行器
+  + **纯 BM25 本地基线**（`uv run python scripts/eval_local_baseline.py`）与四路对比
+  （`uv run python scripts/compare_strategies.py`），两者都不需要 Qdrant 与密钥就能跑通评测链路；
+  C3-1 评测接口（`app/api/v1/eval.py`：`GET /eval/datasets`、`GET /eval/strategies`、`POST /eval/run`，
+  **受内部签名保护**，默认五组策略与命令行同源，Fake 口径写进响应 `notes`）；
+  C3-2 Java 侧（客户端 5 个 DTO + 两份 fixture + `AiEvalController` 的 `/ai/admin/eval/**`
+  + `InternalSignatureFeignInterceptor` 给所有 Feign 请求统一加 `X-AI-*` 签名头）、
+  C3-2 前端（`/ai-lab` 的「评测台」页签 `?tab=eval`：选数据集 → 勾策略 → 跑 → 对比表 + 逐题下钻 +
+  `notes` 原文展示，数据走 `stores/ai.js`）。**C 阶段到此收口**。
+  D1 问答编排（`app/rag/qa.py` + 内网 `POST /qa`：检索 → 引用 → 提示词 → 模型 → 拒答；
+  引用**只列送进模型的段落**，无依据时**不调用模型**，模型自己拒答时保留引用；
+  预算由 `QaSettings` 封顶，装配走缓存避免「每问一句嵌入整库一遍」）；
+  D2 问答入口（网关 `POST /ai/qa`，**登录即可**；深读页「问星笺」面板 + `stores/qa.js`：
+  拒答有独立样式、`usage.model=fake` 显示「离线自测」、引用可点回原文）。
+  **非流式先交付，SSE 升级排在 D3 之后**（避免先造一条没人消费的流式通道）；
+  D3 Copilot 后端（`app/rag/writing.py` + 网关 `/ai/writing/suggest`，**AUTHOR** 门槛；
+  只给候选、**没有任何写入路径**；草稿只随本次请求、日志不记正文；解析失败报错而不是空候选；
+  离线用 `FakeCopilotChat` 桩按格式回答，否则 Fake 回显会让所有润色请求变 502）；
+  D3 Copilot 前端（执笔页侧栏 `components/ai/CopilotPanel.vue` + `stores/copilot.js`：
+  6 个功能按钮 → 候选 → **行级差异预览**（`utils/diff.js` 手写 LCS，不引依赖）+ 逐条「采纳」；
+  采纳动作由纯函数 `utils/copilot-action.js` 决定：润色=替换、续写=插到光标、提纲=追加、
+  标题=只改标题、标签/摘要=只复制，未知任务退到「只复制」；
+  **面板里没有「自动应用」开关**——正文的每次改动都要作者点一下；
+  前端可执行验证 = `npm run check`（`scripts/diff-selfcheck.mjs` 的差异/采纳/SSE 切帧断言
+  + `scripts/deploy-selfcheck.mjs` 的接口前缀代理核对 + `vite build`））。
+  Qdrant 连接方式已查清：只绑宿主机 `127.0.0.1:6333`、无鉴权，本地走 SSH 隧道（见 `deploy/docker/README.md` 第十节）。
+  D2s SSE 的 **Python 侧已完成**（`app/schemas/qa_stream.py` 定事件契约：帧是 `data: {json}`、
+  类型写在 JSON 里，顺序固定 `meta → citation → delta → done`，`error` 是旁路事件；
+  `QaService.stream()` 与非流式共用检索/引用/拒答，没有 `stream_chat` 的模型就退化成**一个** delta；
+  内网 `POST /qa/stream` 用「生产者任务 + 队列」实现静默期 `: ping` 心跳与
+  **取消传播**（浏览器断开 → 生成器关闭 → `task.cancel()` → 上游流关闭），并带
+  `X-Accel-Buffering: no` 关掉 Nginx 缓冲）。
+  **踩到的坑**：`InternalAuthMiddleware` 读完 body 后伪造 `http.disconnect`，
+  非流式正常但 SSE 直接 500（`BaseHTTPMiddleware` 拿到假断开就取消响应任务组）——
+  已改为第二次起交回真实 receive，有回归测试盯着。
+  D2s SSE 的 **Java 出口也已完成**（`ai-service/stream/`：`QaSseFrame` 帧模型 +
+  `HttpQaStreamClient` 用 **JDK HttpClient 单独开一条流** —— Feign 的解码器是「拿完整 body」
+  语义，会把 SSE 退化成一次性响应；签名头复用 `InternalRequestSigner`，与 Feign 同口径。
+  `AiQaStreamController` 的 `/ai/qa/stream` 用 `ResponseBodyEmitter` 逐帧转发**原始帧**
+  （Java 不重新编码事件体），失败发一帧 `error` 而不是空流；`IOException` = 浏览器断开 →
+  关掉下游句柄 → 上游断开 → 模型停止生成，所以正常/异常/断开三条路都走 try-with-resources。
+  顺带修掉「路径存在但方法不对返回 500」：新增 `ErrorCode.METHOD_NOT_ALLOWED` 与对应处理器）。
+  D2s SSE 的 **前端消费方也已完成**（`utils/sse.js` 的 `parseFrame`/`FrameSplitter`/`readFrames`：
+  手写切帧是因为 **`EventSource` 只支持 GET**，而问答必须 POST；`stores/qa.js` 的 `askStream`
+  把 `meta/citation/delta/done` 逐帧拼成与一次性回答同形状的 `answer`，`done` 未到就提示「回答中断」；
+  深读页「问星笺」流式渲染正文 + 光标 + 「停止」按钮，离开页面 `onUnmounted` 主动 abort 以关掉下游。
+  **同时补掉一个真实部署缺口**：`/ai` 既没进 `vite.config.js` 的 proxy、也没进 nginx 的 location ——
+  即问星笺/Copilot/评测台在 dev 与生产都会静默失败。新增 `scripts/deploy-selfcheck.mjs`
+  在 `npm run check` 里核对「前端用到的接口前缀必须在两处代理里都出现」，并给 nginx 的 `/ai`
+  单独配 `proxy_buffering off` + 120s 读超时 + 独立限流档）。
+  E1 写作记忆与风格画像（`app/rag/style.py`：字符级统计、**不引分词库**；
+  `commonPhrases` 只放**反复出现 ≥3 次**的 3–6 字字组，**绝不引用原句** ——
+  画像会进提示词，粘一句原话进去下一轮模型就会照抄；阈值降到 1 被参数校验直接拒绝。
+  只吃已发表文章（接真实数据源时必须显式写 `status = published`），
+  Python 现算**不落库、不进索引**；样本不足返回 `evidenceSufficient=false` + `profile=null`
+  + 带实际篇数与字数门槛的 `notes`（**0 与「没量」是两件事**）。
+  对外 `POST /ai/writing/style`（**AUTHOR**，`authorId` 取登录身份、对外 DTO 里没有该字段），
+  执笔页 Copilot 面板有只读的「我的写作画像」折叠块。
+  E2 只读 Agent **核心**（`app/rag/agent.py`：模型每步输出一个 JSON（调工具或给答案）；
+  **三维预算**——步数 / 工具调用次数 / 观察字符数，任一触顶即收尾并如实标 `doneReason=length`；
+  **工具全只读且装不进来**（`ToolBox` 装配时拒绝 `read_only=False`）；**引用必须被观察到**
+  （模型只能标 postId，片段与分数由工具结果贴回，编的引用一律丢弃）；
+  中断只在步与步之间检查、记为 `interruptedBy=caller`。
+  `app/rag/agent_tools.py` 把检索与画像包成只读工具；内网 `/agent/ask` + 网关 `/ai/agent/ask`
+  （登录即可，不比问答多权限；服务端默认预算 4 步 / 6 次，**客户端只能收紧**）。
+  **E2 的前端入口未接**（Agent 慢且贵，等真实模型与配额后再定页面）。
+  下一步：收口与核验。**E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）未开始**。
+  另外欠一次 Qdrant 真实冒烟
+  （`uv run python scripts/qdrant_smoke.py`，连接方式见 `deploy/docker/README.md` 第十节）。
+  三条实测结论：① 种子解析器曾静默丢掉 13–15 号短文（只读第一个 `post` 块），评测语料少三篇却无报错，
+  现已按行扫全部块并有回归测试；② `min_score_ratio` 永远不会让结果为空，**拒答只能靠绝对下限**
+  `min_score`，而两个分数分布重叠（有答案题最低 ≈ 14.3 / 无答案题最高 ≈ 24.1），
+  所以拒答要靠主题相关性判定或 Dense 相似度下限，不是继续拧 BM25 门限；
+  ③ 用 Fake 跑四路对比时 dense 接近随机（哈希伪向量无语义）而 hybrid+rerank 与 dense 完全相同 ——
+  前者证明向量通路真的在起作用，后者说明**重排必须换一个模型**，真实质量等接上 bge-m3 再评。
   一轮一个可验证切片、一个主题一个提交；M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调。
   文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化仍待用户明确要求后再动。
 - **已做开放注册**（`POST /auth/register`，注册即登录返回 token，角色固定 READER）：文章与流星已记录 `user_id` 作者归属，

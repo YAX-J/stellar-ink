@@ -41,16 +41,25 @@ C. 评测台（依赖 B；这是用户要的重点）
    C3 前端评测面板：选数据集 → 选配置 → 跑 → 看表格与逐题明细
 
 D. 前端 AI 实验室 + 业务入口
-   D1 AI 实验室页：所有开关（检索策略/召回数/重排/切块参数）+ 单次查询试跑
-   D2 深读页问答（SSE + 引用定位）
-   D3 执笔页 Copilot（差异预览 + 手动接受）
+   D1 问答编排 ✅（非流式）：检索 → 引用 → 提示词 → 模型 → 拒答，Python 内网 `POST /qa`
+   D2 问答入口 ✅（深读页「问星笺」，经网关 `POST /ai/qa`，引用可点回原文）
+   D2s 流式升级（SSE）+ 「浏览器断开即终止下游」：Python 侧 ✅、Java 出口 ✅、
+   前端消费方 ✅（`utils/sse.js` 切帧 + `stores/qa.js` 逐帧拼装 + 深读页流式渲染与「停止」）。
+   **D 阶段到此收口**（问答 SSE 与 Copilot 都已可用；真实模型接入仍待 Provider 配置下发）
+   D3 Copilot：编排 ✅（`app/rag/writing.py` + 内网 `/writing/suggest` + 网关 `/ai/writing/suggest`，
+      AUTHOR 门槛、只给候选不写正文）／前端差异预览面板 ✅（执笔页侧栏，**采纳必须人工点**）
 
 E. 扩展（按需）
-   E1 写作记忆与风格画像
-   E2 只读单 Agent（状态图 + 预算 + 中断恢复）
-   E3 MCP 工具服务与观测（配额、审计、成本看板）
-   E4 GraphRAG / LLM Wiki
+   E1 写作记忆与风格画像 ✅（只读统计量：句长/标点/关联词/反复字组；**不含原句**；
+      Python 现算不落库 + `/ai/writing/style` + 执笔页只读面板）
+   E2 只读单 Agent ✅ 核心（状态机 + 三维预算 + 中断 + 引用核实；工具只读且**装不进来**；
+      内网 `/agent/ask` + 网关 `/ai/agent/ask`；**前端入口未接**，真实模型与配额待办）
+   E3 MCP 工具服务与观测（配额、审计、成本看板）⏳ 未开始
+   E4 GraphRAG / LLM Wiki ⏳ 未开始
 ```
+
+> **做到哪了、还差什么，看 [`status.md`](status.md)**：逐阶段状态表 + 可执行核验命令 +
+> 已知缺口。那份文件把「未开始」明确写出来，避免把计划读成进度。
 
 ## 2. 已确认的选型与口径（2026-09-24）
 
@@ -114,15 +123,260 @@ ai-service：AES-GCM 加密 → 写 MySQL `ai_provider_config`
    非生产暴露 `/internal/whoami` 自检接口。**跨语言 HTTP 冒烟已实测通过**。
 8. **B2** ✅ 文章切块（父块 + 子块、标题路径、锚点、内容哈希、幂等），纯函数、无外部依赖。
 9. **B3a** ✅ BM25（Sparse）+ RRF 融合 + Dense 余弦 + 混合检索开关（单路/多路可切）。
-10. **B1 / B3b** ⏳ Qdrant 适配与索引管道 —— **需要 Qdrant 连接信息**（见下）。
-11. **C** ⏳ 评测台（指标 + 策略对比 + 前端面板）：指标计算是纯函数，可以先做。
+10. **B1** ✅（协议层）/ ⏳（真实联调）Qdrant 适配：`app/rag/qdrant_store.py` 用薄 HTTP 客户端实现
+    建集合 / 写点（幂等 point id）/ 检索（含相似度下限）/ 按文章删点 / 健康检查，
+    32 条协议测试用 `httpx.MockTransport` 把路径、请求体字段、响应取值与错误分类钉死。
+    **连接方式已确认**：生产 Qdrant 只绑宿主机 `127.0.0.1:6333` 且无鉴权，本地走 SSH 隧道
+    （见 `deploy/docker/README.md` 第十节），因此默认 `base_url` 就是 `http://127.0.0.1:6333`。
+    顺手修掉一个会让排查跑偏的坑：内部服务必须 `trust_env=False` 绕开环境代理（见下表）。
+    待办：隧道打通后跑一次 `uv run python scripts/qdrant_smoke.py`，把「按文档说对了话」
+    升级为「对面确实这么答」。此外 `httpx` 已从 dev 依赖提为**运行时依赖** ——
+    `app/providers/openai_compatible.py` 一直在模块顶层 import 它，按 main 依赖安装会 ImportError
+    （本地装了 dev 所以一直没暴露）。
+11. **B3b-2** ✅ 索引管道：`app/rag/index_pipeline.py` 把「切块 → 嵌入 → 建集合 → 清旧点 → 分批写入」
+    编成写路径；`RetrievalPipeline.dense_store` 让 Dense 通路改为走向量库查询（不给 store 时仍走本地余弦，
+    便于离线评测与对照）。离线端到端测试（`tests/test_qdrant_integration.py`）用一个内存 Qdrant 模拟器
+    把写路径与读路径接起来跑通；真实 Qdrant 的一次冒烟仍待跑（见上）。
+12. **C1–C3** ✅ 评测台主体：指标层 → 黄金集 v1（30 题，标注经证据自检）→ 策略对比运行器
+    → 本地基线脚本（**不需要 Qdrant、不需要任何密钥**就能跑完整条评测链路，见下表）。
+    **C3-1 评测接口已完成（Python 侧）**：`GET /eval/datasets`、`GET /eval/strategies`、
+    `POST /eval/run`（受内部签名保护），命令行的默认五组与接口的默认五组是同一份；
+    **C3-2 Java 侧已完成**：`AiContractPaths` 三个评测路径 + `PythonAiClient#evalDatasets/evalStrategies/evalRun`
+    + 五个 DTO，请求与响应两份 fixture 两侧共读（响应样例由 `scripts/gen_eval_response_fixture.py`
+    真实跑出来）；`ai-service` 暴露 `/ai/admin/eval/datasets|strategies|run`（全 ADMIN，
+    网关 `/ai/admin/` 前缀已覆盖），并用 `InternalSignatureFeignInterceptor` 给所有发往 Python 的请求
+    统一加 `X-AI-*` 签名头。
+    **C3-2 前端已完成**：`/ai-lab` 增加「评测台」页签（URL `?tab=eval` 可分享）——
+    选数据集 → 勾策略 → 跑一轮 → 对比表 + 逐题下钻（默认只看漏召/误拒/该拒未拒），
+    `notes` 原文以暖色提示块展示。数据走 `stores/ai.js`，视图不直接请求后端。
+    **C 阶段到此收口**；D1（问答编排，非流式）见下，D2/D3 待做。
 
 ### 等一个信息才能继续
 
-**服务器上 Qdrant 的连接方式**：6333 能否从开发机直达、是否要 SSH 隧道、有没有 API Key。
-在此之前 B1（写入/查询向量库）无法验证；B2/B3a/C 的纯算法部分不受影响，已在推进。
+**服务器上 Qdrant 的连接方式** —— 已从本轮改动里查清，不再是未知项：
+`deploy/docker/docker-compose.yml` 把 Qdrant（`v1.12.4`）只发布到宿主机 `127.0.0.1:6333`、无鉴权，
+编排网络内用 `qdrant:6333`。因此本地开发**走 SSH 隧道**（`deploy/docker/README.md` 第十节已有完整命令），
+适配层默认 `http://127.0.0.1:6333` 正是这个形态。
+剩下的唯一外部动作：**隧道打通后跑一次** `uv run python scripts/qdrant_smoke.py`（可带 base_url 参数），
+它有两段：协议段（3 个手工向量证明协议说对了）+ 端到端段（真实切块 + Fake 嵌入，
+跑一遍索引管道写库再用检索管道读回来），全程用临时集合、结束即删。
 
-### A 阶段的落地记录（供后续切片对照）
+### B1 / B3b-2 阶段的落地记录（协议与接线都已锁，等一次真实冒烟）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 连接配置 | `QdrantConfig` | base_url / collection / api_key / timeout_ms / distance；`describe()` **不含 api_key** |
+| 幂等 point id | `point_id_for` | chunk_id 是字符串，Qdrant 只收 uint64/UUID → SHA-256 前 8 字节并抹掉最高位 |
+| 建集合 | `ensure_collection` | 维度不一致**报错而不是自动重建**（换嵌入模型必须显式 `recreate=True`） |
+| 写入 | `upsert` | `?wait=true`；批次内维度不齐、与集合维度不符都当场失败 |
+| 检索 | `search` | `score_threshold` 即 Dense 通路的拒答机制；命中缺 `chunkId/postId` 时报错而非送半成品 |
+| 删除 | `delete_by_post_ids` / `delete_collection` | 按文章清理（改文/删文后重建），或整集合重建 |
+| 错误分类 | `_decode` | 401/403 不可重试、429 与 5xx 可重试、其余 4xx 是参数错、响应非 JSON 明确报错 |
+| 协议测试 | `tests/test_qdrant_store.py` | 32 条，用 `httpx.MockTransport` 断言路径/请求体/响应解析，**不需要容器** |
+| 环境代理 | `trust_env=False` | 实测：本机装了代理时 httpx 会把 `127.0.0.1:6333` 交给代理并拿回空 502（看起来像 Qdrant 报错）；更要紧的是 `api-key` 会跟着进代理。内部服务一律绕开环境代理 |
+| 索引写路径 | `app/rag/index_pipeline.py` | 嵌入失败发生在任何删除之前；`batch_size` 分批；本次重建的文章与已消失的文章都先删旧点 |
+| Dense 后端可换 | `RetrievalPipeline.dense_store` | 给 store 就走向量库（拒答阈值一起传下去），不给就本地余弦 —— 两种可并排对照 |
+| 索引一致性 | `RetrievalPipeline._position_of` | 向量库命中回不到本地语料时报错（索引与语料不是同一批），而不是错位引用 |
+| 离线端到端 | `tests/test_qdrant_integration.py` | 5 条：写入 → 检索往返、改短文章清旧块、删文清点、阈值拒答、重跑幂等 |
+| 真实冒烟 | `scripts/qdrant_smoke.py` | 隧道后跑一次；临时集合 `stellar_ink_smoke`，结束即删 |
+
+### C 阶段的落地记录（纯 BM25 基线，语料 29 篇文章 / 41 个子块）
+
+命令：`uv run python scripts/eval_local_baseline.py`（可带 `min_score` 参数）。
+
+| 指标 | 值 | 口径 |
+|---|---|---|
+| Recall@1 / @3 / @10 | 0.833 / 0.942 / 0.942 | 只在有答案题上平均 |
+| Precision@5 | 0.800 | post 级去重后计算 |
+| NDCG@5 / MRR | 0.949 / 0.975 | MRR 0.975 = 20 题里 19 题首位就命中 |
+| 拒答率 / 误拒率 | 0.4 / 0.0 | 拒答率的分母是 10 道无答案题 |
+| 引用准确率 | 1.0 | 引用块必须来自检索块 |
+
+**这份数字的用途是对照**：等 Qdrant 接上后，Dense / 混合 / 混合+重排 都要与它比，
+否则无法回答「高级链路到底有没有用」。C 阶段的完整落地物与三条实测结论：
+
+| 落地物 | 位置 | 说明 |
+|---|---|---|
+| 指标层 | `app/rag/metrics.py` | Recall/Precision/MRR/NDCG/Hit + 引用准确率 + 拒答率 + P50/P95；无答案题不进召回 |
+| 黄金集 v1 | `tests/fixtures/eval/golden_v1.json` | 30 题 = 20 有答案 + 10 无答案；4 题带分级相关度 |
+| 标注自检 | `scripts/check_golden_evidence.py`、`tests/test_golden_set.py` | 参考答案的短语必须能在**被标注的文章里**找到，两处共用一份判据 |
+| 策略对比 | `app/rag/eval_runner.py` | `compare_strategies` 的输出就是前端对比表的形状；结果可映射 `ai_eval_run` |
+| 检索管道 | `app/rag/pipeline.py` | 召回 → RRF → Rerank → post 级去重 → 空即拒答；`RetrievalConfig` 即前端实验室的开关 |
+| Qdrant 适配 | `app/rag/qdrant_store.py` | 薄 HTTP 客户端（不引官方 SDK，避免悄悄退化成内存索引）；协议测试见 B1 小节 |
+| 基线脚本 | `scripts/eval_local_baseline.py` | 用**同一条管道**只开 Sparse 一路，用来证明「评测链路真的能跑」并做对照 |
+| 四路对比 | `scripts/compare_strategies.py` | 一次跑 sparse / dense / hybrid / hybrid+rerank / sparse+floor，输出对比表 |
+| 门限标定 | `scripts/calibrate_min_score.py`、`score_distribution.py` | 扫绝对下限，打出「正确拒答 ↔ 误拒」的权衡曲线 |
+| 评测接口 | `app/api/v1/eval.py`、`app/rag/eval_service.py`、`app/schemas/eval.py` | `POST /eval/run` 等三个内部接口；策略默认值与命令行同源；Fake 口径写进响应 `notes` |
+| 契约样例 | `tests/fixtures/eval_run_request.json`、`eval_run_response.json` | Java 侧读同一份（请求 + 响应两个方向都锁住）；响应样例由脚本真实跑出来 |
+| Java 契约 | `stellar-ink-ai-client` 的 `EvalRunRequestDTO` / `EvalRunResponseDTO` 等 5 个 DTO | 路径常量在 `AiContractPaths`；降级抛 503，不返回空对比表 |
+| Java 出口 | `ai-service` 的 `AiEvalController`（`/ai/admin/eval/**`，全 ADMIN） | 只转发不加工；跑完记一条审计日志（谁、哪份数据集、几组策略、多少题） |
+| 前端面板 | `views/ai/AiLabView.vue`（评测台页签）、`stores/ai.js` | 选数据集 → 勾策略 → 跑 → 对比表 + 逐题下钻；`notes` 暖色提示块原文展示；指标列由 `EVAL_METRIC_COLUMNS` 决定，缺列不显示 |
+| 内部签名接线 | `InternalSignatureFeignInterceptor` + `InternalSecretProvider` + `SaTokenCallerProvider` | 身份取自 Sa-Token、traceId 取自 MDC；密钥缺失拒绝签名（不降级为不签名） |
+| 乱码修复 | `PythonAiClient.java` | 该文件此前被写坏（UTF-8 当 GBK 读回再写），注释整段乱码且有 17 个私用区字符；已按下游约定重写 |
+| 种子解析器 | `app/rag/seed_corpus.py`、`scripts/seed_posts.py`（CLI 壳） | 解析器搬到 app（`scripts/` 不进安装包）；失败抛库异常而不是 `SystemExit` |
+
+**结论一（拦一个真 bug）**：种子解析器原先只读 `post` 的第一个 INSERT 块、只认带引号的时间戳，
+于是 13–15 号短文被**静默丢掉**，评测语料少了三篇而没有任何报错 —— 召回率会因此长期偏低却没人怀疑。
+现在按行扫三个块，并有用独立数法的回归测试（`tests/test_seed_posts.py`）盯着「少解析」。
+
+**结论二（门限不能靠相对比例）**：`min_score_ratio` 按「最高分 × 比例」过滤，最高分自己永远过线，
+所以**它永远不会让结果为空**，拒答率恒为 0；能让检索返回空从而拒答的只有绝对下限 `min_score`。
+而两个分数分布是**重叠**的：有答案题里最低分 ≈ 14.3，无答案题里最高分 ≈ 24.1 ——
+所以拒答不能靠继续拧 BM25 门限，要靠主题相关性判定或 Dense 相似度下限（B 阶段接上后重标）。
+
+**结论三（四路对比：开关是真的，但 Fake 的 Dense 不能当质量）**：
+`scripts/compare_strategies.py` 用同一条管道跑五组配置，结果如下（Recall@1 / Recall@3 / Precision@5 / 拒答率）：
+
+| 配置 | 数字 | 说明 |
+|---|---|---|
+| `sparse` | 0.833 / 0.942 / 0.250 / 0.0 | 不加相对门限时前 5 名会混进弱候选 |
+| `sparse+floor` | 0.833 / 0.942 / **0.800** / **0.4** | 与 `eval_local_baseline.py` 的数字完全一致（互为交叉验证） |
+| `dense` | 0.075 / 0.167 / 0.070 / 0.0 | **接近随机**：FakeProvider 是哈希伪向量，无语义 |
+| `hybrid` | 0.233 / 0.458 / 0.150 / 0.0 | 被 Fake 的 Dense 拖累 —— 说明融合真的按权重生效 |
+| `hybrid+rerank` | 0.075 / 0.167 / 0.070 / 0.0 | 与 `dense` 完全相同：假重排用的就是那个伪向量函数，不带来新信息 |
+
+读法：`dense` 接近随机**恰好证明向量通路真的在起作用**（没有偷偷退回 Sparse）；
+`hybrid+rerank` 与 `dense` 相同则说明**重排必须换一个模型**（bge-reranker 之类）才有意义。
+真实质量必须等 Qdrant + bge-m3 接上后重跑，届时这张表就是「高级链路到底有没有用」的答案。
+
+### D1 阶段的落地记录（问答编排，非流式）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 编排 | `app/rag/qa.py` | 检索 → 摘录（编号）→ 提示词 → 模型 → 引用与结论；引用只列**送进模型的那些**段落 |
+| 引用组装 | `Citation`（既有契约） | `postId` / `title` / `chunkIndex` / `snippet` / `score` 全部来自检索结果，不由模型输出决定 |
+| 拒答 | `evidenceSufficient=false` + `doneReason=refused` | 没有候选时**不调用模型**；模型自己拒答时**保留引用**（两种信息要分开） |
+| 预算控制 | `QaSettings` | `maxCitations` / `snippetLength` / `maxContextChars`：摘录总长度封顶，不把整库塞进上下文 |
+| 接口 | `app/api/v1/qa.py` | 内网 `POST /qa`，受内部签名保护；装配走 `lru_cache`（避免「每问一句嵌入整库一遍」） |
+| 测试 | `tests/test_qa.py`、`tests/test_qa_api.py` | 18 条：引用与摘录一一对应、无依据不调模型、预算封顶、契约形状、鉴权、不泄露内部信息 |
+
+### D2 阶段的落地记录（问答入口，深读页）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 对外接口 | `ai-service` 的 `AiQaController`（`POST /ai/qa`） | 门槛是**登录**（读者功能）；只做协议转换，答案与引用全部来自 Python |
+| 浏览器请求体 | `shared-model` 的 `AiAskDTO` | 与内部 `QaStreamRequestDTO` **刻意分开**：内部随 Python 契约走，这层对前端负责 |
+| 前端入口 | `views/read/ReadView.vue` 的「问星笺」面板、`stores/qa.js` | 未登录给登录入口；答案按 `whiteSpace:pre-wrap` 保留换行；**拒答有独立样式**；`usage.model=fake` 时挂「离线自测」提示；引用可点回原文（同篇不跳） |
+| 为什么先非流式 | — | 「检索 → 引用 → 拒答」已经能用，先把它交付出来；SSE 要等协议转换与「断开即终止下游」一起做，否则是一条没人消费的通道 |
+
+### D3 阶段的落地记录（Copilot 编排 + 执笔页差异预览）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 编排 | `app/rag/writing.py` | 任务指令 + 风格目标 + 草稿 → 提示词；输出解析优先 JSON、退路是 `---` 分隔 |
+| 草稿保护 | `_truncate` + 日志口径 | 超长草稿按「首 + 尾」截断（开头定调子、结尾是续写接点）；日志只记任务与用量，**不记草稿** |
+| 解析容错 | `parse_candidates` | 「模型没按格式回答」**必须报错**：静默返回空候选会让作者以为「没什么可改」；标题/标签/摘要这类单值任务才接受纯文本 |
+| 离线可测 | `FakeCopilotChat` | `FakeProvider` 只会回显提示词，会让所有润色请求变成 502；因此单独做了一个**按格式回答**的桩（候选是草稿句子切片，`rationale` 自报「离线自测」） |
+| 对外接口 | `AiWritingController`（`/ai/writing/suggest`） | AUTHOR 门槛；**没有任何写入路径**，只把候选返回到前端 |
+| 差异预览 | `utils/diff.js` + `components/ai/DiffView.vue` | 手写 LCS（不引 diff 依赖）：先删后加的差异块、上下文折叠、超长退化为整段替换 |
+| 采纳动作 | `utils/copilot-action.js` | **纯函数**决定候选落在正文的哪一部分：润色＝替换、续写＝插到光标、提纲＝追加、标题＝只改标题、标签/摘要＝只复制；未知任务**退到「只复制」** |
+| 前端面板 | `components/ai/CopilotPanel.vue`、`stores/copilot.js` | 执笔页侧栏（仅作者）；6 个功能按钮 + 风格/条数 + 补充要求；离线桩标「未接真模型」；**没有「自动应用」开关** |
+| 测试 | `tests/test_writing.py`、`tests/test_writing_api.py`、`AiWritingControllerTest`、`npm run check` | 后端 32 条 + 前端 28 条自检：解析两条路 + 失败要报错、草稿不外泄、字面量映射、AUTHOR 门槛、离线桩必须出候选、**采纳动作映射（错一个就会抹掉正文）** |
+
+**D3 的两条取舍，写在这里免得后人改动时丢掉**：
+① **没有「自动应用」开关**。面板只能把候选**渲染**出来，正文的每一次改动都要作者点一下；
+   一旦有了开关，AI 就能在作者没看的情况下改掉正文 —— 那正是这条红线要防的事。
+② **草稿快照跟着候选走**。差异预览比的是「发请求那一刻的草稿」，不是「现在的草稿」：
+   作者在结果返回后继续打字时，预览不会跟着漂移；面板也会在每次请求后清空旧候选，
+   免得把上一轮的候选误当成这一轮的建议。
+
+### D2s 阶段的落地记录（SSE 流式，Python 侧）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 事件契约 | `app/schemas/qa_stream.py` | 帧格式 `data: {json}\n\n`，**类型写在 JSON 里**（`meta`/`citation`/`delta`/`done`/`error`）而不是 `event:` 名：Java 不必维护事件名表，前端一个解析器通吃 |
+| 事件顺序 | 同上（模块 docstring 就是契约） | `meta` → `citation*` → `delta*` → `done`。**引用先于增量**：引用由检索决定，不必等模型；`done` 缺失会让前端永远停在「生成中」 |
+| 流式编排 | `app/rag/qa.py` 的 `stream()` | 与非流式 `answer()` **共用同一套检索/摘录/拒答判定**；有 `stream_chat` 就边生成边吐，没有就退化成**一个** `delta`（内容一样完整，只是少几次增量） |
+| 取消传播 | `app/api/v1/qa.py` 的 `_sse_frames` | 生产者任务 + 队列：**浏览器断开 → ASGI 关闭生成器 → `finally: task.cancel()` → 上游 HTTP 流关闭**。队列的另一个用处是静默期插 `: ping` 心跳 |
+| 关掉代理缓冲 | 响应头 | `Cache-Control: no-cache` + `X-Accel-Buffering: no`：漏了后者，Nginx 会把「流式」攒成一整块再吐出来 |
+| Provider 流式 | `app/providers/openai_compatible.py` 的 `stream_chat()` | SSE 逐行解析（残行留到下一块，TCP 分片会把一行 JSON 劈开）；`stream_options` 被 400 拒绝时**去掉它重试一次**；异常路径也关连接（`async with`） |
+| 测试 | `tests/test_qa_stream.py`、`tests/test_qa_stream_api.py` | 21 条：事件顺序、增量不被合并、无依据不调模型、模型自拒答保留引用、回落路径、心跳、帧形状、代理头、空问题 422 |
+
+**这一刀踩到的坑（值得单独记）**：`InternalAuthMiddleware` 读完 body 后原本一律返回
+`http.disconnect`，**非流式接口完全正常，流式接口直接 500**（Starlette 报 "No response returned"）。
+原因是 `BaseHTTPMiddleware`（traceId 中间件）在响应进入流式发送后会调用 `receive()` 等断开信号，
+拿到伪造的「已断开」就把整个响应任务组取消，而 `http.response.start` 还没发出去 ——
+**伪造断开等于自己掐断自己的流**。现在第二次起交回真实 receive，并有回归测试盯着这个不变量。
+
+### D2s 阶段的落地记录（SSE 流式，Java 出口）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 帧模型 | `ai-service/stream/QaSseFrame.java` | 记录「事件类型 + 原始帧」。转发用 `raw()`，**Java 不重新编码事件体**；类型解析不出时标 `unknown` 而不是猜 |
+| 流式通道 | `ai-service/stream/HttpQaStreamClient.java` | JDK `HttpClient` 直连 Python（**不引依赖**）：**Feign 的解码器是「拿完整 body」语义，会把 SSE 退化成一次性响应**，所以这条流单独开通道。签名头复用 `InternalRequestSigner`，与 Feign 那条完全同口径 |
+| 帧切分 | 同上的 `FrameIterator` | 按**空行**聚合成帧再转发（拆开写会让浏览器看到半截 JSON）；心跳 `: ping` 这类**注释行不是帧**，必须丢弃 |
+| 出口 | `ai-service/controller/AiQaStreamController.java` | `ResponseBodyEmitter`（不用 `SseEmitter`：后者按 `event:` 名分帧，而本协议把类型放在 JSON 里）；上游失败发一帧 `error` 而不是返回空流 |
+| 取消传播 | 同上 `forwardFrames` 的 `try-with-resources` | 浏览器断开 → `send` 抛 `IOException` → 关闭下游句柄 → 上游断开 → Python 生成器关闭 → 模型停止。**正常结束/上游异常/客户端断开三条路都要关**，所以用 try-with-resources 而不是三处手写 close |
+| 405 修正 | `ErrorCode.METHOD_NOT_ALLOWED` + `GlobalExceptionHandler` | 路径存在但方法不对原本落进兜底返回 500「系统繁忙」——用户看起来像服务坏了。新增路由时特别容易撞上（上一秒还 404，下一秒变 500） |
+| 测试 | `HttpQaStreamClientTest`、`AiQaStreamControllerTest` | 12 条（各 6）：起**真实** `HttpServer` 验证逐帧到达与「close 真的断开上游」（mock 掉就只是在测自己的假设）、心跳不成帧、坏帧不中断、非 2xx 不返回空流、写失败必须关下游、未登录 401 |
+
+**一条断言随路由落地而改变语义（记下来当教训）**：`AiHealthControllerTest` 原先用
+`GET /ai/qa/stream` 当「未知路径」的代表。D2s 真的把它实现出来之后，同一句断言的语义
+从「路径不存在」变成「方法不对」，而它当时报的是 **500** —— 测试红了，但红的原因和它想守的东西无关。
+现在拆成两条：不存在的路径给 404（用 `/ai/not-implemented-yet`），存在但方法不对给 405。
+
+### D2s 阶段的落地记录（SSE 流式，前端消费方）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 切帧 | `stellar-ink-web/src/utils/sse.js` | `parseFrame`（`data:` 行 + JSON 里的 `type`）、`FrameSplitter`（增量切帧，**半帧留到下一块**）、`readFrames`（异步迭代 + `reader.cancel()`）。抽成纯类是为了能被 `npm run check` 直接断言 |
+| 状态拼装 | `stores/qa.js` 的 `askStream`/`applyFrame` | `meta`→模型标识、`citation`→追加引用、`delta`→追加正文、`done`→收尾；**`done` 未到就提示「回答中断」**，不装作答完了。中止（`abort`/`reset`/离开页面）会关掉这条流 |
+| 界面 | `views/read/ReadView.vue` 的「问星笺」 | 流式渲染正文 + 光标、「正在检索文章…」占位、中断用暖色提示（不是错误）、「停止」按钮；引用先到先渲染，不用等答案 |
+| 部署缺口 | `vite.config.js`、`deploy/docker/nginx/default.conf`、`scripts/deploy-selfcheck.mjs` | `/ai` **两处代理都漏了**（问星笺/Copilot/评测台在 dev 与生产都会静默失败）；现补上，并给 nginx 的 `/ai` 单独配 `proxy_buffering off` + 120s 读超时 + 独立限流档（30r/m） |
+
+**这一刀最有价值的发现不是代码，而是部署配置**：`/ai` 从来没进过 Vite 代理与 nginx location，
+而 D2/D3 的功能都写着「已完成」—— 没有一个人真的在浏览器里点过它们。
+新增的 `scripts/deploy-selfcheck.mjs` 把「前端用到的接口前缀必须在两处代理里都出现」变成 `npm run check` 的一部分：
+漏一次就红，而不是等到线上「请求成功但页面空白」。
+
+**顺带一个通用的教训**：`EventSource` 只支持 GET。凡是「必须 POST 又要流式读」的场景，
+都只能 `fetch` + `ReadableStream`，而这条路上**没有现成的重连/事件名机制**，
+所以协议把事件类型放进了 JSON（见上）—— 两侧都少一层需要同步的表。
+
+### E1 阶段的落地记录（写作记忆与风格画像）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 画像算法 | `app/rag/style.py` | 字符级扫描，**不引分词库**：句读切分 + 拉丁词边界就够量句长/标点/关联词；长度口径「中日韩按字 + 拉丁按词」（`Redis` 算一个词），句长取中位数（比均值稳） |
+| 不引用原句 | `_common_phrases` + `StyleSettings.phrase_min_count=3` | 字组只在**反复出现（≥3 次）**时给出，长度 3–6 字。出现一次的是内容，出现三次以上才是习惯；阈值降到 1 会被参数校验直接拒绝（那等于允许摘录原句） |
+| 数据边界 | `app/api/v1/style.py` 的 `_samples_for` | 只吃已发表文章（当前＝种子内容包）；接真实数据源时必须显式写成 `status = published` —— 草稿进画像等于把未发表内容推进提示词 |
+| 样本不足是数据 | 同上 + `WritingStyleResult` | 返回 `evidenceSufficient=false` + `profile=null` + 带**实际篇数与字数门槛**的 `notes`。**0 与「没量」是两件事**：给一堆 0，作者会以为自己的文章「没有风格」 |
+| 契约 | `app/schemas/style.py`、`tests/fixtures/writing_style_{request,result}.json` | 结果 fixture 由 `scripts/gen_style_fixture.py` 用**固定样本**生成（不读种子语料）：种子一变契约测试就红的那种红没有信息量 |
+| Java 出口 | `WritingStyle{Request,Result}DTO` + `/ai/writing/style` | 门槛 AUTHOR；`authorId` **取登录身份**，对外 DTO 里根本没有该字段（客户端传了也无效）；`WritingStyleProfileDTO.hasContent()` 标 `@JsonIgnore`，避免便利方法漏进 JSON |
+| 前端 | 执笔页 Copilot 面板的「我的写作画像」折叠块 | 默认收起、只读；显示句长中位/短句占比/逗号密度/样本数与关联词、字组、常写主题；样本不足时显示服务端那句人话 |
+| 测试 | `tests/test_style.py`、`test_style_api.py`、`test_style_contract.py`、`AiWritingStyleControllerTest` | 算法 + 接口 + 契约 + 出口共 22 条：不引用原句、代码块不计入、样本不足给人话、`authorId` 取登录身份、便捷方法不漏 JSON |
+
+**两处踩到的坑，都记在这里免得后人重踩**：
+① **测试断言的取样范围必须与实现一致**。画像只取前 20 篇，我先按全部 25 篇数了一遍关联词，
+   于是排名差一位、测试以「差一位」的形态红给我看 —— 看起来像算法不稳定，其实是测试自己数错了范围。
+② **不要拿真实语料的边界值测边界**。我本想用「种子里只写了 2 篇的作者」验证「样本不足」，
+   结果那两篇合计 569 字，恰好过了 500 字下限。改成用「同一作者、只取前 3 篇」来构造 ——
+   否则测的是语料，不是代码。
+
+### E2 阶段的落地记录（只读 Agent 核心）
+
+| 能力 | 位置 | 说明 |
+|---|---|---|
+| 决策协议 | `app/rag/agent.py` | 模型每步输出一个 JSON：`{thought, tool, arguments}` 或 `{thought, final, citations}`。**类型写在 JSON 里**便于解析与审计；`thought` 只进审计不进答案 |
+| 工具只读 | `ToolBox.__init__` | `read_only=False` 的工具在**装配时**就被拒绝。与其运行期判断「这个工具能不能调」，不如让它根本进不来 —— 后者不可能被漏判（红线 §7.4） |
+| 三维预算 | `AgentSettings` | 步数 / 工具调用次数 / 观察字符数**三者都要**：只限步数挡不住「一步塞十个调用」，只限次数挡不住「一次观察灌回整篇文章」。另有单条工具结果的独立上限，否则第一次观察就把总预算吃光 |
+| 引用核实 | `_verified_citations` | 模型只能标 `postId`；片段与分数由工具结果贴回。声称但没观察到的引用**一律丢弃**；一条都没标对时退化为「把观察到的带上」。第一版还想用 `Citation` 装「模型给的线索」，pydantic 立刻以「snippet 不能为空」拒绝 —— 类型层面就证明了引用不能由模型给 |
+| 中断 | `should_stop` + `_Interrupted` | 只在**步与步之间**检查：工具执行中途不打断（将来加写操作时这条边界很关键）。中断记为 `interruptedBy=caller`，与「预算用尽」区分开 |
+| 离线诚实 | `app/api/v1/agent.py` | Fake 模型解析不出决策 JSON，于是走「格式不符」分支并在预算内收尾，返回 `doneReason=length` + `steps[].error`。**不做的事**：编一个看起来像答案的回显。假装配下最危险的是「随便返回点什么，看起来成功了」 |
+| 出口 | `AiAgentController` | 门槛登录（不比问答多权限）；服务端默认预算 4 步 / 6 次，比契约上限（8 / 12）更紧，且 `bounded()` 取 min —— **客户端只能收紧**；`doneReason=length` 与空答案原样透传 |
+| 测试 | `tests/test_agent.py`、`test_agent_api.py`、`AiAgentControllerTest`、`AiContractTest` | 28 条：预算三种触顶、中断、坏输出不毁整轮、未知工具名反馈给模型、引用必须被观察到、写工具装不进来、离线不假装答完、预算只能收紧 |
+
+**这一刀反复出现的同一个 bug 值得记住**：我把「工具调用次数」在**拿到可用观察之前**就加了 1，
+于是「第三次调用只得到空观察」也被计进账 —— 预算账目与实际花掉的钱对不上。
+这类偏差不会报错、也不会让测试红（除非专门去数），只会让账单和日志各说各的。
+修法是把「先算观察预算再计调用」写进注释：**先确认拿到了东西，再记账**。
+
+**一条实测教训（写在这里免得后人踩）**：离线自测用的是 Fake 哈希伪向量，余弦在 **0.03 量级**，
+最初给 `minDenseScore` 设了 0.2 —— 结果向量通路被**静默清空**，混合检索退化成纯 BM25，
+而日志、指标、响应全都正常。已改为 0 并加了一条测试盯着它：
+**给离线链路设「看起来合理」的阈值，比不设更危险。**
+
+
 
 | 能力 | 位置 | 说明 |
 |---|---|---|

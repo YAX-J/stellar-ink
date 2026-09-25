@@ -3,6 +3,9 @@
 > 三份文档的分工：`README.md` 讲**技术路线与原理**，`implementation-roadmap.md` 讲**每个阶段做什么**，
 > 本文讲**怎么一轮一轮做出来** —— 节奏、分工、验证、提交、红线与决策门。
 > **每轮开工前先读本文；收尾时更新 roadmap 顶部的进度清单和本文 §9。**
+>
+> **要「现在到底做到哪了」看 [`status.md`](status.md)**：逐阶段状态 + 可执行核验命令 +
+> 已知缺口（未做的部分明确写成「未开始」，不写成「已完成」）。
 
 ## 1. 分工
 
@@ -68,9 +71,23 @@ cd stellar-ink-ai && ruff check . && mypy app && pytest
 # Java（改到的模块必须能打包；契约相关要跑测试）
 cd stellar-ink-server && mvn -DskipTests package && mvn test
 
-# 前端（只在动前端时跑）
-cd stellar-ink-web && npm run build
+# 前端（动前端时跑；check = 自检 + build）
+cd stellar-ink-web && npm run check
 ```
+
+**前端的可执行验证**：项目没有测试运行器（AGENTS.md §3 不加测试依赖），
+因此把「能纯函数化的判断」都抽到 `src/utils/`，由 `scripts/diff-selfcheck.mjs` 用 node 直接跑断言，
+`npm run check` = 自检 + `vite build`。目前已覆盖行级差异（LCS/折叠/退化）、Copilot 采纳动作映射、
+SSE 切帧（半帧/心跳/坏帧）—— 都是**错了会静默出问题**的地方（采纳动作错一个就会抹掉作者正文）。
+新的纯逻辑（解析、映射、裁剪）照此办理：抽函数 → 加断言，别把它埋在 `.vue` 里。
+
+**代理前缀也要被检查（踩过一次）**：`/ai` 在 D 阶段做完问答与 Copilot 之后，
+**既没进 `vite.config.js` 的 proxy、也没进 nginx 的 location** ——
+dev 下被 Vite 当 history 路由回退到 index.html，生产同样回退 SPA，
+表现是「请求成功但页面空白」，而所有单测与构建都是绿的。
+现在 `scripts/deploy-selfcheck.mjs` 会核对「前端源码里出现过的接口前缀，必须在两处代理里都出现」，
+并顺带检查 nginx 的 `/ai` 是否关掉了响应缓冲（SSE 逐帧到达的前提）。
+新增接口前缀时同步它的 `KNOWN_PREFIXES`。
 
 改到真实接口后，还要按顺序起服务再验一次：
 `Nacos → 四个 Java 服务（含 ai-service）→ stellar-ink-ai → 前端`，
@@ -103,31 +120,113 @@ M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:
 - **M7 → M8**：Agent 有预算？Tool Schema、权限、参数都有服务端校验？Interrupt/Resume 不重复副作用？
 - **M8 → M9/M10**：每次调用可追踪？用户数据可完整删除？已有真实数据证明需要记忆或知识图？
 
-## 9. 当前切片：M1（Java/Python 安全调用链）
+## 9. 当前切片：D 阶段（前端 AI 入口：问答 + Copilot）
 
-**M0（契约与工程骨架）已于 2026-09-24 完成并验收**：五刀全部提交在 `feature/ai-m0-contract`，
-`mvn test` 9 个模块与 `uv run ruff/mypy/pytest` 全绿，`/ai/health` 实测 200。完成情况：
+**排序以 `fast-track-plan.md` 为准**（A 控制面 → B 检索内核 → C 评测台 → D 前端实验室 → E 扩展）；
+本节只记「这一刀做到哪、下一步做什么」，完整落地记录见该文件的 §5。
+
+已交付（分支 `feature/ai-m0-contract`，全部本地提交）：
 
 | 切片 | 结果 |
 |---|---|
-| M0-1 | `stellar-ink-ai` 工程骨架 + `GET /health` + traceId；`ruff/mypy/pytest` 全绿 |
-| M0-2 | `app/schemas/` 契约模型 + `tests/fixtures/*.json`（Java/Python 共用同一组） |
-| M0-3 | `stellar-ink-ai-client`：Feign 契约 + 内部 DTO + 签名头常量 + 503 降级 |
-| M0-4 | `ai-service :8107`：公开 `/ai/health`（Fake 探活如实上报）+ 配置模板 |
-| M0-5 | 文档同步：`docs/api`、`docs/architecture`、`AGENTS.md`、roadmap 进度 |
+| M0-1 … M0-5 | 契约与工程骨架（Python 骨架 / 契约 fixture / Feign 客户端 / `ai-service` / 文档） |
+| A1-1 … A1-4 | `ai_*` 表 + AES-GCM 密钥加密、Provider 配置 CRUD 与脱敏、Python Provider 层、前端配置面板 |
+| A2-1 … A2-3 | 网关 `/ai/**` 路由与角色门槛、内部 HMAC 签名（**标准串含身份字段**）、Python 纯 ASGI 验签 |
+| B2 / B3a | 文章切块（父块+子块、锚点、幂等）、BM25 + RRF + Dense 余弦 + 混合开关 |
+| B3b-1 | 检索管道 `app/rag/pipeline.py`：召回 → RRF → Rerank → post 级去重 → 空即拒答，开关即 `RetrievalConfig` |
+| B1 | Qdrant 适配 `app/rag/qdrant_store.py`（薄 HTTP、幂等 point id、错误分类）+ 32 条协议测试；**待一次真实冒烟** |
+| B3b-2 | 索引写路径 `app/rag/index_pipeline.py` + `RetrievalPipeline.dense_store`（Dense 可走向量库）+ 5 条离线端到端测试 |
+| C1 / C2 / C3-1 | 指标层、黄金集 v1（30 题 + 证据自检）、策略对比运行器、纯 BM25 本地基线 + 四路对比脚本、**评测接口（`/eval/datasets`、`/eval/strategies`、`/eval/run`）** |
+| C3-2（Java） | 客户端 5 个 DTO + 两份 fixture、`AiEvalController`（`/ai/admin/eval/datasets|strategies|run`）、`InternalSignatureFeignInterceptor`（Feign 统一签名） |
+| C3-2（前端） | `/ai-lab` 增加「评测台」页签（`?tab=eval`）：选数据集 → 勾策略 → 跑 → 对比表 + 逐题下钻（默认只看问题题）+ `notes` 原文展示 |
+| D1 | 问答编排 `app/rag/qa.py` + 内网 `POST /qa`：检索 → 引用 → 提示词 → 模型 → 拒答；引用只列送进模型的段落，无依据不调模型 |
+| D2 | 问答入口：网关 `POST /ai/qa`（登录即可）+ 深读页「问星笺」面板（`stores/qa.js`），引用可点回原文；**非流式先交付，SSE 后做** |
+| D3（后端） | Copilot 编排 `app/rag/writing.py` + 内网 `/writing/suggest` + 网关 `/ai/writing/suggest`（AUTHOR；只给候选不写正文；离线桩按格式回答） |
+| D3（前端） | 执笔页侧栏 `components/ai/CopilotPanel.vue` + `stores/copilot.js`：6 个功能按钮 → 候选 → **行级差异预览**（`utils/diff.js` 手写 LCS）+ 逐条「采纳」；采纳动作由纯函数 `utils/copilot-action.js` 决定；**没有「自动应用」开关**；`npm run check` 跑 28 条前端自检 |
+| D2s（Python） | 事件契约 `app/schemas/qa_stream.py`（`data: {json}`，类型在 JSON 里）+ `QaService.stream()`（与非流式共用检索/引用/拒答，无流式能力则退化为单个 delta）+ `/qa/stream`（生产者任务 + 队列：心跳、`finally: task.cancel()` 取消传播、`X-Accel-Buffering: no`）+ Provider 的 `stream_chat()` |
+| D2s（Java） | `ai-service/stream/`（`QaSseFrame` 帧模型 + `HttpQaStreamClient` 用 JDK HttpClient 单独开一条流；**Feign 的完整 body 语义会把 SSE 退化**）+ `AiQaStreamController` 的 `/ai/qa/stream`（`ResponseBodyEmitter` 逐帧转发、失败发 `error` 帧、`IOException` 即关下游）；顺带修掉「方法不对返回 500」→ `ErrorCode.METHOD_NOT_ALLOWED` |
+| D2s（前端） | `utils/sse.js`（手写切帧：**`EventSource` 只支持 GET**，而问答必须 POST）+ `stores/qa.js` 的 `askStream`（逐帧拼成与一次性回答同形状的 `answer`，缺 `done` 提示中断）+ 深读页流式渲染与「停止」；补掉 `/ai` 在 vite 与 nginx 两处都缺失的**部署缺口**，并用 `scripts/deploy-selfcheck.mjs` 把它变成 `npm run check` 的一部分。**D 阶段收口** |
+| E1 | `app/rag/style.py`（字符级统计，**不引分词库**；字组只在反复出现 ≥3 次时给出，**绝不引用原句**）+ `app/api/v1/style.py`（种子语料按 `authorId` 取样，样本不足返回人话）+ 契约 `app/schemas/style.py` 与 fixture（由 `scripts/gen_style_fixture.py` 用固定样本生成）+ Java `/ai/writing/style`（**authorId 取登录身份**）+ 执笔页只读画像面板 |
+| E2（核心） | `app/rag/agent.py`（决策协议 `{thought,tool,arguments}` / `{thought,final,citations}`；**三维预算**步数·调用次数·观察字符；引用必须被观察到；中断只在步间检查）+ `app/rag/agent_tools.py`（只读工具，`ToolBox` 在装配时拒绝写工具）+ 内网 `/agent/ask` 与 Java `/ai/agent/ask`（默认预算 4/6，**客户端只能收紧**）。**前端入口未接**；E3/E4 未开始 |
 
-M1 开工前先读 roadmap §5 与本文 §5/§7；建议按下列顺序切片（每刀 ≲ 300 行、可独立验证）：
+> **切片测试的一个坑（C3-2 踩到，值得记住）**：`ai-service` 的启动类**显式声明了 `@ComponentScan`**，
+> 而显式声明会让 Spring Boot 切片测试的类型排除过滤器失效 —— `@WebMvcTest` 实际会把
+> `com.stellarink.ai` 下的组件全部装配。后果是：新增一个控制器就可能让**别人的切片**起不来
+> （这次是 `AiEvalController` 需要 Feign 客户端，而 Web 切片里没有 Feign 自动配置，
+> 报「No qualifying bean of type FeignClientFactory」）。
+> 处理方式：切片里把外部依赖 `@MockBean` 掉（探活切片 mock `PythonAiClient`，评测切片再 mock
+> `AiProviderConfigService`）。将来若把启动类的显式 `@ComponentScan` 收掉，这条可以一起简化。
 
-| 切片 | 内容 | 验收 |
-|---|---|---|
-| M1-1 | `ai-service` 网关化：网关 dev/prod 增加 `/ai/** → lb://ai-service`，`/ai/health` 公开、其余 `/ai/**` 需登录、写作建议需 AUTHOR、`/ai/admin/**` 需 ADMIN | 经网关 `curl /ai/health` 通；未登录访问受保护路径被拒 |
-| M1-2 | 内网签名：`stellar-ink-ai-client` 实现 `X-AI-*` HMAC-SHA256 签名（方法+路径+时间戳+nonce+body 摘要），密钥 `AI_INTERNAL_SECRET` 无默认值 | 签名单测含过期/篡改/nonce 重放全部被拒 |
-| M1-3 | Python 侧验签中间件：时间窗 + nonce（Redis 或进程内 LRU，先定方案）+ 拒绝重放 | pytest 覆盖过期、篡改、重放 |
-| M1-4 | 首次真实调用：`ai-service` 用 Feign 调 Python（Fake 回显亦可），`X-Trace-Id` 贯穿两侧日志 | 一次调用在两侧日志里能用同一个 traceId 串起来 |
-| M1-5 | SSE：打通 `meta / delta / citation / done / error` 心跳与取消，浏览器取消即终止下游 | 取消后下游任务停止，不继续消耗资源 |
+> **流式接口的一个坑（D2s 踩到，Python 侧）**：`InternalAuthMiddleware` 读完请求体之后
+> 原本一律返回 `http.disconnect`，**非流式接口一切正常，SSE 直接 500**
+> （Starlette 报 "No response returned"）。原因是 `BaseHTTPMiddleware`（traceId 中间件）
+> 在响应进入流式发送后会调用 `receive()` 等断开信号，拿到伪造的「已断开」就取消整个响应任务组，
+> 而 `http.response.start` 还没发出去。**伪造断开等于自己掐断自己的流** ——
+> 现在第二次起交回真实 receive，并且有一条断言专门盯着这个不变量
+> （`test_internal_auth_wiring.py::test_replay_hands_the_real_receive_back_after_the_body`）。
+> 一般化的教训：**任何「自己造 receive/send 桩」的中间件都要先想一遍流式响应**，
+> 因为流式路径下框架真的会去调 `receive()` 等断开。
 
-> M1 需要 Redis 做 nonce 防重放时，同时放开 `AiServiceApplication` 里对 `RedisUtils`/`RedisCache`
-> 的排除，并在此处与 `AGENTS.md` 的 AI 模块口径里同步说明。
+> **测试断言的语义会随路由落地而改变（D2s 踩到）**：`AiHealthControllerTest` 原先拿
+> `GET /ai/qa/stream` 当「未知路径」的代表；等这个接口真的实现出来，同一条断言的语义
+> 就从「路径不存在」变成「方法不对」，而它报的是 **500**（方法不支持落进了兜底处理器）。
+> 现在拆成两条互不依赖的断言：不存在的路径给 404，存在但方法不对给 405。
+> 教训不是「别这么写测试」，而是：**一个接口的实现会让别人的断言悄悄换意思** ——
+> 新增路由后要顺手看一眼有没有测试在拿它当反例。
+
+> **流式响应下的 MockMvc 有盲区**：`ResponseBodyEmitter.send(..., TEXT_EVENT_STREAM)` 写的
+> Content-Type **不会**出现在 `MockHttpServletResponse` 里（实测为 null），异步派发也一样。
+> 所以流式切片里不要断言 Content-Type —— 那只会得到假警报；改为把
+> `@PostMapping(produces = TEXT_EVENT_STREAM_VALUE)` 用反射钉住，
+> 真正的端到端验证留给「起服务后用 curl -N」。
+
+> M1 原计划的四刀（网关化 / 签名 / 验签 / 首次真实调用）已在 A2 完成，编号不再单独使用；
+> M1-5（SSE）与 D2 一起做，避免先造一条没有消费方的流式通道。
+> nonce 防重放目前是**进程内**存储 + TTL（见 `app/core/internal_auth.py`）；多实例部署前要换 Redis，
+> 届时同时放开 `AiServiceApplication` 里对 `RedisUtils`/`RedisCache` 的排除，并同步 `AGENTS.md` 的 AI 口径。
+
+**下一刀**：**收口与核验** —— E2 的循环、预算、中断、引用核实都已就绪并接上 HTTP，
+但**前端入口没接**（Agent 比一次问答慢且贵，等有真实模型与配额后再决定放哪个页面）。
+E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它们说成「已完成」。
+另外欠一次 Qdrant 真实冒烟（方式见下），做完才能说 B 阶段「实测通过」。
+
+```bash
+ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）
+cd stellar-ink-ai && uv run python scripts/qdrant_smoke.py
+```
+
+冒烟用独立临时集合 `stellar_ink_smoke`（结束即删），不会碰生产集合。
+
+### 只有一条检索编排（重要的工程决定）
+
+`RetrievalPipeline` 是**评测台与业务链路共用的唯一编排**：基线脚本、四路对比、
+将来的问答入口都只是「同一段代码 + 不同开关」。这样做的代价是这一层必须保持通用；
+收益是「评测出来的数字」与「线上实际行为」不会因为两套实现而分叉 ——
+历史上最容易出错的正是这种分叉（基线用 A 逻辑、线上用 B 逻辑，然后拿 A 的数字下结论）。
+
+### 本地基线：为什么它是 C 阶段的地基
+
+`uv run python scripts/eval_local_baseline.py` 不需要 Qdrant、不需要任何 API Key，
+就能把「切块 → BM25 → 指标 → 对比表」整条链路跑一遍（当前：29 篇文章 / 41 个子块，
+Recall@1 0.833、Recall@3 0.942、Precision@5 0.800、拒答率 0.4、误拒率 0.0）。
+它的价值不是这些数字好看，而是**后面每一层高级能力都有了对照物**：
+`scripts/compare_strategies.py` 已经把 sparse / dense / hybrid / hybrid+rerank 并排跑出来了 ——
+其中 dense 接近随机（Fake 是哈希伪向量，无语义），这恰好证明向量通路真的在起作用；
+而 hybrid+rerank 与 dense 完全相同，说明**重排必须换一个模型**才有意义。
+
+两条实测结论（M1 起沿用，避免重复试错）：
+
+- **解析器不能「少几条也不报错」**：种子解析器曾只读第一个 `post` 块、只认带引号的时间戳，
+  静默丢掉 13–15 号短文，评测语料少三篇却毫无提示 —— 召回率偏低而没人怀疑语料。
+  现在按行扫全部块，并用「独立数一遍行数」的测试盯着。
+- **门限不能靠相对比例**：`min_score_ratio` 永远让最高分过线，**永远不会让结果为空**，
+  拒答率恒为 0；只有绝对下限 `min_score` 能触发拒答。而两个分数分布重叠
+  （有答案题最低 ≈ 14.3，无答案题最高 ≈ 24.1），所以拒答要靠主题相关性判定或
+  Dense 相似度下限，而不是继续拧 BM25 门限。
+
+另一条来自管道的接线经验：**开关必须能被测试证明「真的改变了行为」**。
+管道用受控向量与计数桩验证「单路 Sparse 不花嵌入调用」「改权重能换掉第一名」
+「重排下标越界/重复必须报错」；对比脚本则用「是否出现指标完全相同的配置对」来抓「开关没接上」。
 
 ### M0 期间的实测经验（M1 起沿用）
 

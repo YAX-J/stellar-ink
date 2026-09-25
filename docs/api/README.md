@@ -213,7 +213,7 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 公开评论、回声使用 30 秒缓存；公开流星分页使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
 
-### ai-service :8107 - AI（A1：探活 + 模型配置面板）
+### ai-service :8107 - AI（A1：探活 + 模型配置面板；C：评测台）
 
 > 网关尚未配 `/ai/**` 路由（M1 接），验证只能直连 `http://127.0.0.1:8107`。
 > 其余 AI 接口（问答 / 写作建议 / 索引任务）的路径与契约已在 `stellar-ink-ai-client`
@@ -261,6 +261,302 @@ curl -s -X POST http://127.0.0.1:8107/ai/admin/providers/chat/check -H "Authoriz
   `ai_provider_config.api_key_cipher`，主密钥 `AI_SECRET_MASTER_KEY` 只在环境变量里
 - 首次配置某角色必须带 `apiKey`；`apiKey` 留空且该角色从未配过 → `code 1001`
 - 自检结论只给「可达/不可达 + 可操作提示」，不含主机名与端口
+
+**评测台（C 阶段；当前只在 Python 内网侧，Java 出口见下）**
+
+`stellar-ink-ai` 内部提供三个评测接口。它们**受内部签名保护**（`X-AI-*`，与其它内部路由一致），
+不配网关路由；前端要跑评测必须经 `ai-service` 以 ADMIN 门槛转发（下一刀的 `/ai/admin/eval/**`）。
+
+| 方法 | 路径（Python 内部，:8200） | 说明 |
+|---|---|---|
+| GET | `/eval/datasets` | 可用数据集清单：`id` / `name` / `description` / `cases` / `answerableCases` / `unanswerableCases`。面板下拉框用它填充 |
+| GET | `/eval/strategies` | 标准五组策略（`sparse` / `dense` / `hybrid` / `hybrid+rerank` / `sparse+floor`），与 `scripts/compare_strategies.py` 同一份默认值 |
+| POST | `/eval/run` | 跑一轮「黄金集 × 多组策略」，返回对比表（`perStrategy`）+ 逐题明细（`cases`）+ 数据来源与诚实提示（`notes`） |
+
+请求/响应要点（完整样例见 `stellar-ink-ai/tests/fixtures/eval_run_request.json`）：
+
+```bash
+# 直连 Python（本机开发）；正式路径是经网关 /ai/admin/eval/run（下一刀）
+curl -s -X POST http://127.0.0.1:8200/eval/run \
+  -H "Content-Type: application/json" -H "X-AI-Signature: <HMAC>" \
+  -d '{"dataset":"golden_v1","strategies":[{"key":"sparse","enableDense":false}]}'
+# => {"dataset":"公开文章黄金集 v1","corpusSource":"seed-sql:02-init-data.sql",
+#     "corpusPosts":29,"corpusChunks":41,"models":"fake",
+#     "perStrategy":{"sparse":{"recall@1":0.8333,...}},"cases":[...],"notes":[...]}
+```
+
+- `strategies` 省略时用标准五组；`key` 必须唯一（重复会 400，否则对比表两列同名、逐题明细无法区分）
+- `models` 目前固定 `"fake"`：Dense 两列**只代表通路接对了**，不代表真实语义质量 ——
+  这条写进响应的 `notes`，面板要原文展示，不能让用户把 Fake 的数字当结论
+- 请求有问题（数据集不支持 / key 重复 / 越界）一律 **400 + `AI_BAD_REQUEST`**；
+  语料或数据集文件缺失也是 400，但消息里说清缺哪个文件（环境问题不伪装成 500）
+- 新增数据集/策略默认值要同时改：`app/schemas/eval.py`、本文件、前端面板与
+  `stellar-ink-ai/tests/fixtures/eval_run_request.json`
+
+**评测台的 Java 侧契约**
+
+`stellar-ink-ai-client` 里已有对应契约，路径常量见 `AiContractPaths`：
+
+| 方法 | 内网路径 | Java 契约 |
+|---|---|---|
+| GET | `/eval/datasets` | `PythonAiClient#evalDatasets()` → `List<Map<String,Object>>` |
+| GET | `/eval/strategies` | `PythonAiClient#evalStrategies()` → `List<Map<String,Object>>` |
+| POST | `/eval/run` | `PythonAiClient#evalRun(EvalRunRequestDTO)` → `EvalRunResponseDTO` |
+
+- 契约样例由两侧测试共读：`eval_run_request.json`（请求）与 `eval_run_response.json`（响应，
+  由 `scripts/gen_eval_response_fixture.py` 真实跑出来，不做手工修饰）
+- `EvalRunResponseDTO.perStrategy` 用 `Map<String,Object>`：指标集合由 Python 侧决定，
+  Java 再定义一遍等于把指标名写死两处；形状由契约测试守着
+- 降级沿用统一口径：Python 不可用时抛 503 业务异常，**不返回空对比表**
+  （那会让面板显示「0 分」而不是「服务没连上」）
+
+**评测台（对外出口，全部 ADMIN）**
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/admin/eval/datasets` | 可评测的数据集清单（面板下拉框）：`id` / `name` / `cases` / `answerableCases` / `unanswerableCases` | ADMIN |
+| GET | `/ai/admin/eval/strategies` | 标准策略组（默认五组，**与命令行脚本同一份**）：面板据此渲染勾选项，不在前端另写一份默认值 | ADMIN |
+| POST | `/ai/admin/eval/run` | 跑一轮检索评测：请求体见下（`strategies` 留空用标准五组），响应含 `perStrategy` 对比表、`cases` 逐题明细与 `notes` 诚实提示 | ADMIN |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/admin/eval/run \
+  -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" \
+  -d '{"dataset":"golden_v1","strategies":[{"key":"sparse","enableDense":false}]}'
+# => {"code":0,"data":{"dataset":"公开文章黄金集 v1","models":"fake",
+#     "perStrategy":{"sparse":{"recall@1":0.8333,...}},"cases":[...],"notes":[...]}}
+```
+
+- 网关侧由 `/ai/admin/` 前缀统一拦 ADMIN（任何方法，**先于「GET 全放行」**）；
+  服务内 `AiEvalController` 再复核一次角色，网关漏配也不会漏出去
+- 调用 Python 的请求由 `InternalSignatureFeignInterceptor` 统一加 `X-AI-*` 签名头
+  （身份取自 Sa-Token，traceId 取自 MDC）；密钥 `AI_INTERNAL_SECRET` 缺失时**拒绝签名**而不是降级为不签名
+- `notes` 必须原样透出到面板：里面写着「Fake 向量不代表真实语义质量」等口径，
+  Java 不能吞掉这些提示
+
+**星海问答（D 阶段）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/qa` | 就全站已发布文章提问：请求体 `{question, topK?}`，响应 `{answer, citations, doneReason, usage, evidenceSufficient}` | **登录**（READER 及以上） |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/qa \
+  -H "Authorization: <token>" -H "Content-Type: application/json" \
+  -d '{"question":"作者为什么坚持写博客，而不是把内容交给时间线？","topK":5}'
+# => {"code":0,"data":{"answer":"…","citations":[{"postId":1,"title":"…","chunkIndex":0,
+#     "snippet":"…","score":0.83}],"doneReason":"stop","usage":{"model":"fake",…},
+#     "evidenceSufficient":true}}
+```
+
+- 门槛是**登录**而不是角色：这是读者功能，任何人登录后都能问；网关按「未列举路径」规则
+  走 `StpUtil.checkLogin()`（`/ai/admin/**` 才是 ADMIN）
+- `evidenceSufficient=false` 时前端**必须**显示「文章里没有找到依据」，不允许渲染成空白答案；
+  `doneReason=refused` 与之一致
+- 引用是**可点回原文**的：`postId` 决定跳哪篇、`chunkIndex` 决定段落、`snippet` 是原文片段
+- `usage.model` 为 `fake` 表示当前是离线自测（种子语料 + Fake 模型），前端会挂一个提示；
+  真实模型接上后这个字段就是模型名
+- Java 侧只做协议转换（`AiAskDTO` → 内部 `QaStreamRequestDTO`），**不拼答案、不改引用**；
+  空问题在服务端就被 `@NotBlank` 拦下（`code=1001`），不会白花一次检索
+
+**星海问答（流式，经网关）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/qa/stream` | 流式问答：`text/event-stream`，逐帧转发 Python 的 SSE | **登录** |
+
+```bash
+curl -N -s -X POST http://127.0.0.1:8080/ai/qa/stream \
+  -H "Authorization: <token>" -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"question":"一年写十八万字的方法是什么？","topK":5}'
+# => data: {"type": "meta", "model": "fake", "questionLength": 14, "topK": 5}
+#    data: {"type": "citation", "citation": {"postId": 20, "title": "…", …}}
+#    data: {"type": "delta", "text": "…"}
+#    data: {"type": "done", "answer": "…", "doneReason": "stop", "usage": {…},
+#           "evidenceSufficient": true}
+```
+
+- **事件体原样透传**：ai-service 用 `ResponseBodyEmitter` 逐帧转发，不解析、不重新编码
+  （`QaSseFrame.raw()`）。Java 只解析出 `type` 用于日志与审计 —— 少一层映射就少一处会与 Python 契约分叉的地方。
+- 为什么不用 `SseEmitter`：它会**按事件名分帧**（`event:` 头 + data），而本协议刻意把类型放在 JSON 里。
+- 为什么不用 Feign 拉这条流：Feign 的解码器是「拿到完整 body」语义，会把 SSE 退化成一次性响应 ——
+  用户仍要等模型把整段话说完。这里用 JDK 自带的 `java.net.http.HttpClient`（**不引新依赖**）单独开一条通道。
+- **取消传播**：浏览器断开 → Spring 在下次 `send` 时抛 `IOException` → 关掉下游句柄 →
+  上游连接断开 → Python 的生成器被关闭 → 模型停止生成。这是「关掉页面就不再烧 token」的完整链路。
+- 上游不可用时返回一帧 `error`（`AI_UPSTREAM_UNAVAILABLE`）后收尾，**不返回空流**：
+  空流会被前端当成「回答完了」，于是「服务坏了」伪装成「没有依据」。
+- 整体上限 120s（`STREAM_TIMEOUT_MS`），到点回收连接并记一条 warn 日志。
+- **前端消费方**（深读页「问星笺」，`utils/sse.js` + `stores/qa.js`）：
+  用 `fetch` 读 `response.body` 并按空行切帧，**不用 `EventSource`** —— 后者只支持 GET，
+  而问答必须 POST（问题有 500 字上限，塞进 query string 既难看又会进日志）。
+  `meta` 到就显示模型标识、`citation` 到就渲染引用、`delta` 边到边追加正文、`done` 才收尾；
+  **没收到 `done` 就提示「回答中断了」**，不装作答完了。
+- 中止链路两端都做了：前端 `abort()`/离开页面关闭读取（`reader.cancel()`），
+  Java 侧 `IOException` 分支关掉下游句柄 —— 用户一放手，模型就停。
+- 代理侧必须关缓冲：dev 由 `vite.config.js` 的 `/ai` 代理，生产由 nginx 的 `/ai` location
+  （`proxy_buffering off` + `proxy_read_timeout 120s` + 独立限流档）。
+  漏了 `proxy_buffering off`，「逐字生成」会被攒成一整块再吐出来 —— 前端仍在转圈等到最后。
+
+**星海问答（Python 内部，供 ai-service 调用）**
+
+| 方法 | 路径（Python 内部，:8200） | 说明 |
+|---|---|---|
+| POST | `/qa` | 一次问答：检索 → 引用 → 提示词 → 模型 → 结论。请求体是既有的 `QaStreamRequest`（`question` / `conversationId` / `topK`），响应是 `QaAnswer`（`answer` / `citations` / `doneReason` / `usage` / `evidenceSufficient`） |
+| POST | `/qa/stream` | 同一套编排的 SSE 版本：`text/event-stream`，事件顺序 `meta → citation* → delta* → done`（`error` 是旁路事件）。空问题在契约层 422；语料缺失在开流前返回 JSON 400 |
+
+```bash
+# 直连 Python（本机开发；正式路径是经网关的 /ai/qa）
+curl -s -X POST http://127.0.0.1:8200/qa \
+  -H "Content-Type: application/json" -H "X-AI-Signature: <HMAC>" \
+  -d '{"question":"作者为什么坚持写博客，而不是把内容交给时间线？","topK":5}'
+
+# SSE：注意 -N 关掉 curl 自己的缓冲，否则看起来「没有流式」
+curl -N -s -X POST http://127.0.0.1:8200/qa/stream \
+  -H "Content-Type: application/json" -H "Accept: text/event-stream" \
+  -H "X-AI-Signature: <HMAC>" \
+  -d '{"question":"一年写十八万字的方法是什么？","topK":5}'
+# => data: {"type": "meta", "model": "fake", "questionLength": 14, "topK": 5}
+#    data: {"type": "citation", "citation": {"postId": 20, "title": "…", …}}
+#    data: {"type": "delta", "text": "…"}
+#    data: {"type": "done", "answer": "…", "doneReason": "stop", "usage": {…},
+#           "evidenceSufficient": true}
+```
+
+**SSE 线格式（跨语言，改必须两侧同时改）**
+
+- 一帧就是 `data: {json}\n\n`，**事件类型写在 JSON 里**（`type` 字段）而不是用 `event:` 名。
+  这样 Java 侧不必维护一张事件名表，前端用同一个解析器即可。
+- 顺序固定：`meta` 一定第一个到（前端立刻进入「生成中」而不是干等），`citation` 一定先于 `delta`
+  （引用来自检索，不必等模型），`done` 一定最后一个（**缺了它前端会永远停在生成中**）。
+- `error` 是旁路事件：一旦发出就不会再有 `done`，前端据此区分「说完了」与「断了」。
+- 静默期（模型第一个 token 之前）插 `: ping` 注释行 —— 心跳不是事件，解析时要跳过；
+  没有它，反向代理会把静默连接当死连接回收，表现为「答到一半突然断开」。
+- 响应头带 `Cache-Control: no-cache` 与 `X-Accel-Buffering: no`：后者是关掉 Nginx 的响应缓冲，
+  漏了的话「流式」会被攒成一整块再吐出来，前端看到的仍是转圈等到最后。
+- **取消传播**：浏览器断开 → ASGI 关闭响应生成器 → 队列里的编排任务被取消 → 上游 HTTP 流关闭。
+  Python 侧用「生产者任务 + 队列」实现，`finally: task.cancel()` 是这条链路的落点。
+
+- **引用来自检索结果，不来自模型输出**：模型只被要求写 `[1] [2]` 编号，真实的
+  `postId` / `title` / `chunkIndex` / `snippet` / `score` 由服务端贴回去 —— 否则引用无法定位回原文。
+  引用列表**只包含真正送进模型的那几段**，不会多列。
+- **拒答是数据不是文案**：证据不足时返回 `doneReason=refused` + `evidenceSufficient=false` + 明确文案，
+  前端据此显示「文章里没有找到依据」，而不是渲染一片空白。
+- 没有候选时**不会调用模型**（省一次费用，也不给模型编造的机会）；模型自己拒答时**保留引用**
+  （「找到了段落但答不出」与「什么都没找到」是两种信息）。
+- 当前语料是种子内容包、模型是 `FakeProvider`，所以 `usage.model` 会如实显示 `fake`。
+  接上真实嵌入模型后，`minDenseScore` 要按评测台标定 —— 离线 Fake 向量余弦只有 0.03 量级，
+  给它设一个「看起来合理」的下限会让向量通路**静默失效**（混合检索退化成纯 BM25 而不报错）。
+- 流式版本（`/qa/stream`）的编排与线格式见上；**Java 出口（`/ai/qa/stream` 的 `ResponseBodyEmitter`）
+  与前端消费方还没接**，等这两件一起做 —— 先造一条没人消费的流式通道是本仓库明确避免的事。
+
+**星笺 Copilot（D 阶段：写作建议）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/writing/suggest` | 生成写作候选：请求体 `{task, draft, instruction?, tone?, candidateCount?}`，响应 `{task, candidates[{text, rationale}], usage}` | **AUTHOR** |
+| POST | `/ai/writing/style` | 当前作者的**写作画像**：请求体 `{maxSamples?}`（1..50，默认 20），响应 `{authorId, evidenceSufficient, profile, notes}` | **AUTHOR** |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/writing/suggest \
+  -H "Authorization: <AUTHOR token>" -H "Content-Type: application/json" \
+  -d '{"task":"polish","draft":"今晚星星很多。我坐在窗边写字。","tone":"restrained"}'
+# => {"code":0,"data":{"task":"polish","candidates":[{"text":"…","rationale":"…"}],
+#     "usage":{"model":"fake-copilot",…}}}
+```
+
+- `task`：`title` / `outline` / `continue` / `polish` / `tags` / `summary`；`tone`：`keep` / `restrained` /
+  `colloquial` / `concise`。取 `continue`/`polish`/`tags`/`summary` 时**必须带草稿**（Python 契约会 422）
+- **只返回候选，绝不写正文**（红线 §7.4）：作者看过差异预览、点「采纳」之后才走既有 `/posts/**`。
+  客户端多写的字段（例如 `autoApply`）不会渗进内部契约 —— 那个字段在内部 DTO 里根本不存在
+- 草稿是**未发表的私有内容**：只随本次请求传给模型，不入索引、不落库；日志也不记草稿正文
+- 门槛是 AUTHOR：建议要读草稿，而草稿属于创作内容；网关按 `/ai/writing/` 前缀拦，服务内再复核
+- 当前模型是**离线桩**（`usage.model=fake-copilot`）：它按提示词要求的 JSON 格式给出「草稿句子切片」，
+  不做任何改写 —— 只为让链路与前端可测；接上真实模型后该字段就是模型名
+
+**前端入口（执笔页 `/write` 侧栏，仅作者可见）**
+
+- `components/ai/CopilotPanel.vue` + `stores/copilot.js`：6 个功能按钮（润色 / 续写 / 提纲 / 标题 / 标签 / 摘要）
+  → 候选 + 逐行**差异预览**（`components/ai/DiffView.vue` 渲染 `utils/diff.js` 算出的行级 LCS 差异）
+  → 每条候选一个「采纳」按钮。
+- **采纳动作按任务区分**（纯函数 `utils/copilot-action.js`，有 8 条断言守着）：
+  润色＝替换正文、续写＝插到光标处、提纲＝追加到末尾、标题＝只填标题、标签/摘要＝只复制。
+  未知任务**退到「只复制」**——宁可多一步手工，也不能猜成「替换正文」而抹掉作者写好的内容。
+- **面板里没有「自动应用」开关**，也不会在生成后自动改写：正文的每次变更都由作者点一下触发，
+  随后仍走既有的草稿自动保存 / 发布链路（`/posts/**`）。
+- 差异预览比的是**发请求那一刻的草稿快照**（`requestedDraft`），不是「现在的草稿」：
+  作者在结果返回后继续打字时，预览不会跟着漂移；新请求会清掉旧候选，避免把上一轮结果当成这一轮的建议。
+
+**星笺 Copilot（Python 内部，供 ai-service 调用）**
+
+| 方法 | 路径（Python 内部，:8200） | 说明 |
+|---|---|---|
+| POST | `/writing/suggest` | 同上（契约 `WritingSuggestRequest` / `WritingSuggestResult`）；「模型没按格式回答」返回 **502 + `AI_UPSTREAM_UNAVAILABLE`**，与「没有建议」区分开 |
+| POST | `/writing/style` | 写作画像（E1）。按 `authorId` 过滤种子语料并现算，**不落库、不进索引**；样本不足时返回 `evidenceSufficient=false` + 带篇数与字数的 `notes` |
+
+**写作画像（E1：写作记忆）**
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/writing/style \
+  -H "Authorization: <AUTHOR token>" -H "Content-Type: application/json" \
+  -d '{"maxSamples":20}'
+# => {"code":0,"data":{"authorId":1,"evidenceSufficient":true,
+#     "profile":{"sampleCount":20,"charCount":3071,"medianSentenceChars":24.0,
+#                "shortSentenceRatio":0.1694,"clausesPer100Chars":7.29,
+#                "commonPhrases":["所以我","不清楚"],"transitions":["所以","其实"],
+#                "topTags":["随笔","写作"]},
+#     "notes":"口径：只统计已发布文章的正文；…"}}
+```
+
+- **只量不写**：画像是派生数据，删掉文章重算就变；服务端**不落库、不进索引、不参与检索**，
+  因此没有需要清理的状态，重复调用无副作用。
+- **不引用原句**：`commonPhrases` 只放**反复出现（≥3 次）**的 3–6 字字组，绝不摘录整句。
+  两个理由：中文里「作者的一句原话」常常就是最私人的部分；而把原句塞进提示词，
+  下一轮模型会照抄，读者一眼就看得出来。**阈值降到 1 会被参数校验直接拒绝**。
+- **只用已发表正文**：当前语料是种子内容包（只有已发布文章）。接真实数据源时
+  `_samples_for` 必须显式写成 `status = published` —— 草稿进画像等于把未发表内容泄露进提示词。
+- **作者 id 来自登录身份**，不是请求体：`AiWritingStyleDTO` 里根本没有 `authorId` 字段，
+  多传会被忽略。画像不含原句，但「写了多少、爱用什么词」本身也是隐私。
+- 口径细节：长度按「中日韩字符按字 + 拉丁按词」计（`Redis` 算一个词），代码块/行内代码/链接先剔除，
+  句长取**中位数**（比平均数稳）。这些口径写在 `notes` 里随响应返回，前端直接展示给作者。
+- `evidenceSufficient=false` 时 `profile` 为 `null` 而不是一堆 0 —— **0 与「没量」是两件事**；
+  `notes` 里带着实际篇数与字数门槛，作者一眼知道还差多少。
+- 当前端入口：执笔页侧栏 Copilot 面板里的「我的写作画像」折叠块（默认收起，只读）。
+
+**只读 Agent（E2：预算受限的多步检索）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/agent/ask` | 多步检索问答：请求体 `{question, maxSteps?, maxToolCalls?}`，响应 `{answer, citations, doneReason, steps, toolCalls, interruptedBy, usageModel, latencyMs}` | **登录** |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/agent/ask \
+  -H "Authorization: <token>" -H "Content-Type: application/json" \
+  -d '{"question":"一年写十八万字的方法是什么？","maxSteps":4}'
+# => {"code":0,"data":{"answer":"","citations":[…],"doneReason":"length",
+#     "steps":[{"index":0,"thought":"…","tool":"search_posts","label":"检索到 2 段","error":""}],
+#     "toolCalls":1,"interruptedBy":"budget","usageModel":"fake","latencyMs":42}}
+```
+
+- **门槛是登录**，与一次问答相同：Agent 查的仍是站内已发布文章，
+  不比问答多出任何权限 —— 这一点必须守住，否则「Agent」会变成绕过权限的借口。
+- **工具全部只读**，且是**装不进来**而不是运行期判断：`ToolBox` 构造时会拒绝
+  `read_only=False` 的工具（红线 §7.4：第一版 Agent 工具全只读）。
+- **预算是硬上限**，三个都要：步数、工具调用次数、观察字符数。任一触顶立即收尾并如实标
+  `doneReason=length`。只限步数挡不住「一步里塞十个工具调用」，只限次数挡不住
+  「一次观察把整篇文章灌回来」。**服务端默认 4 步 / 6 次**，比契约上限（8 / 12）更紧，
+  且客户端只能收紧（`bounded()` 取 min）—— 预算不能由每个请求自己决定。
+- **`doneReason=length` 不是失败**：此时 `answer` 可能为空，但 `citations` 往往有值 ——
+  前端要显示「查到了这些，但没能在预算内收敛」。Java 侧**原样透传**，
+  绝不会因为「答案为空」就改成错误。
+- **引用必须被观察到**：模型只能标 `postId`（片段与分数一律由工具结果补齐），
+  而且标注的引用要能在工具返回结果里找到，否则丢弃；模型一条都没标对时，
+  退化成「把观察到的引用原样带上」—— 答案是依据它们写的，一条都不给反而无法核对。
+- **中断是状态不是异常**：`interruptedBy=caller`（用户关页面）或 `budget`。
+  中断只在**步与步之间**检查，工具执行中途不打断（将来加写操作时这条边界很关键）。
+- 离线形态：模型用 `FakeProvider` 时解析不出决策 JSON，于是会走「格式不符」分支并在预算内收尾，
+  最终如实返回 `doneReason=length` + `steps[].error`。**这不是「假 Agent」**：
+  循环、预算、引用核实、中断全是真的，只有「模型怎么想下一步」是桩。
+- 前端入口尚未接线（Agent 比一次问答慢且贵，等有真实模型与配额后再决定放哪个页面）。
 
 ### 各服务通用
 
