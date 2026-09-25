@@ -148,6 +148,27 @@ class RevokedTokenFilterTest {
         verify(chain, never()).filter(exchange);
     }
 
+    @Test
+    @DisplayName("Redis 一直不返回（池被占满 / 连接卡死）：2s 内快速失败，而不是让浏览器干等 15s")
+    void hangingRedisLookupFailsFast() {
+        String token = "active.jwt";
+        var exchange = exchange("GET", "/ai/admin/models", token);
+        // Mono.never() = 命令发出去石沉大海：响应式池 acquire 没有超时（max-wait 不会被搬过去），
+        // 没有这一层上限时请求会一直挂着，用户看到的只是浏览器自己的「请求超时」
+        when(redisTemplate.hasKey(TokenRevocationKey.of(token))).thenReturn(Mono.never());
+
+        long startedAt = System.nanoTime();
+        filter.filter(exchange, chain).block();
+        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000;
+
+        org.assertj.core.api.Assertions.assertThat(exchange.getResponse().getStatusCode())
+                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        org.assertj.core.api.Assertions.assertThat(elapsedMillis)
+                .as("应当在下单次请求可接受的范围内快速失败")
+                .isLessThan(5_000L);
+        verify(chain, never()).filter(exchange);
+    }
+
     private MockServerWebExchange exchange(String method, String path, String token) {
         return MockServerWebExchange.from(MockServerHttpRequest.method(
                         org.springframework.http.HttpMethod.valueOf(method), path)

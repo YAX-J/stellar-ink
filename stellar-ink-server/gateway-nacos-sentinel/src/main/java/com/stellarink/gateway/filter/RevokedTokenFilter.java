@@ -34,6 +34,23 @@ public class RevokedTokenFilter implements WebFilter {
     private static final Duration RETRY_DELAY = Duration.ofMillis(120);
 
     /**
+     * 撤销校验的**整体**上限。
+     *
+     * <p>为什么必须有它（前端截图里那两个请求 {@code (canceled) @15s} 就是没有它的后果）：
+     * 命令超时（dev 500ms）只约束「命令」，不约束**从连接池拿连接**——
+     * 响应式路径走的是 Lettuce 的 {@code asyncPools}，而
+     * {@code CommonsPool2ConfigConverter} 并不把 {@code max-wait} 搬过去，
+     * 于是池子被占满（或连接全卡死在黑洞里）时 {@code acquire()} 可以**永远不返回**。
+     * 那时网关一直挂着，用户要等浏览器自己的 15s 超时才看到「请求超时」，
+     * 而我们对为什么超时一无所知。
+     *
+     * <p>2s 的账：单次命令超时 500ms + 重试间隔 120ms + 第二次 500ms ≈ 1.2s，
+     * 再留一点余量；两次都回不来就按 fail-closed 回 503（带 hint），
+     * 用户立刻看到「哪一环断了」而不是干等 15 秒。
+     */
+    private static final Duration SESSION_CHECK_TIMEOUT = Duration.ofSeconds(2);
+
+    /**
      * 撤销列表查不到时的响应体。
      *
      * <p>三处修正（都踩过）：
@@ -78,6 +95,8 @@ public class RevokedTokenFilter implements WebFilter {
                 .doOnError(ex -> log.warn(
                         "Redis 撤销列表查询失败，重试一次：path={} error={}", path, ex.toString()))
                 .retryWhen(Retry.fixedDelay(1, RETRY_DELAY))
+                // 整体上限：跨过「命令超时 + 重试」还没回来就快速失败，别把请求挂到浏览器的 15s
+                .timeout(SESSION_CHECK_TIMEOUT)
                 .doOnError(ex -> log.error(
                         "Redis 撤销列表两次都失败，按 fail-closed 返回 503：path={} error={}",
                         path,

@@ -272,6 +272,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   三种现在都能从响应体读出来（`GatewayErrorHandler` 与 `RevokedTokenFilter` 都给 `{code,msg,hint,path}`）。
   ② 的对策是 `RevokedTokenFilter` **重试一次**（间隔 120ms，两次都失败仍 fail-closed，
   安全口径不变）；四个服务必须连**同一个** Redis（user-service 写撤销键、网关读它）。
+  ⚠️ **撤销校验还有一个 2s 的整体上限**（`SESSION_CHECK_TIMEOUT`）：命令超时只约束「命令」，
+  **不约束从池里拿连接** —— 响应式池（`asyncPools`）的 `acquire()` 没有超时，
+  池被占满或连接全卡死时它会永远不返回，网关一直挂着，用户只能等浏览器自己的 15s 超时
+  （截图里那两个 `(canceled) @15s` 就是这么来的，日志与响应体什么都没留下）。
+  有上限之后最坏情况是 2s 内回一个带 hint 的 503，前端能直接显示「哪一环断了」。
   ⚠️ **网关的 Redis 参数以 Nacos 上的 `gateway-nacos-sentinel-dev.yaml` 为准**：
   远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
   `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
