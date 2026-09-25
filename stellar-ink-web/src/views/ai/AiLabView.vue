@@ -511,7 +511,8 @@ async function applyModel(item) {
         <p v-if="ai.modelsError" class="state-text error-text">
           模型库读不出来：{{ ai.modelsError }}
           <br>
-          如果提示表不存在，先在数据库执行 <code>deploy/sql/11_ai_model_library.sql</code>
+          两种常见原因：① 数据库还没执行 <code>deploy/sql/11_ai_model_library.sql</code>；
+          ② 服务还是旧 jar（新接口要重启 ai-service 后才有）。
           <button class="state-action" @click="ai.loadModels().catch(() => {})">重新读取</button>
         </p>
         <p v-else-if="ai.modelsLoading && !ai.modelsLoaded" class="state-text">正在读取模型库…</p>
