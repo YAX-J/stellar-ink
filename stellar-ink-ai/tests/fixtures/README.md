@@ -8,8 +8,14 @@
 | `qa_answer.json` | `QaAnswer`（问答结果，引用 + 用量） |
 | `writing_suggest_request.json` | `WritingSuggestRequest`（`POST /ai/writing/suggest` 请求） |
 | `writing_suggest_result.json` | `WritingSuggestResult`（写作候选） |
+| `writing_style_request.json` | `WritingStyleRequest`（`POST /ai/writing/style` 请求） |
+| `writing_style_result.json` | `WritingStyleResult`（写作画像；由 `scripts/gen_style_fixture.py` 用**固定样本**生成，不读种子语料） |
+| `agent_ask_request.json` | `AgentAskRequest`（`POST /ai/agent/ask` 请求） |
+| `agent_ask_result.json` | `AgentAskResult`（只读 Agent 结果；由 `scripts/gen_agent_fixture.py` 构造「预算触顶但仍带回引用」的形态） |
 | `index_rebuild_request.json` | `IndexRebuildRequest`（`POST /ai/admin/index/rebuild` 请求） |
 | `index_job.json` | `IndexJob`（`GET /ai/admin/jobs/{id}` 返回） |
+| `eval_run_request.json` | `EvalRunRequest`（`POST /eval/run` 请求，面板跑评测用；Java 侧转发时读同一份） |
+| `eval_run_response.json` | `EvalRunResponse`（评测结果：对比表 + 逐题明细；由 `scripts/gen_eval_response_fixture.py` 真实跑出来，不做手工修饰） |
 | `error_body.json` | `ErrorBody`（可展示错误码与提示） |
 
 ## 两侧怎么读同一组文件

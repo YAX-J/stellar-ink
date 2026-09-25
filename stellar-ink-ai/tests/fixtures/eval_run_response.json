@@ -1,0 +1,639 @@
+{
+  "dataset": "公开文章黄金集 v1",
+  "datasetDescription": "覆盖种子内容包里的写作观、效率方法、阅读与城市速写；含 8 道无答案题测拒答",
+  "corpusSource": "seed-sql:02_init-data.sql",
+  "corpusPosts": 29,
+  "corpusChunks": 41,
+  "models": "fake",
+  "ks": [
+    1,
+    3,
+    5,
+    10
+  ],
+  "strategies": [
+    {
+      "key": "sparse",
+      "description": "sparse, candidateK=30"
+    },
+    {
+      "key": "dense",
+      "description": "dense, candidateK=30"
+    },
+    {
+      "key": "hybrid",
+      "description": "sparse+dense, candidateK=30"
+    },
+    {
+      "key": "hybrid+rerank",
+      "description": "sparse+dense, rerank, candidateK=30"
+    },
+    {
+      "key": "sparse+floor",
+      "description": "sparse, candidateK=30, minScore=11.0"
+    }
+  ],
+  "perStrategy": {
+    "dense": {
+      "cases": 4,
+      "answerableCases": 4,
+      "unanswerableCases": 0,
+      "strategies": [
+        "dense"
+      ],
+      "recall@1": 0.0,
+      "precision@1": 0.0,
+      "ndcg@1": 0.0,
+      "hit@1": 0.0,
+      "recall@3": 0.125,
+      "precision@3": 0.0833,
+      "ndcg@3": 0.0475,
+      "hit@3": 0.25,
+      "recall@5": 0.2083,
+      "precision@5": 0.1,
+      "ndcg@5": 0.1093,
+      "hit@5": 0.5,
+      "recall@10": 0.2083,
+      "precision@10": 0.05,
+      "ndcg@10": 0.1093,
+      "hit@10": 0.5,
+      "mrr": 0.1333,
+      "citationAccuracy": 1.0,
+      "refusalRate": null,
+      "falseRefusalRate": 0.0,
+      "latencyP50": 0.2,
+      "latencyP95": 0.3
+    },
+    "hybrid": {
+      "cases": 4,
+      "answerableCases": 4,
+      "unanswerableCases": 0,
+      "strategies": [
+        "hybrid"
+      ],
+      "recall@1": 0.2083,
+      "precision@1": 0.5,
+      "ndcg@1": 0.375,
+      "hit@1": 0.5,
+      "recall@3": 0.2083,
+      "precision@3": 0.1667,
+      "ndcg@3": 0.2547,
+      "hit@3": 0.5,
+      "recall@5": 0.4583,
+      "precision@5": 0.15,
+      "ndcg@5": 0.3514,
+      "hit@5": 0.75,
+      "recall@10": 0.4583,
+      "precision@10": 0.075,
+      "ndcg@10": 0.3514,
+      "hit@10": 0.75,
+      "mrr": 0.55,
+      "citationAccuracy": 1.0,
+      "refusalRate": null,
+      "falseRefusalRate": 0.0,
+      "latencyP50": 0.5,
+      "latencyP95": 0.5
+    },
+    "hybrid+rerank": {
+      "cases": 4,
+      "answerableCases": 4,
+      "unanswerableCases": 0,
+      "strategies": [
+        "hybrid+rerank"
+      ],
+      "recall@1": 0.0,
+      "precision@1": 0.0,
+      "ndcg@1": 0.0,
+      "hit@1": 0.0,
+      "recall@3": 0.125,
+      "precision@3": 0.0833,
+      "ndcg@3": 0.0475,
+      "hit@3": 0.25,
+      "recall@5": 0.2083,
+      "precision@5": 0.1,
+      "ndcg@5": 0.1093,
+      "hit@5": 0.5,
+      "recall@10": 0.2083,
+      "precision@10": 0.0556,
+      "ndcg@10": 0.1093,
+      "hit@10": 0.5,
+      "mrr": 0.1333,
+      "citationAccuracy": 1.0,
+      "refusalRate": null,
+      "falseRefusalRate": 0.0,
+      "latencyP50": 1.3,
+      "latencyP95": 1.5
+    },
+    "sparse": {
+      "cases": 4,
+      "answerableCases": 4,
+      "unanswerableCases": 0,
+      "strategies": [
+        "sparse"
+      ],
+      "recall@1": 0.5833,
+      "precision@1": 0.75,
+      "ndcg@1": 0.75,
+      "hit@1": 0.75,
+      "recall@3": 0.9167,
+      "precision@3": 0.5,
+      "ndcg@3": 0.8775,
+      "hit@3": 1.0,
+      "recall@5": 1.0,
+      "precision@5": 0.35,
+      "ndcg@5": 0.9119,
+      "hit@5": 1.0,
+      "recall@10": 1.0,
+      "precision@10": 0.175,
+      "ndcg@10": 0.9119,
+      "hit@10": 1.0,
+      "mrr": 0.875,
+      "citationAccuracy": 1.0,
+      "refusalRate": null,
+      "falseRefusalRate": 0.0,
+      "latencyP50": 0.1,
+      "latencyP95": 0.2
+    },
+    "sparse+floor": {
+      "cases": 4,
+      "answerableCases": 4,
+      "unanswerableCases": 0,
+      "strategies": [
+        "sparse+floor"
+      ],
+      "recall@1": 0.5833,
+      "precision@1": 0.75,
+      "ndcg@1": 0.75,
+      "hit@1": 0.75,
+      "recall@3": 0.9167,
+      "precision@3": 0.9167,
+      "ndcg@3": 0.8775,
+      "hit@3": 1.0,
+      "recall@5": 0.9167,
+      "precision@5": 0.85,
+      "ndcg@5": 0.8775,
+      "hit@5": 1.0,
+      "recall@10": 0.9167,
+      "precision@10": 0.8333,
+      "ndcg@10": 0.8775,
+      "hit@10": 1.0,
+      "mrr": 0.875,
+      "citationAccuracy": 1.0,
+      "refusalRate": null,
+      "falseRefusalRate": 0.0,
+      "latencyP50": 0.1,
+      "latencyP95": 0.2
+    }
+  },
+  "cases": [
+    {
+      "caseId": "q001",
+      "strategy": "sparse",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        1,
+        8,
+        18,
+        9,
+        23,
+        6,
+        21,
+        19,
+        24,
+        22
+      ],
+      "relevantPosts": [
+        1,
+        8,
+        9
+      ],
+      "refused": false,
+      "latencyMs": 0.219
+    },
+    {
+      "caseId": "q002",
+      "strategy": "sparse",
+      "question": "一年写 18 万字的方法是什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        8,
+        4,
+        24,
+        22,
+        20,
+        19,
+        21,
+        29,
+        26,
+        1
+      ],
+      "relevantPosts": [
+        8
+      ],
+      "refused": false,
+      "latencyMs": 0.128
+    },
+    {
+      "caseId": "q003",
+      "strategy": "sparse",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        27,
+        1,
+        3,
+        21,
+        19,
+        25,
+        6,
+        26,
+        13,
+        22
+      ],
+      "relevantPosts": [
+        1,
+        3
+      ],
+      "refused": false,
+      "latencyMs": 0.146
+    },
+    {
+      "caseId": "q004",
+      "strategy": "sparse",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        5,
+        23,
+        17,
+        3,
+        18,
+        21,
+        16,
+        4,
+        22,
+        1
+      ],
+      "relevantPosts": [
+        5
+      ],
+      "refused": false,
+      "latencyMs": 0.15
+    },
+    {
+      "caseId": "q001",
+      "strategy": "dense",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        16,
+        28,
+        27,
+        21,
+        1,
+        5,
+        20,
+        10,
+        17,
+        7
+      ],
+      "relevantPosts": [
+        1,
+        8,
+        9
+      ],
+      "refused": false,
+      "latencyMs": 0.261
+    },
+    {
+      "caseId": "q002",
+      "strategy": "dense",
+      "question": "一年写 18 万字的方法是什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        22,
+        16,
+        26,
+        12,
+        25,
+        15,
+        3,
+        23,
+        18,
+        24
+      ],
+      "relevantPosts": [
+        8
+      ],
+      "refused": false,
+      "latencyMs": 0.234
+    },
+    {
+      "caseId": "q003",
+      "strategy": "dense",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        21,
+        17,
+        3,
+        10,
+        16,
+        14,
+        22,
+        19,
+        27,
+        24
+      ],
+      "relevantPosts": [
+        1,
+        3
+      ],
+      "refused": false,
+      "latencyMs": 0.226
+    },
+    {
+      "caseId": "q004",
+      "strategy": "dense",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        19,
+        10,
+        15,
+        22,
+        9,
+        8,
+        21,
+        14,
+        17,
+        12
+      ],
+      "relevantPosts": [
+        5
+      ],
+      "refused": false,
+      "latencyMs": 0.232
+    },
+    {
+      "caseId": "q001",
+      "strategy": "hybrid",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        1,
+        18,
+        27,
+        21,
+        16,
+        22,
+        20,
+        23,
+        29,
+        24
+      ],
+      "relevantPosts": [
+        1,
+        8,
+        9
+      ],
+      "refused": false,
+      "latencyMs": 0.547
+    },
+    {
+      "caseId": "q002",
+      "strategy": "hybrid",
+      "question": "一年写 18 万字的方法是什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        26,
+        24,
+        22,
+        20,
+        8,
+        4,
+        16,
+        19,
+        23,
+        21
+      ],
+      "relevantPosts": [
+        8
+      ],
+      "refused": false,
+      "latencyMs": 0.414
+    },
+    {
+      "caseId": "q003",
+      "strategy": "hybrid",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        3,
+        21,
+        27,
+        17,
+        22,
+        19,
+        16,
+        25,
+        26,
+        18
+      ],
+      "relevantPosts": [
+        1,
+        3
+      ],
+      "refused": false,
+      "latencyMs": 0.424
+    },
+    {
+      "caseId": "q004",
+      "strategy": "hybrid",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        22,
+        21,
+        17,
+        23,
+        19,
+        24,
+        8,
+        9,
+        12,
+        4
+      ],
+      "relevantPosts": [
+        5
+      ],
+      "refused": false,
+      "latencyMs": 0.481
+    },
+    {
+      "caseId": "q001",
+      "strategy": "hybrid+rerank",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        16,
+        28,
+        27,
+        21,
+        1,
+        5,
+        20,
+        10,
+        17
+      ],
+      "relevantPosts": [
+        1,
+        8,
+        9
+      ],
+      "refused": false,
+      "latencyMs": 1.31
+    },
+    {
+      "caseId": "q002",
+      "strategy": "hybrid+rerank",
+      "question": "一年写 18 万字的方法是什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        22,
+        16,
+        26,
+        12,
+        25,
+        15,
+        3,
+        23,
+        18,
+        24
+      ],
+      "relevantPosts": [
+        8
+      ],
+      "refused": false,
+      "latencyMs": 1.109
+    },
+    {
+      "caseId": "q003",
+      "strategy": "hybrid+rerank",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        21,
+        17,
+        3,
+        10,
+        16,
+        14,
+        22,
+        19,
+        27
+      ],
+      "relevantPosts": [
+        1,
+        3
+      ],
+      "refused": false,
+      "latencyMs": 1.561
+    },
+    {
+      "caseId": "q004",
+      "strategy": "hybrid+rerank",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        19,
+        10,
+        15,
+        22,
+        9,
+        8,
+        21,
+        14,
+        17
+      ],
+      "relevantPosts": [
+        5
+      ],
+      "refused": false,
+      "latencyMs": 1.208
+    },
+    {
+      "caseId": "q001",
+      "strategy": "sparse+floor",
+      "question": "作者为什么坚持写博客，而不是把内容交给时间线？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        1,
+        8
+      ],
+      "relevantPosts": [
+        1,
+        8,
+        9
+      ],
+      "refused": false,
+      "latencyMs": 0.209
+    },
+    {
+      "caseId": "q002",
+      "strategy": "sparse+floor",
+      "question": "一年写 18 万字的方法是什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        8
+      ],
+      "relevantPosts": [
+        8
+      ],
+      "refused": false,
+      "latencyMs": 0.096
+    },
+    {
+      "caseId": "q003",
+      "strategy": "sparse+floor",
+      "question": "用一句话概括那篇讲「慢」的文章想说什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        27,
+        1,
+        3,
+        21,
+        19,
+        25
+      ],
+      "relevantPosts": [
+        1,
+        3
+      ],
+      "refused": false,
+      "latencyMs": 0.128
+    },
+    {
+      "caseId": "q004",
+      "strategy": "sparse+floor",
+      "question": "作者读《夜航西飞》读到第三遍是在读什么？",
+      "caseType": "answerable",
+      "retrievedPosts": [
+        5
+      ],
+      "relevantPosts": [
+        5
+      ],
+      "refused": false,
+      "latencyMs": 0.133
+    }
+  ],
+  "elapsedMs": 46.679,
+  "notes": [
+    "本次使用 FakeProvider 的哈希伪向量：Dense 两列只证明向量通路接对了，不代表真实语义质量。",
+    "拒答率的分母是「无答案题」，误拒率的分母是「有答案题」——两者不能相加。",
+    "BM25 的 minScoreRatio 只提精度、永远不会让结果为空；能拒答的只有 minScore 与 minDenseScore。",
+    "真实模型（bge-m3 / bge-reranker）评测需等 Provider 运行期配置从 Java 传入后开放。"
+  ]
+}

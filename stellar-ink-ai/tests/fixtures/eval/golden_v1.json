@@ -19,8 +19,9 @@
     {
       "caseId": "q003",
       "question": "用一句话概括那篇讲「慢」的文章想说什么？",
-      "expectedPostIds": [1],
-      "expectedAnswer": "写得快不算活着，留下来的句子都是在慢里熬出来的。"
+      "expectedPostIds": [1, 3],
+      "gradedRelevance": { "1": 2.0, "3": 1.0 },
+      "expectedAnswer": "可真正留下来的句子，都是在慢里熬出来的；读到的每一段，都改过至少五遍。"
     },
     {
       "caseId": "q004",
@@ -75,7 +76,7 @@
       "caseId": "q012",
       "question": "删掉的字对一篇文章有什么作用？",
       "expectedPostIds": [3],
-      "expectedAnswer": "它们没有消失，变成了文章的骨密度。"
+      "expectedAnswer": "删掉的部分并没有消失，它们变成了这篇文章的骨密度。"
     },
     {
       "caseId": "q013",
@@ -105,9 +106,9 @@
     {
       "caseId": "q017",
       "question": "作者说夜色越深的时候会发生什么？",
-      "expectedPostIds": [1, 7],
-      "gradedRelevance": { "1": 2.0, "7": 1.0 },
-      "expectedAnswer": "世界越安静，一个念头才有空间舒展成它本来该有的样子。"
+      "expectedPostIds": [1, 5, 7],
+      "gradedRelevance": { "1": 2.0, "7": 1.0, "5": 1.0 },
+      "expectedAnswer": "世界越安静，一个念头才有空间舒展成它本来该有的样子；夜航西飞也是写给深夜清醒的人。"
     },
     {
       "caseId": "q018",
@@ -165,7 +166,7 @@
     },
     {
       "caseId": "q027",
-      "question": "文章里提到的年度写作目标是多少万字？",
+      "question": "文章里提到的年度写作目标是每个月写多少字？",
       "expectedPostIds": [],
       "expectedAnswer": null
     },
