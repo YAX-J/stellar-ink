@@ -32,63 +32,18 @@ spring:
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
     druid:
-      initial-size: 5
-      min-idle: 5
-      max-active: 10
-      max-wait: 5000                    # 拿不到连接最多等 5s：宁可快速失败，也不要把线程挂到 60s
-      time-between-eviction-runs-millis: 60000
-      min-evictable-idle-time-millis: 300000
-      keep-alive: true
-      keep-alive-between-time-millis: 120000
+      # ↓ 跨公网连 MySQL：空闲连接会被 NAT 静默丢弃，必须靠保活把它「用热」
+      time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
+      min-evictable-idle-time-millis: 30000      # 空闲 30s 就纳入保活（默认 30 分钟太晚）
+      keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
+      keep-alive-between-time-millis: 10000      # 保活间隔 10s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：远端 Nacos 上也有同名键，
+      # 会覆盖这里；代码那份还会把生效值打进启动日志，便于核对。
       validation-query: SELECT 1
-      validation-query-timeout: 3       # 保活探测也要有上限，否则抖动时 SELECT 1 自己先挂住
-      test-while-idle: true
-      test-on-borrow: false
+      validation-query-timeout: 3
+      test-while-idle: true                      # 借出时兜底校验（保活正常时不会触发）
+      test-on-borrow: false                      # 每次借出都校验要多一个 RTT，保活已够
       test-on-return: false
-      remove-abandoned: true
-      remove-abandoned-timeout: 600
-      log-abandoned: true
-
-  data:
-    redis:
-      host: ${REDIS_HOST:127.0.0.1}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
-      database: ${REDIS_DATABASE:0}
-      # 缓存/登录锁定都是短路操作：读超时到点就该返回，不跟着网络抖动弹十几秒。
-      # dev 常连远端 Redis（本机 → 服务器），取 500ms；prod 见 application-prod.yml 的 1s。
-      timeout: 500ms
-      connect-timeout: 2s
-      lettuce:
-        shutdown-timeout: 200ms
-        # 连接池：一个操作借一条连接、坏连接被淘汰，而不是所有命令挤在一条共享连接上。
-        # ⚠️ 光配这里不够：Spring Boot 3.2 的 spring.data.redis.lettuce 下**没有**
-        # share-native-connection 这个键，启用池也不会自动关掉共享连接 ——
-        # 关掉它、并让池验活空闲连接的是 common-core 的 RedisLettuceTuningConfig（那里有完整理由）。
-        # 池生效的前提是 commons-pool2 在 classpath 上（common-core 已引）。
-        # 这里只有 Spring Boot 真实存在的键：enabled / max-idle / min-idle / max-active /
-        # max-wait / time-between-eviction-runs（不要凭印象加 test-while-idle，那个键不存在）。
-        pool:
-          enabled: true
-          max-active: 16
-          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
-          # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
-          max-idle: 1
-          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，
-          # 于是不会被心跳 ping 到，只会闲到被 NAT 丢掉（实测过）
-          min-idle: 0
-          # 池被借空时的等待上限：宁可快速失败（登录失败计数写不进去也不该挂住请求），也不要无限等
-          max-wait: 500ms
-          # 空闲连接每 30s 跑一次淘汰器；配合 RedisLettuceTuningConfig 的 testWhileIdle
-          # 把已经被 NAT/防火墙掐断的连接清出去（实测：服务重启 12 分钟后第一次登录就撞上过）
-          time-between-eviction-runs: 30s
-
-  # 头像上传：单文件 1MB（业务层同值再校验一次），整个请求 2MB 与 Nginx client_max_body_size 对齐
-  servlet:
-    multipart:
-      max-file-size: 1MB
-      max-request-size: 2MB
-
 # 头像存储配置
 stellar:
   ink:

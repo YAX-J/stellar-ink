@@ -128,8 +128,49 @@ AI 技术路线与实施顺序见
 
 当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 
-## Redis 基础设施
+## 空闲保活：远端 Redis / MySQL 都躲不开的那件事
 
+**症状**：本地开发（跨公网连服务器上的 Redis 与 MySQL）时，「一段时间不操作」之后的
+第一批请求会失败或卡死 —— 网关回 503（fail-closed），业务服务回 500，
+或者请求卡满浏览器自己的 15s 超时（DevTools 里显示 `(canceled) @15s`，日志里什么都没留下）。
+
+**根因（逐条实测，不是推测）**：
+
+1. **不是 Redis/MySQL 掐连接**：`CONFIG GET timeout` = 0、`SHOW VARIABLES LIKE 'wait_timeout'` = 28800；
+2. **是中间链路丢了空闲连接**：本机 `netstat` 还写着 ESTABLISHED，服务端 `CLIENT LIST` /
+   `information_schema.processlist` 里也还列着，但那条 TCP 流已经被 NAT/防火墙丢弃 ——
+   实测 Redis 侧 11 条对 6 条、MySQL 侧 34 条里 24 条 `Time` 上千秒且**从没被 ping 过**；
+3. **于是下一个命令写进了黑洞**：要等命令/socket 超时才发现
+   （Redis 500ms → 503；JDBC `socketTimeout` 15s → 卡 15 秒后换连接成功）；
+4. **连接池自带的「验活」救不了**：Lettuce 的池化工厂 `validateObject()` 只是
+   `StatefulConnection.isOpen()`（本地标志位），半开连接照样返回 true，校验不发任何网络包；
+   Druid 的 `keep-alive` 默认门限是空闲 30 分钟、探测间隔 2 分钟，都晚于链路丢包时间。
+
+**对策：让链路永不空闲（真发命令的那种心跳）** ——
+
+| | Redis | MySQL |
+|---|---|---|
+| 谁发心跳 | `RedisKeepAliveHeartbeat`（common-core 与网关各一份） | `DruidKeepAliveConfig` |
+| 怎么发 | 每 30s 借一条池化连接 `PING` | 每 10s 让 Druid 对池内连接做 `SELECT 1` 保活 |
+| 池的配合 | `max-idle: 1` / `min-idle: 0`（业务借到的就是被热过的那条） | 保持 `min-idle` 条，全部纳入保活 |
+| 失败怎么办 | `LettuceConnectionFactory#resetConnection()` 丢掉整池 | Druid 自己淘汰并补一条新连接 |
+| 生效值从哪看 | 启动日志「保活心跳已启动」 | 启动日志「MySQL 空闲保活已生效[…]」 |
+
+⚠️ 两个坑：**① 心跳必须打在实际被用的那个池上** —— Spring Data Redis 的阻塞路径（`getConnection`
+→ commons-pool2 的 `pools`）与响应式路径（`getConnectionAsync` → Lettuce 的 `asyncPools`）
+是两个独立的池，网关的撤销校验走后者，用错 API 会「心跳日志一切正常但照样 503」；
+**② 这几组参数在远端 Nacos 上也有同名键且优先级更高**，所以 `DruidKeepAliveConfig` 在代码里
+定死并打印生效值，避免「改了本地 yml 却白改」。
+
+**验收办法**（不用等页面点按）：
+`SELECT time FROM information_schema.processlist WHERE host LIKE '<本机公网IP>%'` ——
+所有连接的空闲时间都应当 ≤ ~60 秒；Redis 侧 `CLIENT LIST` 里我们的连接应当反复出现
+`cmd=ping`（`idle` 周期性归零）。
+
+⚠️ **生产 Docker 编排里不存在这个问题**：Redis/MySQL 与应用同机同网，没有 NAT 丢包。
+这是**本地跨公网连远端中间件**特有的代价。
+
+## Redis 基础设施
 - `common-core` 通过 Spring Data Redis 提供阻塞式 `RedisUtils` 与 `RedisCache`，供 Servlet 业务服务注入；网关单独使用 Reactive Redis 检查 JWT 撤销列表，禁止在 Netty 事件循环里调用阻塞式工具。撤销键规则由 `shared-model` 共享。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。
 - user-service 使用 Redis 维护登录失败窗口、账号锁定和 JWT 撤销记录，并缓存公开作者摘要（5 分钟）；完整用户资料含登录名和申请理由，不进入共享缓存。

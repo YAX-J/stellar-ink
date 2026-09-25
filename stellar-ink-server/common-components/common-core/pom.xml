@@ -46,6 +46,13 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
+        <!-- Druid：只为编译 DruidKeepAliveConfig（跨公网连 MySQL 的空闲保活兜底）。
+             标 optional —— 业务服务各自已引 druid-spring-boot-starter，这里不重复传递。 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid-spring-boot-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-jsqlparser</artifactId>

@@ -30,39 +30,18 @@ spring:
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD}
     druid:
-      initial-size: 5
-      min-idle: 5
-      max-active: 20
-      max-wait: 5000
+      # ↓ 跨公网连 MySQL：空闲连接会被 NAT 静默丢弃，必须靠保活把它「用热」
+      time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
+      min-evictable-idle-time-millis: 30000      # 空闲 30s 就纳入保活（默认 30 分钟太晚）
+      keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
+      keep-alive-between-time-millis: 10000      # 保活间隔 10s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：远端 Nacos 上也有同名键，
+      # 会覆盖这里；代码那份还会把生效值打进启动日志，便于核对。
       validation-query: SELECT 1
       validation-query-timeout: 3
-      test-while-idle: true
-
-  data:
-    redis:
-      host: ${REDIS_HOST:127.0.0.1}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
-      database: ${REDIS_DATABASE:0}
-      timeout: 1s
-      connect-timeout: 2s
-      lettuce:
-        shutdown-timeout: 200ms
-        # 连接池（与 dev 同尺寸；max-wait 跟随 prod 的 1s 超时）。
-        # 「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开 ——
-        # 不写 pool 段也不会报错，但淘汰器不跑，空闲连接被 NAT 掐断后第一个命令仍要等到超时。
-        pool:
-          enabled: true
-          max-active: 16
-          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条；
-          # 并发多出来的连接用完即销毁，不会闲在池里被 NAT 静默丢弃（那是 503 的来源）
-          max-idle: 1
-          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，
-          # 于是不会被心跳 ping 到，只会闲到被 NAT 丢掉（实测过）
-          min-idle: 0
-          max-wait: 1s
-          time-between-eviction-runs: 30s
-
+      test-while-idle: true                      # 借出时兜底校验（保活正常时不会触发）
+      test-on-borrow: false                      # 每次借出都校验要多一个 RTT，保活已够
+      test-on-return: false
 sa-token:
   token-name: Authorization
   token-style: uuid
