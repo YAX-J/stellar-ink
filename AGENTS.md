@@ -69,6 +69,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **硬性约束**：该依赖只允许被 `views/notes/NoteEditView.vue` 通过 `defineAsyncComponent` 懒加载，
   绝不可在其它页面 import —— 否则 520KB（gzip 180KB）会进入首屏包。新增依赖前先确认没有更轻的替代。
 - 所有文本文件 UTF-8（Windows 下注意别让 IDE 存成 GBK）。
+- **`.bat` / `.cmd` 必须是 CRLF 换行**（`.gitattributes` 里的 `*.bat text eol=crlf` 是对已入库文件的兜底，
+  但**不入库的本地脚本没人兜底**，写完必须自己转）。踩过一次：用编辑器写出的 `start-all.bat` 是纯 LF，
+  跑到 `goto wait_loop` 报「系统找不到指定的批处理标签」——原因是 cmd 按**字节偏移**扫描标签，
+  LF-only 会让偏移算错。现象看起来像「标签名写错了」，实际是换行符；
+  而且 `call :label` 有时反而能过，**别据此以为没事**。
+  改完 `.bat` 的验证办法：复制一份，把 `call :kill_port` 与 `start "si-…"` 两类行换成 `echo`，
+  拿它跑一遍 —— 控制流（标签、计数器、汇总）全都能验到，又不会真的重启服务。
 - 文档同步：改了接口/启动方式/目录结构，必须同步更新 `docs/api/README.md`、`docs/architecture/README.md` 和本文档。
 
 ## 4. 前端规范（stellar-ink-web）

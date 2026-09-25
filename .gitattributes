@@ -1,0 +1,11 @@
+# 换行符：批处理必须是 CRLF，否则 cmd 的 goto/call 找不到标签
+#
+# 踩过一次：用编辑器写出的 start-all.bat 是纯 LF，运行时
+#   [4/4] waiting for all services to become healthy ...
+#   .系统找不到指定的批处理标签 - wait_loop
+# 原因是 cmd 按**字节偏移**扫描 ::label，LF-only 的文件会让偏移算错；
+# 报错发生在 goto 上（call :label 有时反而能过），所以现象看起来像「标签写错了」。
+# eol=crlf 让这些文件在任何机器/编辑器 checkout 出来都是 CRLF；
+# 仓库里仍按 LF 存储（git 会归一化），差异不会因此变大。
+*.bat text eol=crlf
+*.cmd text eol=crlf
