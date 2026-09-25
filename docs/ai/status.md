@@ -33,9 +33,9 @@
 # Python：静态检查 + 类型 + 测试
 cd stellar-ink-ai
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 95 files already formatted
-uv run mypy app              # Success: no issues found in 49 source files
-uv run pytest                # 442 passed（含脚本自检 15 条）
+uv run ruff format --check . # 105 files already formatted
+uv run mypy app              # Success: no issues found in 54 source files
+uv run pytest                # 483 passed
 
 # 可执行的检索/评测证据（不需要 Qdrant、不需要任何 API Key）
 uv run python scripts/eval_local_baseline.py   # 29 篇 / 41 子块；Recall@1 0.8333、NDCG@5 0.9485、拒答率 0.4、误拒率 0.0
@@ -44,7 +44,7 @@ uv run python scripts/check_golden_evidence.py # 20 道有答案题证据自检�
 
 # Java：契约、切片、公共模块
 cd stellar-ink-server
-mvn -pl ai-service -am test    # BUILD SUCCESS：ai-service 84 / client 40 / common-core 27
+mvn -pl stellar-ink-ai-client,ai-service -am test   # BUILD SUCCESS：ai-service 92 / client 40 / common-core 27
 mvn -pl common-components/common-core,user-service,content-service,gateway-nacos-sentinel -am test  # BUILD SUCCESS
 
 # 前端：纯逻辑自检 + 部署前缀核对 + 构建
@@ -55,6 +55,17 @@ npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 
 对照基线（与阶段 C 收口时的记录一致，说明这期间没有静默退化）：
 `Recall@1 0.8333 / Recall@3 0.9417 / Precision@5 0.800 / NDCG@5 0.9485 / MRR 0.975 /
 拒答率 0.4 / 误拒率 0.0 / 引用准确率 1.0`。
+
+**第一次真实模型端到端**（2026-09-25，面板配 `chat = deepseek-flash @ api.deepseek.com`，
+语料仍是种子内容包、检索只开 Sparse —— 因为 `embedding` 角色还没配）：
+
+| 路径 | 结果 |
+|---|---|
+| 非流式 `QaService.answer` | `doneReason=stop`、`evidenceSufficient=true`、引用 4 条、答案里带 `[1]`/`[3]` 编号、`model=deepseek-flash`、1273 tokens / 5.8s |
+| 流式 `QaService.stream` | `meta`（`model=deepseek-flash`）→ `citation`×4 → `delta`×76（129 字）→ `done`；推理内容被正确跳过、未混进正文；`latencyMs=2084` |
+
+这两次跑出来的坑都记在 §6 的第 9–10 条 —— 它们**只在真实推理模型上出现**，
+Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型没问题」。
 
 ## 4. 已知缺口（**都要在接真实流量前处理**）
 
@@ -70,10 +81,14 @@ npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 
 - 问答 / 流式问答 / Copilot / 画像 / Agent / 评测**全部**走这条路径；
   `ProviderError` 由 `app/main.py` 的全局处理器转成 429（限流）/ 400（配置）/ 502（上游）。
 
-仍然算缺口的部分：**没有用真实模型（bge-m3 / deepseek）跑过一次**。
-所有指标（含 §3 的基线）目前都是**离线口径**（种子语料 + 显式 fake），不代表真实模型质量；
-Qdrant 与嵌入模型的真实往返也还没做（见 §4.2）。填完面板后的第一件事应是：
+仍然算缺口的部分：**只有 `chat` 角色被真跑过**（见 §3），`embedding` / `rerank` 还没配，
+因此 Dense 与 Rerank 两列、以及全部检索指标仍然是**离线口径**（种子语料 + 显式 fake），
+不代表真实模型质量；Qdrant 的真实往返也还没做（见 §4.2）。填完嵌入模型后的第一件事应是：
 在一个小策略集上跑评测台，标定 `minDenseScore`（`scripts/calibrate_min_score.py` 也是为此）。
+
+⚠️ 配真实**推理**模型时一定要调大该角色的 `maxTokens`（建议 ≥2048）：
+实测 `deepseek-flash` 的一次问答用了 1636 个 completion tokens，其中约 1360 个是推理内容 ——
+`max_tokens` 给小了就会出现「一个字都没写出来，预算就没了」（见 §6 第 9 条）。
 
 ### 4.2 Qdrant 从未连过真实实例
 
@@ -102,7 +117,12 @@ Qdrant 与嵌入模型的真实往返也还没做（见 §4.2）。填完面板�
    两者都**没有默认值**，缺失时相关能力直接拒绝，不会静默降级。
 2. 执行 `mysql -u root -p stellar_ink < deploy/sql/10_ai-schema.sql`（`ai_*` 表）。
 3. 在 `/ai-lab` 面板里填 API Key（只写不读，列表只回掩码）并跑一次连通性自检。
-4. 跑一次 Qdrant 真实冒烟（§4.2 的命令）。
+   ⚠️ 那个自检是 `scope: tcp_only`：**只证明端点可达，不验证模型名与密钥**（已实测过这个差别）。
+   真正的验证是打一次真实调用（配好 `chat` 后随便问一句即可），
+   配推理模型时记得把该角色的 `maxTokens` 调到 2048 以上。
+4. **再配 `embedding` 角色**（向量维度照服务方文档填）：在那之前问答的 Dense 通路、评测台的
+   `dense` / `hybrid` / `hybrid+rerank` 三列都用不了（会直接报 400 并说明缺哪个角色，不会用假向量凑数）。
+5. 跑一次 Qdrant 真实冒烟（§4.2 的命令）。
 
 ## 6. 这 20 轮里最值得记住的几个坑
 
@@ -124,3 +144,16 @@ Qdrant 与嵌入模型的真实往返也还没做（见 §4.2）。填完面板�
    并由 `tests/test_scripts.py` 盯着。
 8. **预算账目要在拿到东西之后再记**：Agent 先在「拿到可用观察前」加工具调用次数，
    于是账单与日志各说各的。
+9. **推理模型的「思考」也占 `completion_tokens`**：`deepseek-flash` 会先产出一大段
+   `reasoning_content`（实测一次问答 1636 个 completion tokens 里约 1360 个是思考），
+   `max_tokens` 给小了就是「content 为空 + `finish_reason=length`」。
+   原来的 `ChatResponse.refused` 只判「文本为空」，于是把它报成**模型拒答** ——
+   用户会去查安全过滤与提示词，而真正要做的是把 `maxTokens` 调大。
+   现在截断单独用 `DoneReason.LENGTH` 表达，空输出只有「正常结束」或 `content_filter` 才算拒答。
+10. **流式的 `usage.latencyMs` 是「单块」耗时（恒为 0），不是一次回答的耗时**：
+    照抄它会让跑了 2 秒的回答在响应里显示成 `0ms`，而前端与运维正是用这个数字判断链路快慢。
+    现在由编排层自己计时（与上游上报值取较大者）。
+    同一条链路上还有个小坑：展示用的模型名原来只 `getattr(chat, "model")`，
+    而真实 Provider 的模型名在 `config.model` 上 —— 于是 SSE 的 `meta.model` 一直是 `unknown`，
+    链路完全正常却看起来像「没接上模型」。三处症状的共同点是**都没报错**，
+    只有真的打一次真实模型才看得见（`tests/test_chat_response_edges.py` 现在盯着它们）。
