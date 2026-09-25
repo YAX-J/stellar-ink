@@ -100,12 +100,17 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- 统一响应体里有 LocalDateTime：Spring Boot 运行时自动注册 JSR-310 模块，
-             但切片测试里没有完整的 Jackson 自动配置，显式引入避免切片测试误报 500 -->
+        <!-- 统一响应体里有 LocalDateTime，springdoc 初始化时直接用 JavaTimeModule。
+             ⚠️ **不能加 scope=test**（踩过一次，代价是服务直接起不来）：
+             它曾经被写成 test 依赖，理由是「切片测试里没有完整的 Jackson 自动配置」——
+             理由本身没错，但同一个坐标在**运行期**也是必需的：
+             test 依赖不进 fat jar，于是启动时 springdoc 报
+             NoClassDefFoundError: JavaTimeModule，ai-service 连端口都没监听起来，
+             而现象只是 /ai/** 全部 503，看起来像「服务没起」而不是「依赖范围写错」。
+             user-service / content-service 没显式声明它，是从 starter 传递拿到的运行期依赖。 -->
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
-            <scope>test</scope>
         </dependency>
 
         <!-- 内存库：让「模型配置真能落库」这条链路在测试里跑起来（含 @Mapper 扫描与加密列），
