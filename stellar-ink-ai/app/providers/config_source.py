@@ -18,8 +18,18 @@ import logging
 import os
 from collections.abc import Iterable, Mapping
 
+from app.core.config import ENV_FILE, env_source
 from app.core.crypto import decrypt, load_master_key
 from app.providers.models import ProviderCapabilities, ProviderConfig
+
+# ⚠️ 为什么必须 import `app.core.config`（而不是顺手删掉这行）：
+# `.env` 的加载挂在那**一个模块的 import 期**（见 `app/core/config.py` 的 `load_dotenv`），
+# 而本模块读 MYSQL_* / 主密钥走的是 `os.environ`。少了这行就会
+# 「.env 里 mysql 配得齐齐的，这里却判定未配置」→ 返回 0 条配置 →
+# 上层报「角色尚未配置」，把「配置没读到」伪装成「没配过」。
+# 依赖放在**使用点旁边**（而不是只放在 app.main）才不会被别的入口漏掉：
+# CLI 脚本与 fixture 脚本都不经过 app.main。
+# `ENV_FILE` / `env_source` 只用于日志与诊断，不参与判断。
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +170,38 @@ def load_provider_configs() -> list[ProviderConfig]:
     if _mysql_configured():
         return configs_from_rows(_fetch_rows(), decrypt_key=True)
     return []
+
+
+def describe_sources() -> str:
+    """说清「配置是从哪读的、为什么是空的」——**不含任何值**。
+
+    为什么需要它：空配置有两种完全不同的原因，而它们此前报同一句话：
+    - 面板还没配（真·未配置，去面板填就行）；
+    - `MYSQL_*` 没给齐（面板配了也读不到 —— 这时让用户去面板重填是白费功夫）。
+    把这两件事混成一句「角色尚未配置」，会把排查方向直接带偏。
+    """
+    parts: list[str] = []
+    if configs_from_env():
+        parts.append(f"来源：{CONFIG_JSON_ENV} 环境变量")
+    elif _mysql_configured():
+        host = os.environ.get("MYSQL_HOST")
+        port = os.environ.get("MYSQL_PORT") or 3306
+        parts.append(f"来源：MySQL {host}:{port} 的 ai_provider_config")
+        if not _env_file_loaded():
+            # .env 没读到但环境变量齐了：合法（容器注入），但要能看出来
+            parts.append("（MYSQL_* 来自进程环境，不是 .env）")
+    else:
+        parts.append(
+            f"没有可用的配置来源：{CONFIG_JSON_ENV} 未设置，"
+            "且 MYSQL_HOST/MYSQL_DB/MYSQL_USER 未给齐"
+        )
+        parts.append(f"当前 .env：{env_source()}")
+    return "；".join(parts)
+
+
+def _env_file_loaded() -> bool:
+    """`.env` 是否存在（只用于诊断输出，不参与判断）。"""
+    return ENV_FILE.is_file()
 
 
 def _mysql_configured() -> bool:

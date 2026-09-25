@@ -20,6 +20,7 @@ dependencies = [
     # 是从 os.environ 直读的。没有它，「把密钥写进 .env」这件事不成立。
     # 它本来就是 pydantic-settings 的传递依赖，这里显式声明是为了不依赖巧合。
     "python-dotenv>=1.0,<2.0",
+    "pymysql>=1.2.3",
 ]
 
 [project.optional-dependencies]

@@ -22,7 +22,11 @@ from functools import lru_cache
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.providers.config_source import ProviderConfigError, load_provider_configs
+from app.providers.config_source import (
+    ProviderConfigError,
+    describe_sources,
+    load_provider_configs,
+)
 from app.providers.errors import ProviderError
 from app.providers.models import ProviderConfig
 from app.providers.resolver import ProviderResolver
@@ -120,10 +124,16 @@ def assembly_error(error: Exception) -> JSONResponse:
     - 模型角色没配（`UnsupportedCapabilityError` / `ProviderError`）或配置读不出来
       （`ProviderConfigError`）—— 这类必须说清「去面板配哪个角色」，
       因为最常见的误判是「服务坏了」，而实际只是没填。
+
+    「角色尚未配置」还会附上 `describe_sources()`：空配置有两个完全不同的原因
+    （真没配 / MYSQL_* 没给齐导致读不到），混成一句话会把排查方向带偏。
     """
+    message = str(error)
+    if "尚未配置" in message:
+        message = f"{message}；{describe_sources()}"
     return JSONResponse(
         status_code=400,
-        content={"code": AiErrorCode.BAD_REQUEST.value, "message": str(error)},
+        content={"code": AiErrorCode.BAD_REQUEST.value, "message": message},
     )
 
 
