@@ -1,0 +1,36 @@
+{
+  "authorId": 1,
+  "evidenceSufficient": true,
+  "profile": {
+    "sampleCount": 3,
+    "charCount": 615,
+    "paragraphCount": 33,
+    "sentenceCount": 55,
+    "medianSentenceChars": 13.0,
+    "minSentenceChars": 5,
+    "maxSentenceChars": 30,
+    "shortSentenceRatio": 0.7273,
+    "clausesPer100Chars": 6.34,
+    "questionRatio": 0.0,
+    "informalMarkRatio": 0.0056,
+    "commonPhrases": [
+      "所以我",
+      "不清楚",
+      "写下来",
+      "的时候"
+    ],
+    "transitions": [
+      "所以",
+      "其实",
+      "后来",
+      "因为",
+      "我觉得"
+    ],
+    "topTags": [
+      "随笔",
+      "写作",
+      "生活"
+    ]
+  },
+  "notes": "固定样本生成的契约向量（见 scripts/gen_style_fixture.py）"
+}

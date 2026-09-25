@@ -1,0 +1,40 @@
+{
+  "answer": "",
+  "citations": [
+    {
+      "postId": 1,
+      "title": "写作的复利",
+      "chunkIndex": 0,
+      "snippet": "一年写十八万字靠的是每天五百字，不是等灵感。",
+      "score": 14.28
+    },
+    {
+      "postId": 16,
+      "title": "一次 23 秒的请求",
+      "chunkIndex": 1,
+      "snippet": "把超时显式写出来，比默认无限等要安全得多。",
+      "score": 9.5
+    }
+  ],
+  "doneReason": "length",
+  "steps": [
+    {
+      "index": 0,
+      "thought": "先查站内有没有写过方法",
+      "tool": "search_posts",
+      "label": "检索到 2 段",
+      "error": ""
+    },
+    {
+      "index": 1,
+      "thought": "还想再确认一下",
+      "tool": "",
+      "label": "",
+      "error": "模型既没有选择工具，也没有给出答案（格式不符）"
+    }
+  ],
+  "toolCalls": 1,
+  "interruptedBy": "budget",
+  "usageModel": "fake",
+  "latencyMs": 42
+}
