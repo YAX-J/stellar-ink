@@ -359,6 +359,16 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `app/rag/corpus.py`（语料唯一缓存）与 `app/api/v1/assembly.py`（检索管道按
   「语料版本 + 开关 + 配置指纹」缓存）——**新端点必须走这三个模块**，
   不要自己 `FakeProvider()`、也不要自己 `lru_cache` 一份语料。
+- **模型库与角色绑定（面板怎么用）**：`ai_provider_config` 是 `UNIQUE KEY uk_role`（一个角色一行），
+  所以「再加一个 chat 模型」会覆盖原来那行。因此拆成两张表：
+  `ai_model` 是**素材库**（`deploy/sql/11_ai_model_library.sql`，每个模型一行，各自标注能力），
+  `ai_provider_config` 仍是**每个角色当前生效的配置**，只多一列 `model_id` 记住来源。
+  **Python 读的还是角色表，因此不需要任何改动** —— 新增能力时别再往 Python 里加一张表。
+  三条必须保持的约定：① 改库里的模型会由后端**同步**到所有绑定它的角色（否则「换了 Key 却不生效」）；
+  ② 绑定前校验**能力匹配**（角色需要的能力见 `AiModelRole.capability()`，
+  必须与 Python 的 `providers/registry.py::_ROLE_CAPABILITY` 一致）；③ 正被使用的模型不许直接删，`force=true` 只解绑。
+  ⚠️ 涉及「把某列置空」的更新**必须**走 `AiProviderConfigMapper.updateWithModelId`：
+  MyBatis-Plus 的 `updateById` 会忽略 null 字段，用它清 `model_id` 的表现是「接口成功、刷新又回来了」。
 - **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
   签名与 nonce 防重放已在 A2 落地（Python 侧 nonce 目前是**进程内** + TTL，多实例前换 Redis）。

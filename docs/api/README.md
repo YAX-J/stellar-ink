@@ -248,14 +248,48 @@ curl -s http://127.0.0.1:8107/ai/health
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
-| GET | `/ai/admin/providers` | 列出所有角色（`chat`/`fast`/`reasoning`/`embedding`/`rerank`）的配置；**密钥只回掩码**（`sk-…9f3a`）与 `apiKeyConfigured` | ADMIN |
-| POST | `/ai/admin/providers` | 新增或更新某角色配置；`apiKey` **留空表示沿用已存密钥**（改模型名不必重填） | ADMIN |
+| GET | `/ai/admin/providers` | 列出所有角色的**当前生效**配置；**密钥只回掩码**（`sk-…9f3a`）与 `apiKeyConfigured`；`modelId` 指向模型库条目（手填为 null） | ADMIN |
+| POST | `/ai/admin/providers` | 新增或更新某角色配置（手填路径）；`apiKey` **留空表示沿用已存密钥**；手填会把 `modelId` 置空（等于解除与模型库条目的绑定） | ADMIN |
 | DELETE | `/ai/admin/providers/{role}` | 删除某角色配置 | ADMIN |
 | POST | `/ai/admin/providers/{role}/check` | 端点连通性自检：只验证 TCP 可达（`scope: tcp_only`），不验证模型与密钥 | ADMIN |
+| **PUT** | `/ai/admin/providers/{role}/model` | **把模型库里的某个模型应用到该角色**：请求体 `{"modelId": 1}`；会校验能力匹配，并把该条模型的字段复制成角色当前生效的配置 | ADMIN |
+| GET | `/ai/admin/models` | 模型库列表：每条带 `capabilities`（`chat`/`embedding`/`rerank`）与 `boundRoles`（正被哪些角色使用），密钥只回掩码 | ADMIN |
+| POST | `/ai/admin/models` | 新增/修改一条模型；`id` 留空=新增，`apiKey` 留空=沿用已存密钥；**同 `baseUrl + model` 唯一** | ADMIN |
+| DELETE | `/ai/admin/models/{id}?force=` | 删除一条模型；正被角色使用时会被拦下，`force=true` 则**只解绑**（不动角色当前生效的配置） | ADMIN |
+| POST | `/ai/admin/models/{id}/check` | 该模型端点的连通性自检，结论记回库条目 | ADMIN |
 | GET | `/ai/admin/providers/runtime` | **含解密后密钥**的运行时配置（仅内网视角）。Python 侧目前**不调用它**，而是直接读同一张 `ai_provider_config` 表并用同一把主密钥解密 —— 两条路读的是同一份数据 | ADMIN |
 
+**模型库与角色配置的分工（`deploy/sql/11_ai_model_library.sql`）**
+
+`ai_provider_config` 是 `UNIQUE KEY uk_role`（一个角色一行），所以「再加一个 chat 模型」
+会覆盖原来那行 —— 两个模型之间没法切换，换模型还得把 Key 重填一遍。模型库把两件事拆开：
+
+- `ai_model`：**素材库**，你加进来的每个模型各占一行，并标注它能干什么（能力）；
+- `ai_provider_config`：仍是**每个角色当前生效的那份配置**，只多一列 `model_id` 记住来源。
+
+因为 Python 读的还是角色表，所以**Python 侧零改动**。三条一致性约定：
+
+- **改库里那条模型会同步到所有绑定它的角色**（包括轮换 Key）—— 否则会出现
+  「库里换了 Key，问答还在用旧的」这种不报错的静默不一致；
+- **能力必须匹配**：把纯 chat 模型绑到 `embedding` 角色返回 `code 1001`，消息里说明它支持什么；
+- **正被使用的模型不许直接删**：要删得带 `force=true`，且只会解绑、不动角色当前生效的配置，
+  免得正在跑的能力突然取不到模型。
+
 ```bash
-# 保存一份 DeepSeek 配置（Key 只在请求体里出现这一次）
+# 1) 加一个模型（能力可多选）
+curl -s -X POST http://127.0.0.1:8080/ai/admin/models \
+  -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" \
+  -d '{"displayName":"主力对话模型","provider":"openai_compatible",
+       "baseUrl":"https://api.deepseek.com/v1","model":"deepseek-chat",
+       "apiKey":"sk-xxxx","capabilities":["chat"]}'
+# 2) 把它应用到 chat 角色（此后问答/摘要都走它）
+curl -s -X PUT http://127.0.0.1:8080/ai/admin/providers/chat/model \
+  -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" \
+  -d '{"modelId":1}'
+```
+
+```bash
+# 保存一份 DeepSeek 配置（手填路径；Key 只在请求体里出现这一次）
 curl -s -X POST http://127.0.0.1:8107/ai/admin/providers \
   -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" \
   -d '{"role":"chat","displayName":"DeepSeek Chat","provider":"openai_compatible",
