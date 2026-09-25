@@ -199,6 +199,75 @@ Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会
 心跳/保活那一整套在本地连线下其实用不上了（本机没有 NAT），但保留着 ——
 一旦把开关拨回远端就是现成的保护，代价只是每 30s 几条 `PING` / `SELECT 1`。
 
+### 重启后第一个请求为什么慢 5 秒（JCE 预热）
+
+症状：服务重启后，**第一个需要验签或加密**的请求要 5~6 秒，之后同类请求只要几十毫秒。
+与「空闲」无关（当天同一个 JVM 里相隔 34 分钟的两次 5 秒卡顿，都是各自重启后的第一个鉴权请求），
+也**与数据库无关**——公开接口（不解析 JWT）一直很快：
+
+```
+21:05:55  GET /ai/health          200   22ms   ← 重启后第一个请求，公开接口
+21:06:15  GET /ai/admin/models    200 5379ms   ← 第一个需要验签的请求
+21:07:52  GET /ai/admin/models    200   16ms   ← 之后一直这么快
+```
+
+两个并发的鉴权请求还会在同一毫秒一起解开，这是「一起等同一把锁」的特征。
+线程 dump（请求卡住时 `jcmd <pid> Thread.print`）直接给出结论：
+
+```
+javax.crypto.Mac.getInstance
+  javax.crypto.JceSecurity.getVerificationResult / ProviderVerifier.verify
+    javax.crypto.JarVerifier.verifyJars → verifySingleJar
+      org.springframework.boot.loader.zip.ZipContent.getEntry   ← 正在逐条读可执行 fat jar
+        sun.nio.ch.FileDispatcherImpl.pread0
+```
+
+第一次用到某个算法时，JVM 要校验**调用方所在 jar 的签名信息**（JCE 的老规矩）。
+我们跑的是 Spring Boot 可执行 fat jar，`JarVerifier` 只能顺着嵌套 jar 的中央目录
+**一条条随机读**，于是这个本来微不足道的校验被放大成数秒；`JceSecurity` 按 provider
+缓存校验结果，所以只疼第一次。
+
+对策是**预热**，不是「关掉校验」（JCE 没有官方开关，拆 fat jar 代价更大）：
+`common-core` 的 `JceWarmupRunner` 与网关的同名实现（WebFlux 不能依赖 common-core，
+**改一处要同步另一处**）在启动期真跑一遍：
+
+| 预热项 | 覆盖的生产路径 |
+|---|---|
+| `Sa-Token-JWT(create+parse)` | **这一项才是那 5 秒的正主**：Sa-Token 的签/验走 Hutool |
+| `HmacSHA256` | ai-service → Python 的内部签名（我们自己的调用路径） |
+| `AES/GCM/NoPadding` | `AesGcmCipher` 加解密模型 API Key |
+| `SHA-256` | 令牌摘要（撤销列表）与内部签名里的 body 摘要 |
+
+两条实测教训（都踩过）：
+
+1. **只从我们自己的类里调 `javax.crypto` 没用**：第一版就这么写，启动日志显示预热「耗时 0~12ms」，
+   而重启后第一个鉴权请求照样 9.6 秒（网关验签 5s + ai-service 再验签 5s）。
+   原因是 `JarVerifier` 校验的是**调用方所在的那个 jar** —— 我们自己的 jar 只有几十个类（便宜），
+   而 Hutool 是 fat jar 里一个 **2.5MB 的大 jar**（逐条读中央目录才那么慢）。
+   所以预热必须走**生产同一条入口**（`SaJwtUtil.createToken` + `parseToken`），由单测钉住。
+2. **`SaJwtUtil.createToken(payloads, key)` 这个重载不带有效期**，解析时会被判
+   「jwt 已过期」而抛 `SaJwtException` —— 必须用带 `timeout` 的全参重载。
+   这类「预热自己失败了但业务照样跑」的静默失败，靠日志很难发现，
+   所以测试断言的是 `warmUp()` 的返回值必须**等于** `ALGORITHMS`（少跑一项就红）。
+
+启动日志会记录耗时（fat jar 下就是那几秒被提前付掉）：
+
+```
+JCE 预热完成：[Sa-Token-JWT(create+parse), HmacSHA256, AES/GCM/NoPadding, SHA-256] 耗时 5xxx ms
+```
+
+`ApplicationRunner` 在 Tomcat/Netty 已开始接受请求**之后**执行，所以健康检查与 Nacos 注册
+不受影响；万一有请求恰好在这几秒里进来，它只是和预热一起等同一把锁（总量不变、不会更慢）。
+⚠️ 这个故障**只在可执行 fat jar 里出现**：扁平 classpath（IDE / 单测）下预热耗时是 `0ms`，
+别据此以为没事。
+
+排查同类问题的手法（本次就是这么做出来的）：起一个 `--server.port=8307
+--spring.cloud.nacos.discovery.enabled=false` 的临时实例（不注册 Nacos，网关不会路由到它），
+第一个请求发出后立刻 `jcmd <pid> Thread.print`，看那个 `http-nio-*-exec-*` 线程
+到底卡在哪一帧；服务自己的 `API-ACCESS` 日志（`LogInterceptor`）用来看**服务端**耗时，
+别用客户端的数字下结论（`curl` 参数被 shell 拆错、PowerShell 的 `Invoke-RestMethod`
+首次调用开销都会伪装成「服务慢」）。
+
 ## Redis 基础设施
 - `common-core` 通过 Spring Data Redis 提供阻塞式 `RedisUtils` 与 `RedisCache`，供 Servlet 业务服务注入；网关单独使用 Reactive Redis 检查 JWT 撤销列表，禁止在 Netty 事件循环里调用阻塞式工具。撤销键规则由 `shared-model` 共享。
 - 键使用字符串，普通值统一以 JSON 存储；支持带 TTL 写入、类型化读取、删除、存在判断、修改 TTL、原子整数计数和故障回源的旁路缓存。

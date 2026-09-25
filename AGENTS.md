@@ -277,6 +277,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   不该有连接空闲超过 ~60 秒（注意排除**已 kill 的旧 JVM** 留下的僵尸连接 —— 它们空闲上千秒、
   但要按 id 与重启时间区分）。详见 `docs/architecture/README.md` §空闲保活。
   生产 Docker 里 MySQL 与应用同机同网，不存在这个问题。
+- **重启后第一个请求慢 5 秒是 JCE 在校验 fat jar，不是数据库**：第一次用 HMAC 时 JVM 验「调用方所在 jar」
+  的签名，嵌套 jar 下退化成逐条随机 `pread`；特征是公开接口快、第一个验签请求慢、并发请求同毫秒解开。
+  对策是启动期预热（`JceWarmupRunner`，common-core 与网关各一份，**改一处同步另一处**），必须走生产入口
+  `SaJwtUtil` 的签 + 验（⚠️ 只从自己类里调 `javax.crypto` 实测 0~12ms、等于没预热；且要用带 `timeout` 的重载）。
+  详见 `docs/architecture/README.md` §重启后第一个请求为什么慢 5 秒。
 - ⚠️ **「莫名其妙 503」在这条链路上有三个来源，先分清再动手**（用户反馈过，吃过一次亏）：
   ① 服务没启动 / 没注册进 Nacos（`Unable to find instance for xxx`）；
   ② **网关连不上 Redis** —— 撤销校验是 fail-closed，而撤销列表在**远端** Redis 上
