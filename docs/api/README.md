@@ -215,9 +215,8 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 ### ai-service :8107 - AI（A1：探活 + 模型配置面板；C：评测台）
 
-> 网关尚未配 `/ai/**` 路由（M1 接），验证只能直连 `http://127.0.0.1:8107`。
-> 其余 AI 接口（问答 / 写作建议 / 索引任务）的路径与契约已在 `stellar-ink-ai-client`
-> 与 `stellar-ink-ai` 中冻结，落地时逐条补进本文档。
+> 网关已配 `/ai/**` 路由（`/ai/admin/**` 先于「GET 全放行」拦 ADMIN，其余 `/ai/**` 需登录），
+> 本机调试也可直连 `http://127.0.0.1:8107`。
 
 **探活（公开）**
 
@@ -226,13 +225,16 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/ai/health` | AI 能力可用性探活：`service` / `version` / `env` / `available` / `reason` / `downstreamAvailable` / `checkedAt`。**公开**，只回能力状态，不含内网地址、端口、模型名或密钥信息 | 公开 |
 
 ```bash
-# 直连本机 ai-service（M1 前只能这样验；M1 起改走网关 /ai/health）
+# 经网关或直连本机 ai-service 都可以
 curl -s http://127.0.0.1:8107/ai/health
-# => {"code":0,"msg":"成功","data":{"service":"ai-service","available":false,
-#     "reason":"下游 AI 编排服务未就绪","downstreamAvailable":false,...}}
+# Python 在跑 => {"code":0,"msg":"成功","data":{"service":"ai-service","available":true,
+#              "downstreamAvailable":true,...}}
+# Python 没跑 => available=false 且 reason="下游 AI 编排服务未就绪"（原因细节只进服务端日志）
 ```
 
-- `available=false` 不等于故障：下游尚未接线时会**如实上报**（假装健康比暴露未接线更危险）
+- `available` 由**真实探活**决定（`GET <pythonBaseUrl>/health`，连接 2s / 读 3s）：
+  Python 自报非 `ok`、回空体、超时、连不上都算不可用；真实原因（含内网地址）只写日志，
+  公开响应统一是「下游 AI 编排服务未就绪」，不泄露地址与端口
 - 失败形态沿用全局约定：鉴权类错误由网关给出 HTTP 401/403；`/ai/**` 的服务端错误按 `code` 判定
 - `stellar-ink-ai`（Python, 8200）**没有对外接口**：它只提供 `/health` 等内部路由，仅供 ai-service 调用
 - **本地把 Python 跑起来**：`cd stellar-ink-ai && cp .env.example .env`（Windows：`copy`），
@@ -250,7 +252,7 @@ curl -s http://127.0.0.1:8107/ai/health
 | POST | `/ai/admin/providers` | 新增或更新某角色配置；`apiKey` **留空表示沿用已存密钥**（改模型名不必重填） | ADMIN |
 | DELETE | `/ai/admin/providers/{role}` | 删除某角色配置 | ADMIN |
 | POST | `/ai/admin/providers/{role}/check` | 端点连通性自检：只验证 TCP 可达（`scope: tcp_only`），不验证模型与密钥 | ADMIN |
-| GET | `/ai/admin/providers/runtime` | **含解密后密钥**的运行时配置，供 Python 侧读取（M1 加内网签名后由 Python 调用） | ADMIN |
+| GET | `/ai/admin/providers/runtime` | **含解密后密钥**的运行时配置（仅内网视角）。Python 侧目前**不调用它**，而是直接读同一张 `ai_provider_config` 表并用同一把主密钥解密 —— 两条路读的是同一份数据 | ADMIN |
 
 ```bash
 # 保存一份 DeepSeek 配置（Key 只在请求体里出现这一次）
@@ -292,10 +294,14 @@ curl -s -X POST http://127.0.0.1:8200/eval/run \
 ```
 
 - `strategies` 省略时用标准五组；`key` 必须唯一（重复会 400，否则对比表两列同名、逐题明细无法区分）
-- `models` 目前固定 `"fake"`：Dense 两列**只代表通路接对了**，不代表真实语义质量 ——
-  这条写进响应的 `notes`，面板要原文展示，不能让用户把 Fake 的数字当结论
+- `models` 有三种取值，**面板必须按值分别提示**（表格长得一样，结论完全不同）：
+  `fake` = 离线桩（哈希伪向量无语义）、`panel` = 面板里配的真实模型、
+  `none` = 这轮策略一次模型都没用到（只跑稀疏召回，不配模型也能跑）
+- 模型**只从面板读**（`ai_provider_config` / `AI_PROVIDER_CONFIG_JSON`）：要跑 Dense 就得先配
+  `embedding` 角色、要跑 Rerank 就得先配 `rerank` 角色，缺哪个**在跑之前**就返回 400 并说清角色名
 - 请求有问题（数据集不支持 / key 重复 / 越界）一律 **400 + `AI_BAD_REQUEST`**；
-  语料或数据集文件缺失也是 400，但消息里说清缺哪个文件（环境问题不伪装成 500）
+  语料或数据集文件缺失也是 400，但消息里说清缺哪个文件（环境问题不伪装成 500）；
+  模型调用失败由全局处理器转 429（限流）/ 502（上游）
 - 新增数据集/策略默认值要同时改：`app/schemas/eval.py`、本文件、前端面板与
   `stellar-ink-ai/tests/fixtures/eval_run_request.json`
 

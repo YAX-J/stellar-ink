@@ -320,11 +320,22 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **Mapper 只允许 `com.stellarink.ai.**.mapper`、只访问 `ai_*` 表**，绝不读写 `user`/`post`。
   Redis 仍被排除（配额与 nonce 到 M1 才用），届时随对应切片放开并同步本文。
   不要用 `@MapperScan`（它会污染 `@WebMvcTest` 切片测试）；在 Mapper 接口上标 `@Mapper`。
-- **API Key 口径**：默认给「国内云 + OpenAI 兼容」一套（Chat 用 DeepSeek，Embedding 用 bge-m3），
-  但**代码里不写死厂商**；面板 `POST /ai/admin/providers` 提交明文 Key，
+- **模型配置口径（重要）**：**面板是模型的唯一来源，代码里没有任何默认模型或厂商预设**。
+  前端 `AiLabView` 不预置厂商、不带默认端点与模型名（端点与模型名照服务方文档填），
+  Python 侧按角色（`chat` / `fast` / `reasoning` / `embedding` / `rerank`）从
+  「`AI_PROVIDER_CONFIG_JSON` → `ai_provider_config` 表」读取，**空配置就报
+  「角色 X 尚未配置模型（请在 AI 实验室 → 模型配置里填写）」并返回 400，绝不退回 Fake**——
+  退回会让「忘了配」表现成「回答质量差」，是最难查的一类问题。
+  `fake` 仍然可用，但必须**显式**配置（面板里把协议选成 fake，或测试里显式注入），
+  它只用于离线自测与契约测试。
+  面板 `POST /ai/admin/providers` 提交明文 Key，
   落库前 AES-256-GCM 加密（`AesGcmCipher`，主密钥 `AI_SECRET_MASTER_KEY` 只在环境变量），
   列表**只回掩码**（`sk-…9f3a`），没有任何接口能读回明文。加解密在 Java 与 Python 各实现一份，
   一致性由 `stellar-ink-ai/tests/fixtures/key_vector.json` 的固化向量守住（两侧单测都读它）。
+  装配收在 `app/providers/runtime.py`（唯一解析器 + `require_roles` 预检）、
+  `app/rag/corpus.py`（语料唯一缓存）与 `app/api/v1/assembly.py`（检索管道按
+  「语料版本 + 开关 + 配置指纹」缓存）——**新端点必须走这三个模块**，
+  不要自己 `FakeProvider()`、也不要自己 `lru_cache` 一份语料。
 - **身份只由 Java 传**：Python 不解析 Sa-Token、不读写 `user`/`post`；`userId`/`role`/`traceId`
   经 `X-AI-*` 带时间戳签名头传入（常量在 `stellar-ink-ai-client` 的 `AiInternalHeaders`），
   签名与 nonce 防重放已在 A2 落地（Python 侧 nonce 目前是**进程内** + TTL，多实例前换 Redis）。

@@ -58,14 +58,22 @@ npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 
 
 ## 4. 已知缺口（**都要在接真实流量前处理**）
 
-### 4.1 真实 Provider 还没有接进编排
+### 4.1 真实 Provider 已接进编排，但**还没填过真 Key 跑一轮**
 
-面板能把模型配置加密存库，但 Python 侧的问答 / Copilot / 画像 / Agent 装配仍是
-**离线装配**（种子语料 + `FakeProvider`），且用 `lru_cache` 缓存。
-也就是说：**现在把真实 Key 填进面板，问答仍然走 Fake**。
-下一步要做的是按 `ProviderConfig.fingerprint()` 做「配置指纹缓存」，
-并在 `build_qa_service()` / `build_agent()` 等处改成从 `ai_provider_config` 读取。
-影响：所有指标目前是**离线口径**，不代表真实模型质量。
+面板是模型的**唯一来源**，代码里没有任何默认模型（`fake` 也要在面板里显式选）。装配链路：
+
+- `app/providers/runtime.py`：全进程唯一的 `ProviderResolver`（配置指纹缓存 + 换配置即换实例），
+  外加 `require_roles()` 预检（缺角色时一次说清缺哪些、去哪儿填）；
+- `app/rag/corpus.py`：语料唯一缓存（`EPOCH` 版本号参与检索管道的缓存键）；
+- `app/api/v1/assembly.py`：`pipeline_for()` 按「语料版本 + 检索开关 + 配置指纹」缓存检索管道
+  （整库嵌入因此只发生一次），`assembly_error()` 把装配失败统一翻成 400；
+- 问答 / 流式问答 / Copilot / 画像 / Agent / 评测**全部**走这条路径；
+  `ProviderError` 由 `app/main.py` 的全局处理器转成 429（限流）/ 400（配置）/ 502（上游）。
+
+仍然算缺口的部分：**没有用真实模型（bge-m3 / deepseek）跑过一次**。
+所有指标（含 §3 的基线）目前都是**离线口径**（种子语料 + 显式 fake），不代表真实模型质量；
+Qdrant 与嵌入模型的真实往返也还没做（见 §4.2）。填完面板后的第一件事应是：
+在一个小策略集上跑评测台，标定 `minDenseScore`（`scripts/calibrate_min_score.py` 也是为此）。
 
 ### 4.2 Qdrant 从未连过真实实例
 
