@@ -17,6 +17,7 @@ public enum ErrorCode {
     NOT_FOUND(404, "资源不存在"),
     UNAUTHORIZED(401, "未授权"),
     FORBIDDEN(403, "拒绝访问"),
+    METHOD_NOT_ALLOWED(405, "请求方法不支持"),
     SYSTEM_ERROR(500, "系统繁忙，请稍后重试"),
     SERVICE_UNAVAILABLE(503, "服务不可用"),
 

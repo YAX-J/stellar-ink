@@ -51,6 +51,14 @@ class AiHealthControllerTest {
     @MockBean
     private PythonHealthProbe pythonHealthProbe;
 
+    /**
+     * 评测控制器也在这个切片里被装配（启动类显式声明了 {@code @ComponentScan}，
+     * 切片会扫描全部组件），它依赖 Feign 的 Python 客户端 —— 切片里没有 Feign 自动配置，
+     * 必须 mock 掉，否则整个切片上下文起不来。
+     */
+    @MockBean
+    private com.stellarink.aiclient.client.PythonAiClient pythonAiClient;
+
     /** 配置服务的实现在切片测试里没有 Mapper 可用，替换成 Mock（它本身由专门的单测覆盖）。 */
     @MockBean
     private AiProviderConfigService aiProviderConfigService;
@@ -129,9 +137,20 @@ class AiHealthControllerTest {
         // 注意：公共 common-core 的 GlobalExceptionHandler 把 NoResourceFoundException 映射成
         // HTTP 200 + body.code=404（与仓库其它服务一致）。此处按实际行为断言，
         // 不去改公共处理器 —— 那会影响 user-service / content-service 的既有契约。
-        mockMvc.perform(get("/ai/qa/stream"))
+        mockMvc.perform(get("/ai/not-implemented-yet"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    @DisplayName("已实现路径用错方法：405 而不是 500（新增路由会改变旧断言的语义）")
+    void wrongMethodOnKnownPathIsMethodNotAllowed() throws Exception {
+        // 这条曾经用 GET /ai/qa/stream 当作「未知路径」的代表 —— 直到 D2s 真的把它实现出来。
+        // 路由一落地，同一句断言的含义就从「不存在」变成「方法不对」，而它当时报的是 500。
+        // 因此这里把两件事**分开**断言：不存在的路径给 404，存在但方法不对给 405。
+        mockMvc.perform(get("/ai/qa/stream"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(405));
     }
 
     /** 必须按 UTF-8 解码：MockMvc 默认用 ISO-8859-1，中文会变问号，断言会莫名其妙地失败。 */

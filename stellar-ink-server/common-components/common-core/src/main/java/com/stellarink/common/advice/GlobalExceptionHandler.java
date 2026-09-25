@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -87,6 +88,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public Response<?> handleNotFound(NoResourceFoundException e) {
         return Response.error(ErrorCode.NOT_FOUND).withTraceId(generateTraceId());
+    }
+
+    /**
+     * 路径存在但请求方法不对。
+     * <p>不单独处理会落到兜底，返回 code=500「系统繁忙」——用户看到的像服务坏了，
+     * 实际只是用错了方法（例如对只支持 POST 的流式接口发 GET）。
+     * 这在新增路由时特别容易撞上：上一秒还是「路径不存在」，下一秒就变成
+     * 「系统繁忙」，排查方向会被完全带偏。
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public Response<?> handleMethodNotSupported(HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
+        String traceId = generateTraceId();
+        log.warn("请求方法不支持[{}]: {}, 请求路径: {}", traceId, e.getMessage(), request.getRequestURI());
+        return Response.error(ErrorCode.METHOD_NOT_ALLOWED).withTraceId(traceId);
     }
 
     /**

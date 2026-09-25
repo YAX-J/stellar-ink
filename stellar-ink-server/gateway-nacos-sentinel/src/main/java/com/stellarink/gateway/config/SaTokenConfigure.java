@@ -136,7 +136,10 @@ public class SaTokenConfigure {
                     if ("POST".equalsIgnoreCase(method) && isPublicWrite(path)) {
                         return;
                     }
-                    // 9) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）
+                    // 9) 其余一律要求登录（含 /actuator/** 写操作与任何未列举路径）。
+                    //    星海问答（POST /ai/qa 与流式 POST /ai/qa/stream）就落在这里：
+                    //    它是读者功能，登录即可，不需要角色门槛，因此**刻意不加分支** ——
+                    //    多一个分支就多一处将来会与 ai-service 内 `AuthHelper.loginId()` 不一致的地方。
                     StpUtil.checkLogin();
 
                     // 10) 角色门槛（登录后，按写操作细分）
