@@ -16,6 +16,8 @@ from pydantic import BaseModel, ValidationError
 
 from app.schemas import (
     ErrorBody,
+    EvalRunRequest,
+    EvalRunResponse,
     IndexJob,
     IndexRebuildRequest,
     QaAnswer,
@@ -40,6 +42,8 @@ ROUND_TRIP_CASES: list[tuple[str, type[BaseModel]]] = [
     ("writing_suggest_result.json", WritingSuggestResult),
     ("index_rebuild_request.json", IndexRebuildRequest),
     ("index_job.json", IndexJob),
+    ("eval_run_request.json", EvalRunRequest),
+    ("eval_run_response.json", EvalRunResponse),
     ("error_body.json", ErrorBody),
 ]
 

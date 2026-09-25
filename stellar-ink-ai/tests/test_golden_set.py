@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from app.rag.eval_runner import EvalDataset
+from scripts.check_golden_evidence import labeled_evidence_hits
 from scripts.seed_posts import load_seed_posts
 
 GOLDEN = Path(__file__).parent / "fixtures" / "eval" / "golden_v1.json"
@@ -78,6 +79,27 @@ def test_graded_relevance_uses_known_posts(dataset: EvalDataset) -> None:
             f"{case.case_id} 的分级标注与 expectedPostIds 不一致"
         )
         assert all(gain > 0 for gain in case.graded_relevance.values())
+
+
+def test_every_answerable_case_has_evidence_in_its_labeled_posts(dataset: EvalDataset) -> None:
+    """标注自洽性：标了某篇文章，就必须能在**它的段落里**找到答案要点。
+
+    为什么值得测：黄金集最容易犯的错不是「题写错」，而是「标错文章」——
+    标错会让召回率长期偏低，而没人会怀疑标注本身。判据（锚点切分 + 只在该文章内部切块）
+    与 `scripts/check_golden_evidence.py` 共用一份实现，测试与人工复核不会得出两个结论。
+    允许少量漏判（短语可能跨句），因此要求**至少一半**标注文章能找到证据。
+    """
+    posts = {post.post_id: post for post in load_seed_posts()}
+    weak: list[str] = []
+
+    for case in dataset.cases:
+        if not case.answerable or not case.expected_answer:
+            continue
+        hits, total = labeled_evidence_hits(case, posts)
+        if hits * 2 < total:
+            weak.append(f"{case.case_id}（{hits}/{total} 篇里找到证据）")
+
+    assert not weak, "以下题目在其标注的文章里找不到答案要点，请复核标注：" + "；".join(weak)
 
 
 def test_json_is_valid_and_self_describing() -> None:
