@@ -55,7 +55,13 @@ public class HttpQaStreamClient implements QaStreamClient {
             InternalSecretProvider secretProvider,
             InternalCallerProvider callerProvider,
             ObjectMapper objectMapper,
-            @Value("${ai.python.base-url:http://127.0.0.1:8200}") String baseUrl,
+            // 与 Feign（PythonAiClient）和探活（AiProperties）**必须同一个键**：
+            // 曾经这里写的是 `ai.python.base-url`，而所有 yml 里配的是
+            // `stellar.ink.ai.python-base-url` —— 那个键根本不存在，于是配置被静默忽略、
+            // 永远走这里的默认值。本地碰巧两者都是 127.0.0.1:8200 所以看不出来，
+            // 一到 Docker（AI_PYTHON_BASE_URL=http://stellar-ink-ai:8200）就是
+            // 「探活说好的、功能全是坏的」这种分裂状态
+            @Value("${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}") String baseUrl,
             @Value("${ai.python.connect-timeout-ms:2000}") long connectTimeoutMs) {
         this.secretProvider = secretProvider;
         this.callerProvider = callerProvider;

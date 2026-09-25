@@ -31,12 +31,18 @@ import java.util.Map;
  * 对外接口是 ai-service 的 {@code /ai/**}，两者不要混为一谈。
  *
  * <p>M0 只冻结契约：方法签名与 DTO 已定，真正的调用与签名头注入（A2 落地）
- * 由 ai-service 装配。URL 走配置项 {@code ai.python.base-url}
- * （默认 {@code http://127.0.0.1:8200}），不注册 Nacos：Python 不参与 Java 服务发现。
+ * 由 ai-service 装配。URL 走配置项 {@code stellar.ink.ai.python-base-url}
+ * （即 {@code AI_PYTHON_BASE_URL}，与探活 `AiProperties` 同一个键），不注册 Nacos：
+ * Python 不参与 Java 服务发现。
+ *
+ * <p>⚠️ 键名踩过一次：这里曾经写的是 {@code ai.python.base-url}，而所有 yml 里配的是
+ * {@code stellar.ink.ai.python-base-url} —— 占位符取不到值就退回默认的
+ * {@code 127.0.0.1:8200}，于是**配置与环境变量被静默忽略**。本地碰巧一致看不出来，
+ * Docker 里 Python 叫 {@code stellar-ink-ai}，就会变成「探活正常、调用全挂」。
  */
 @FeignClient(
         name = "python-ai",
-        url = "${ai.python.base-url:http://127.0.0.1:8200}",
+        url = "${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}",
         fallbackFactory = PythonAiClientFallbackFactory.class)
 public interface PythonAiClient {
 
