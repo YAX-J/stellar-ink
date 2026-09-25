@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { AI_ROLES, useAiStore } from '@/stores/ai'
+import { AI_CAPABILITIES, AI_ROLES, useAiStore } from '@/stores/ai'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
@@ -102,6 +102,8 @@ const CASE_STATUS_TEXT = {
 onMounted(() => {
   if (!auth.isAdmin) return
   ai.fetchProviders().catch(() => {})
+  // 模型库读不到不该拖垮整页（最常见原因：还没执行 11_ai_model_library.sql），故吞掉错误
+  ai.loadModels().catch(() => {})
   if (tab.value === TAB_EVAL) ensureEvalMeta()
 })
 
@@ -231,6 +233,164 @@ async function remove(roleKey) {
     /* 同上 */
   }
 }
+
+/* ------------------------------ 模型库 ------------------------------ */
+
+/** 角色键 → 下拉框里选中的模型 id（字符串，便于 select 绑定） */
+const picked = reactive({})
+/** 正在编辑的库条目 id；null = 新增 */
+const modelEditing = ref(null)
+const modelFormOpen = ref(false)
+
+const modelForm = reactive({
+  displayName: '',
+  provider: 'openai_compatible',
+  baseUrl: '',
+  model: '',
+  apiKey: '',
+  capabilities: { chat: true, embedding: false, rerank: false },
+  dimension: '',
+  timeoutMs: 30000,
+  maxTokens: '',
+  temperature: '',
+})
+
+const canSubmitModel = computed(() => !!modelForm.displayName.trim()
+  && !!modelForm.baseUrl.trim() && !!modelForm.model.trim()
+  && Object.values(modelForm.capabilities).some(Boolean))
+
+function capabilityLabel(key) {
+  return AI_CAPABILITIES.find((item) => item.key === key)?.label || key
+}
+
+/** 库列表里一行「能力」的展示文案 */
+function capabilityText(item) {
+  return (item.capabilities || []).map(capabilityLabel).join(' / ') || '未标注'
+}
+
+/** 「正被哪些角色使用」：空数组时不该显示成空白，要说「还没人用」 */
+function boundRolesText(item) {
+  const roles = item.boundRoles || []
+  if (!roles.length) return '还没被任何角色使用'
+  return `正被 ${roles.map((key) => AI_ROLES.find((r) => r.key === key)?.label || key).join('、')} 使用`
+}
+
+function resetModelForm() {
+  modelEditing.value = null
+  modelForm.displayName = ''
+  modelForm.provider = 'openai_compatible'
+  modelForm.baseUrl = ''
+  modelForm.model = ''
+  modelForm.apiKey = ''      // 明文密钥永不回显
+  modelForm.capabilities = { chat: true, embedding: false, rerank: false }
+  modelForm.dimension = ''
+  modelForm.timeoutMs = 30000
+  modelForm.maxTokens = ''
+  modelForm.temperature = ''
+}
+
+function startAddModel() {
+  resetModelForm()
+  modelFormOpen.value = true
+}
+
+function startEditModel(item) {
+  modelEditing.value = item.id
+  modelForm.displayName = item.displayName || ''
+  modelForm.provider = item.provider || 'openai_compatible'
+  modelForm.baseUrl = item.baseUrl || ''
+  modelForm.model = item.model || ''
+  modelForm.apiKey = ''
+  const caps = item.capabilities || []
+  modelForm.capabilities = {
+    chat: caps.includes('chat'),
+    embedding: caps.includes('embedding'),
+    rerank: caps.includes('rerank'),
+  }
+  modelForm.dimension = item.dimension ?? ''
+  modelForm.timeoutMs = item.timeoutMs ?? 30000
+  modelForm.maxTokens = item.maxTokens ?? ''
+  modelForm.temperature = item.temperature ?? ''
+  modelFormOpen.value = true
+}
+
+async function submitModel() {
+  if (!canSubmitModel.value) return
+  const capabilities = AI_CAPABILITIES
+    .filter((item) => modelForm.capabilities[item.key])
+    .map((item) => item.key)
+  try {
+    await ai.saveModel({
+      id: modelEditing.value,
+      displayName: modelForm.displayName.trim(),
+      provider: modelForm.provider,
+      baseUrl: modelForm.baseUrl.trim(),
+      model: modelForm.model.trim(),
+      apiKey: modelForm.apiKey.trim(),   // 空串 = 沿用已存密钥
+      capabilities,
+      dimension: numberOrNull(modelForm.dimension),
+      timeoutMs: Number(modelForm.timeoutMs) || 30000,
+      maxTokens: numberOrNull(modelForm.maxTokens),
+      temperature: numberOrNull(modelForm.temperature),
+      enabled: true,
+    })
+    emit(TOAST, {
+      type: 'success',
+      message: modelEditing.value ? '模型已更新，用它的角色也一起同步了' : '模型已加入模型库',
+    })
+    modelFormOpen.value = false
+    resetModelForm()
+  } catch {
+    /* 全局 toast 已提示；表单保持打开以便改错 */
+  }
+}
+
+async function removeModelRow(item) {
+  const used = (item.boundRoles || []).length > 0
+  const question = used
+    ? `「${item.displayName}」${boundRolesText(item)}。删除只会解除绑定，这些角色当前生效的配置保持不动 —— 确定删？`
+    : `确定从模型库删除「${item.displayName}」？`
+  if (!window.confirm(question)) return
+  try {
+    await ai.removeModel(item.id, used)
+    emit(TOAST, { type: 'success', message: '已从模型库删除' })
+  } catch {
+    /* 同上 */
+  }
+}
+
+async function checkModelRow(item) {
+  try {
+    const result = await ai.checkModel(item.id)
+    emit(TOAST, {
+      type: result.ok ? 'success' : 'warn',
+      message: result.ok ? `${item.displayName} 端点可达` : result.message,
+    })
+  } catch {
+    /* 同上 */
+  }
+}
+
+/** 下拉框当前值：用户选过就是他的选择，否则显示角色当前绑定的那条 */
+function pickValue(item) {
+  return picked[item.key] ?? String(item.config?.modelId ?? '')
+}
+
+function canApply(item) {
+  const chosen = picked[item.key]
+  return !!chosen && chosen !== String(item.config?.modelId ?? '') && !item.binding
+}
+
+async function applyModel(item) {
+  if (!canApply(item)) return
+  try {
+    await ai.bindModel(item.key, Number(picked[item.key]))
+    picked[item.key] = ''
+    emit(TOAST, { type: 'success', message: `「${item.label}」已改用所选模型` })
+  } catch {
+    /* 能力不匹配等错误已由全局 toast 提示（后端给的是可照做的话） */
+  }
+}
 </script>
 
 <template>
@@ -292,6 +452,34 @@ async function remove(roleKey) {
             {{ item.check.ok ? '✓' : '✕' }} {{ item.check.message }}
           </p>
 
+          <!-- 从模型库里选：能力匹配的才会出现在这里（后端绑定时还会再校验一次） -->
+          <div v-if="item.options.length" class="role-pick">
+            <select
+              class="role-select"
+              :value="pickValue(item)"
+              @change="picked[item.key] = $event.target.value"
+            >
+              <option value="">— 从模型库里选一个 —</option>
+              <option
+                v-for="option in item.options" :key="option.id"
+                :value="String(option.id)" :disabled="!option.enabled"
+              >
+                {{ option.displayName }} · {{ option.model }}{{ option.enabled ? '' : '（已停用）' }}
+              </option>
+            </select>
+            <button class="btn btn-ghost" :disabled="!canApply(item)" @click="applyModel(item)">
+              {{ item.binding ? '应用中…' : '应用' }}
+            </button>
+          </div>
+          <p v-else-if="ai.modelsLoaded" class="form-hint tight">
+            模型库里还没有可用于「{{ item.label }}」的模型 ——
+            在下方「模型库」里加一个，并勾上「{{ capabilityLabel(item.capability) }}」能力。
+          </p>
+
+          <p v-if="item.boundModel" class="bound-line">
+            已绑定模型库条目：<b>{{ item.boundModel.displayName }}</b>
+          </p>
+
           <div class="role-actions">
             <button class="btn btn-ghost" @click="startEdit(item.key)">
               {{ item.config ? '修改' : '配置' }}
@@ -306,6 +494,128 @@ async function remove(roleKey) {
           </div>
         </div>
       </div>
+
+      <!-- ============================ 模型库 ============================
+           为什么要有它：角色配置表按角色唯一（一个角色一行），「再加一个 chat 模型」会把原来那行
+           覆盖掉 —— 两个模型之间没法切换，换模型还得把 Key 重填一遍。
+           模型库把「模型」与「角色用哪个」拆开：这里负责加，角色卡片上的下拉框负责选。 -->
+      <section class="side-card model-lib reveal" style="--d:.12s">
+        <div class="lib-head">
+          <h5>模型库</h5>
+          <span class="form-hint tight">
+            {{ ai.models.length }} 个模型 · 角色下拉框只列出能力匹配的那些
+          </span>
+          <button class="btn btn-ghost" @click="startAddModel">＋ 新增模型</button>
+        </div>
+
+        <p v-if="ai.modelsError" class="state-text error-text">
+          模型库读不出来：{{ ai.modelsError }}
+          <br>
+          如果提示表不存在，先在数据库执行 <code>deploy/sql/11_ai_model_library.sql</code>
+          <button class="state-action" @click="ai.loadModels().catch(() => {})">重新读取</button>
+        </p>
+        <p v-else-if="ai.modelsLoading && !ai.modelsLoaded" class="state-text">正在读取模型库…</p>
+        <p v-else-if="!ai.models.length" class="state-text">
+          还没有模型。点「＋ 新增模型」把端点、模型名与 Key 存进来，之后各角色就能用下拉框选它。
+        </p>
+
+        <div v-else class="model-list">
+          <div v-for="item in ai.models" :key="item.id" class="model-row">
+            <div class="model-main">
+              <b>{{ item.displayName }}</b>
+              <span class="model-sub">{{ item.model }}</span>
+              <span class="model-sub">{{ item.baseUrl }}</span>
+            </div>
+            <div class="model-tags">
+              <span v-for="cap in item.capabilities" :key="cap" class="chip cool">
+                {{ capabilityLabel(cap) }}
+              </span>
+              <span v-if="!item.enabled" class="chip warm">已停用</span>
+              <span class="model-mask">{{ item.apiKeyMask || '未配置密钥' }}</span>
+            </div>
+            <p class="model-bound">{{ boundRolesText(item) }}</p>
+            <p v-if="item.lastCheckMessage" class="check-line" :class="{ bad: item.lastCheckStatus === 'failed' }">
+              {{ item.lastCheckStatus === 'ok' ? '✓' : '✕' }} {{ item.lastCheckMessage }}
+            </p>
+            <div class="role-actions">
+              <button
+                class="btn btn-ghost" :disabled="ai.checkingModel === item.id"
+                @click="checkModelRow(item)"
+              >
+                {{ ai.checkingModel === item.id ? '自检中…' : '测试连通' }}
+              </button>
+              <button class="btn btn-ghost" @click="startEditModel(item)">修改</button>
+              <button class="btn btn-ghost danger" @click="removeModelRow(item)">删除</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="modelFormOpen" class="lib-form">
+          <h5>
+            {{ modelEditing ? '修改模型' : '新增模型' }}
+            <span class="form-hint tight">同端点下同名模型只能有一条</span>
+          </h5>
+          <div class="form-grid">
+            <div class="field">
+              <label>展示名</label>
+              <input v-model="modelForm.displayName" maxlength="64" placeholder="如「主力对话模型」">
+            </div>
+            <div class="field">
+              <label>协议</label>
+              <select v-model="modelForm.provider">
+                <option value="openai_compatible">OpenAI 兼容</option>
+                <option value="fake">Fake（离线自测，不调用任何服务）</option>
+              </select>
+            </div>
+            <div class="field wide">
+              <label>接口地址 baseUrl</label>
+              <input v-model="modelForm.baseUrl" maxlength="255" placeholder="你的 OpenAI 兼容端点，形如 https://<host>/v1">
+            </div>
+            <div class="field">
+              <label>模型名</label>
+              <input v-model="modelForm.model" maxlength="128" placeholder="照服务方的模型列表填">
+            </div>
+            <div class="field">
+              <label>API Key{{ modelEditing ? '（留空=沿用已存）' : '' }}</label>
+              <input
+                v-model="modelForm.apiKey" type="password" autocomplete="off" maxlength="512"
+                placeholder="sk-..."
+              >
+            </div>
+            <div class="field wide">
+              <label>能力（决定它能被哪些角色选到）</label>
+              <div class="cap-row">
+                <label v-for="cap in AI_CAPABILITIES" :key="cap.key" class="cap-item">
+                  <input v-model="modelForm.capabilities[cap.key]" type="checkbox">
+                  {{ cap.label }}
+                </label>
+              </div>
+            </div>
+            <div class="field">
+              <label>向量维度（嵌入模型必填）</label>
+              <input v-model="modelForm.dimension" type="number" min="1" max="65536" placeholder="照嵌入模型的维度填">
+            </div>
+            <div class="field">
+              <label>超时（毫秒）</label>
+              <input v-model="modelForm.timeoutMs" type="number" min="100" max="600000">
+            </div>
+            <div class="field">
+              <label>maxTokens（可空）</label>
+              <input v-model="modelForm.maxTokens" type="number" min="1" placeholder="留空用模型默认">
+            </div>
+            <div class="field">
+              <label>温度（可空）</label>
+              <input v-model="modelForm.temperature" type="number" step="0.1" min="0" max="2" placeholder="留空用模型默认">
+            </div>
+          </div>
+          <div class="role-actions">
+            <button class="btn btn-primary" :disabled="!canSubmitModel || ai.savingModel" @click="submitModel">
+              {{ ai.savingModel ? '保存中…' : '保存到模型库' }}
+            </button>
+            <button class="btn btn-ghost" @click="modelFormOpen = false; resetModelForm()">取消</button>
+          </div>
+        </div>
+      </section>
 
       <div v-if="editingMeta" class="side-card edit-panel reveal">
         <h5>{{ editingMeta.label }} · {{ editingMeta.hint }}</h5>
@@ -573,6 +883,38 @@ async function remove(roleKey) {
 .role-actions .btn{padding:6px 12px; font-size:12px}
 .role-actions .danger{color:var(--rose); border-color:var(--line)}
 .form-hint{font-size:11px; line-height:1.8; color:var(--ink-faint); margin:12px 0 16px}
+.form-hint.tight{margin:0}
+/* 模型库与角色卡片上的下拉选择 */
+.role-pick{display:flex; gap:8px; align-items:center; margin-top:2px}
+.role-select{
+  flex:1; min-width:0; background:var(--bg-2); border:1px solid var(--line); border-radius:var(--r-sm);
+  color:var(--ink); padding:6px 10px; font:inherit; font-size:12px
+}
+.role-select:focus{outline:none; border-color:var(--primary)}
+.role-pick .btn{padding:6px 12px; font-size:12px; white-space:nowrap}
+.bound-line{font-size:11px; color:var(--teal); line-height:1.7}
+.bound-line b{font-weight:500}
+.model-lib{margin-bottom:26px}
+.lib-head{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+.lib-head h5{font-size:15px; font-weight:500; margin:0}
+.lib-head .btn{margin-left:auto; padding:6px 12px; font-size:12px}
+.model-list{display:flex; flex-direction:column; gap:12px; margin-top:14px}
+.model-row{
+  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-2);
+  padding:12px 14px; display:flex; flex-direction:column; gap:6px
+}
+.model-main{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+.model-main b{font-size:13px; font-weight:500}
+.model-sub{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); word-break:break-all}
+.model-tags{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+.model-tags .chip{font-size:10px; padding:2px 8px}
+.model-mask{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+.model-bound{font-size:11px; color:var(--ink-faint)}
+.model-row .role-actions{padding-top:4px; margin-top:0}
+.lib-form{margin-top:18px; border-top:1px solid var(--line); padding-top:16px}
+.lib-form h5{font-size:14px; font-weight:500; margin:0 0 4px}
+.cap-row{display:flex; gap:14px; flex-wrap:wrap; padding:8px 0}
+.cap-item{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-dim); cursor:pointer}
 .form-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:0 14px}
 .form-grid .wide{grid-column:1/-1}
 .form-grid select{

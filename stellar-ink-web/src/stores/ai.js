@@ -19,6 +19,32 @@ export const AI_ROLES = [
 ]
 
 /**
+ * 一个模型能干什么：与后端 `AiModelCapability`、Python `ProviderCapabilities` 逐字一致。
+ *
+ * 模型库里每条模型都标注能力，角色的下拉框只列出**能力匹配**的那些 ——
+ * 否则把一个纯对话模型选给嵌入角色，要到真正调用时才报错，而那时人已经离开配置页了。
+ */
+export const AI_CAPABILITIES = [
+  { key: 'chat', label: '对话' },
+  { key: 'embedding', label: '嵌入' },
+  { key: 'rerank', label: '重排' },
+]
+
+/**
+ * 角色 → 它需要的模型能力。
+ *
+ * 与后端 `AiModelRole.capability()`、Python `providers/registry.py::_ROLE_CAPABILITY` 三处同源：
+ * 前端只是**提前过滤**（让人选不到明显不对的），真正的把关在后端绑定接口与 Python 取实例时。
+ */
+export const ROLE_CAPABILITY = {
+  chat: 'chat',
+  fast: 'chat',
+  reasoning: 'chat',
+  embedding: 'embedding',
+  rerank: 'rerank',
+}
+
+/**
  * 对比表的列与顺序：**指标名由 Python 侧决定**（`evaluate_strategy` 的键），
  * 这里只声明「面板想按什么顺序展示、哪些列缺了就跳过」。
  * 加新指标时改这里就能显示，不必动后端。
@@ -52,6 +78,18 @@ export const useAiStore = defineStore('ai', {
     checkingRole: '',
     /** 角色键 → 连通性自检结论 */
     checkResults: {},
+    /* ---- 模型库（可下拉选择的模型池）---- */
+    /** 模型库列表（来自 GET /ai/admin/models，密钥只有掩码） */
+    models: [],
+    modelsLoading: false,
+    /** 模型库读不出来时的原因：最常见的是「还没执行 11_ai_model_library.sql」 */
+    modelsError: '',
+    modelsLoaded: false,
+    /** 正在保存/自检的模型 id（按钮 loading） */
+    savingModel: false,
+    checkingModel: null,
+    /** 正在把模型应用到哪个角色 */
+    bindingRole: '',
     /* ---- 评测台（C 阶段）---- */
     /** 可选数据集（来自 GET /ai/admin/eval/datasets） */
     evalDatasets: [],
@@ -74,6 +112,17 @@ export const useAiStore = defineStore('ai', {
       check: s.checkResults[role.key] || null,
       saving: s.savingRole === role.key,
       checking: s.checkingRole === role.key,
+      binding: s.bindingRole === role.key,
+      capability: ROLE_CAPABILITY[role.key],
+      /** 该角色当前生效的配置来自库里哪一条（手填时为 null） */
+      boundModel: (s.providers[role.key] && s.providers[role.key].modelId)
+        ? s.models.find((item) => item.id === s.providers[role.key].modelId) || null
+        : null,
+      /** 下拉框可选项：能力匹配的模型，停用的排在最后并标注 */
+      options: s.models
+        .filter((item) => (item.capabilities || []).includes(ROLE_CAPABILITY[role.key]))
+        .slice()
+        .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.id - b.id),
     })),
     /** 对比表要渲染的列：只保留结果里真的有的指标（缺列不显示占位空列） */
     evalColumns: (s) => {
@@ -157,6 +206,97 @@ export const useAiStore = defineStore('ai', {
         throw error
       } finally {
         this.checkingRole = ''
+      }
+    },
+
+    /* ============================ 模型库 ============================ */
+
+    /**
+     * 读模型库。
+     *
+     * 读不到时**不抛**：这个接口依赖 `deploy/sql/11_ai_model_library.sql`，
+     * 还没执行的库上会直接报「表不存在」。那种情况下页面应该照常能用（角色卡片还在），
+     * 只是顶部给一句「模型库不可用，先执行那条 SQL」—— 而不是整页白屏。
+     */
+    async loadModels() {
+      this.modelsLoading = true
+      this.modelsError = ''
+      try {
+        const data = await request('/ai/admin/models')
+        this.models = data || []
+        this.modelsLoaded = true
+        return this.models
+      } catch (error) {
+        this.modelsError = error.message
+        throw error
+      } finally {
+        this.modelsLoading = false
+      }
+    },
+
+    /** 新增或修改一条模型；`apiKey` 留空表示沿用已存密钥。改完会重新拉角色配置（库里改了会同步过去） */
+    async saveModel(payload) {
+      this.savingModel = true
+      this.error = ''
+      try {
+        const saved = await request('/ai/admin/models', { method: 'POST', body: payload })
+        await Promise.all([this.loadModels(), this.fetchProviders()])
+        return saved
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.savingModel = false
+      }
+    },
+
+    async removeModel(id, force = false) {
+      this.error = ''
+      const removed = await request(`/ai/admin/models/${id}${force ? '?force=true' : ''}`, {
+        method: 'DELETE',
+      })
+      if (removed) {
+        await Promise.all([this.loadModels(), this.fetchProviders()])
+      }
+      return removed
+    },
+
+    async checkModel(id) {
+      this.checkingModel = id
+      this.error = ''
+      try {
+        const result = await request(`/ai/admin/models/${id}/check`, { method: 'POST' })
+        await this.loadModels()
+        return result
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.checkingModel = null
+      }
+    },
+
+    /** 把库里的某条模型应用到某个角色（后端会校验能力匹配，并把字段复制成该角色当前生效的配置） */
+    async bindModel(role, modelId) {
+      this.bindingRole = role
+      this.error = ''
+      try {
+        const bound = await request(`/ai/admin/providers/${role}/model`, {
+          method: 'PUT',
+          body: { modelId },
+        })
+        this.providers = { ...this.providers, [bound.role]: bound }
+        const next = { ...this.checkResults }
+        delete next[role]
+        this.checkResults = next
+        // 绑定关系写在角色行上，库列表里的「正被谁使用」也会变，跟着刷新一次
+        await this.loadModels()
+        return bound
+      } catch (error) {
+        this.error = error.message
+        throw error
+      } finally {
+        this.bindingRole = ''
       }
     },
 
