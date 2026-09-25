@@ -241,6 +241,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   JDBC URL 必须带 `connectTimeout=3000&socketTimeout=15000`（Connector/J 默认 0 = 无限等，
   只能等操作系统放弃，Windows 约 21s）；Druid `max-wait: 5000`、`validation-query-timeout: 3`。
   改这些值时同步 `nacos-application-dev.yml` 模板，别只改本地文件。
+- ⚠️ **「莫名其妙 503」在这条链路上有三个来源，先分清再动手**（用户反馈过，吃过一次亏）：
+  ① 服务没启动 / 没注册进 Nacos（`Unable to find instance for xxx`）；
+  ② **网关连不上 Redis** —— 撤销校验是 fail-closed，而 `REDIS_HOST` 一旦指向公网远端
+  （本地开发常见：跟着 `MYSQL_HOST` 走），500ms 命令超时会让**每个带 token 的请求随机 503**；
+  ③ 下游服务自己返回 503。
+  现在三种都能从响应体读出来（`GatewayErrorHandler` 与 `RevokedTokenFilter` 都会给
+  `{code,msg,hint,path}`）。**本地开发把 `REDIS_HOST` 指向本机 Redis**（四个服务必须一致：
+  user-service 写撤销键、网关读它，混用两个 Redis 会让登出不再失效）。
+  另注意 `Nacos` 没跑时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503 —— 先起 Nacos。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。
