@@ -11,6 +11,8 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -96,6 +98,54 @@ class RevokedTokenFilterTest {
                 () -> filter.filter(exchange, chain).block());
         org.assertj.core.api.Assertions.assertThat(exchange.getResponse().getStatusCode())
                 .isNotEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    @DisplayName("一次网络抖动不该把请求判成 503：重试一次成功后照常放行")
+    void transientRedisFailureIsRetriedBeforeFailingClosed() {
+        String token = "active.jwt";
+        var exchange = exchange("GET", "/posts", token);
+        // ⚠️ 必须用 Mono.defer：Reactor 的 retry 是**重新订阅那个 Mono**，而不是重新调用 hasKey()。
+        // 真实模板返回的是「每次订阅都真发一次命令」的冷 Mono，defer 才等价地模拟了这一点；
+        // 若直接 thenReturn(Mono.error(...))，重试只会再订阅同一个错误，测不到任何东西。
+        AtomicInteger attempts = new AtomicInteger();
+        when(redisTemplate.hasKey(TokenRevocationKey.of(token))).thenAnswer(invocation -> Mono.defer(
+                () -> attempts.incrementAndGet() == 1
+                        // 第一次：连接被掐断 / 正在重连 —— 远端 Redis 的典型抖动
+                        ? Mono.error(new org.springframework.dao.QueryTimeoutException("Redis command timed out"))
+                        : Mono.just(false)));
+        when(chain.filter(exchange)).thenReturn(Mono.empty());
+
+        filter.filter(exchange, chain).block();
+
+        org.assertj.core.api.Assertions.assertThat(attempts.get())
+                .as("应当重试一次")
+                .isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(exchange.getResponse().getStatusCode())
+                .as("重试成功后不该是 503")
+                .isNotEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        verify(chain).filter(exchange);
+    }
+
+    @Test
+    @DisplayName("两次都失败才 fail-closed：503 且带可读原因")
+    void persistentRedisFailureStillFailsClosed() {
+        String token = "active.jwt";
+        var exchange = exchange("GET", "/posts", token);
+        AtomicInteger attempts = new AtomicInteger();
+        when(redisTemplate.hasKey(TokenRevocationKey.of(token))).thenAnswer(invocation -> Mono.defer(() -> {
+            attempts.incrementAndGet();
+            return Mono.error(new org.springframework.dao.QueryTimeoutException("Redis command timed out"));
+        }));
+
+        filter.filter(exchange, chain).block();
+
+        org.assertj.core.api.Assertions.assertThat(attempts.get())
+                .as("重试过一次才放弃")
+                .isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThat(exchange.getResponse().getStatusCode())
+                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        verify(chain, never()).filter(exchange);
     }
 
     private MockServerWebExchange exchange(String method, String path, String token) {

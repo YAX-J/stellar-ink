@@ -245,13 +245,18 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   改这些值时同步 `nacos-application-dev.yml` 模板，别只改本地文件。
 - ⚠️ **「莫名其妙 503」在这条链路上有三个来源，先分清再动手**（用户反馈过，吃过一次亏）：
   ① 服务没启动 / 没注册进 Nacos（`Unable to find instance for xxx`）；
-  ② **网关连不上 Redis** —— 撤销校验是 fail-closed，而 `REDIS_HOST` 一旦指向公网远端
-  （本地开发常见：跟着 `MYSQL_HOST` 走），500ms 命令超时会让**每个带 token 的请求随机 503**；
+  ② **网关连不上 Redis** —— 撤销校验是 fail-closed，而撤销列表在**远端** Redis 上
+  （与 MySQL / Nacos 同机；本机实测往返 ~36ms、命令超时 500ms，稳态余量充足）。
+  真正会失败的是**连接被掐断、Lettuce 正在重连**的那一瞬间：这一个请求 503、下一个又好了，
+  这就是「莫名其妙」的来源；
   ③ 下游服务自己返回 503。
-  现在三种都能从响应体读出来（`GatewayErrorHandler` 与 `RevokedTokenFilter` 都会给
-  `{code,msg,hint,path}`）。**本地开发把 `REDIS_HOST` 指向本机 Redis**（四个服务必须一致：
-  user-service 写撤销键、网关读它，混用两个 Redis 会让登出不再失效）。
-  另注意 `Nacos` 没跑时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503 —— 先起 Nacos。
+  三种现在都能从响应体读出来（`GatewayErrorHandler` 与 `RevokedTokenFilter` 都给 `{code,msg,hint,path}`）。
+  ② 的对策是 `RevokedTokenFilter` **重试一次**（间隔 120ms，两次都失败仍 fail-closed，
+  安全口径不变）；四个服务必须连**同一个** Redis（user-service 写撤销键、网关读它）。
+  ⚠️ **网关的 Redis 参数以 Nacos 上的 `gateway-nacos-sentinel-dev.yaml` 为准**：
+  远端那个命名空间里确实存在这份配置（45 行、含 redis 段），它会覆盖本地
+  `application-dev.yml` 的同名键 —— 想调超时要去 Nacos 改，改本地文件是白改。
+  同理 `Nacos` 不可达时服务靠网关的实例缓存还能工作一会儿，重启后就集体 503。
 
 ### 数据库
 - 表名小写单数，列 snake_case，主键 `BIGINT AUTO_INCREMENT`；MySQL 8 / utf8mb4。

@@ -16,8 +16,10 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 /** 在 Sa-Token 路由鉴权前拦截已登出或改密后撤销的 JWT。 */
 @Slf4j
@@ -27,6 +29,9 @@ import java.nio.charset.StandardCharsets;
 public class RevokedTokenFilter implements WebFilter {
 
     private static final String UNAUTHORIZED_BODY = "{\"code\":401,\"msg\":\"会话已失效，请重新登录\"}";
+
+    /** 重试间隔：够 Lettuce 完成一次重连，又不至于让用户明显感到卡顿 */
+    private static final Duration RETRY_DELAY = Duration.ofMillis(120);
 
     /**
      * 撤销列表查不到时的响应体。
@@ -63,8 +68,20 @@ public class RevokedTokenFilter implements WebFilter {
         // 以前写在整条链的最后，于是 chain.filter(exchange) 里抛出的任何异常
         // （最典型的是「Unable to find instance for xxx」）都会被这里吞掉并改写成
         // 「Redis 会话撤销校验失败」—— 排查方向被彻底带偏。
+        //
+        // 关于那次重试：撤销列表在远端 Redis（跨公网，实测往返 ~36ms / 超时 500ms），
+        // 稳态余量充足，真正会失败的是**连接被掐断、Lettuce 正在重连**的那一瞬间 ——
+        // 一个请求 503、下一个又好了，这就是「莫名其妙」的来源。
+        // 重试一次（间隔 120ms）足以跨过重连窗口；两次都失败仍然 fail-closed，
+        // 安全口径不变，只是不再让一次网络抖动变成一次 503。
         Mono<Boolean> revoked = redisTemplate.hasKey(TokenRevocationKey.of(token))
-                .doOnError(ex -> log.error("Redis 撤销列表查询失败 path={} error={}", path, ex.toString()))
+                .doOnError(ex -> log.warn(
+                        "Redis 撤销列表查询失败，重试一次：path={} error={}", path, ex.toString()))
+                .retryWhen(Retry.fixedDelay(1, RETRY_DELAY))
+                .doOnError(ex -> log.error(
+                        "Redis 撤销列表两次都失败，按 fail-closed 返回 503：path={} error={}",
+                        path,
+                        ex.toString()))
                 .onErrorMap(SessionCheckUnavailableException::new);
 
         return revoked
