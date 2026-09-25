@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(controllers = AiWritingController.class)
 @Import(GlobalExceptionHandler.class)
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 class AiWritingStyleControllerTest {
 
     @Autowired

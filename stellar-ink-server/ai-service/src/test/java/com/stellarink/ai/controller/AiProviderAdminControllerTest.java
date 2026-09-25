@@ -47,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 @Import(TestMasterKeyConfig.class)
 class AiProviderAdminControllerTest {
 

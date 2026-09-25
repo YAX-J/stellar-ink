@@ -57,6 +57,40 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 测试中文请求体时，git-bash 的 curl 会以 GBK 发送导致 500，先把 body 写成 UTF-8 文件（或用 node fetch）。
 - 后端改代码前先停对应进程，否则 Windows 下 jar 被锁定，`mvn package` 的 repackage 会失败。
 
+### 环境矩阵（开发 / 测试 / 生产）
+
+| 环境 | 地址 | 用途 |
+|---|---|---|
+| 开发 dev | **127.0.0.1**（本机） | 本机 MySQL / Redis / Nacos，日常开发与自测 |
+| 测试 test | **124.221.158.32** | 测试服务器（此前文档里写作「远端服务器」的就是它） |
+| 生产 prod | **103.14.33.78** | 生产服务器，`deploy/docker` 整栈部署 |
+
+- 三套环境的**数据是分开的**（本机库 ≠ 测试库 ≠ 生产库），但 **Nacos（配置 + 注册中心）
+  目前「开发 = 测试」共用**：`application-dev.yml` 默认 `NACOS_ADDR=124.221.158.32:8848`
+  + 命名空间 `f0350c82-…`，与测试环境同机同空间（生产是另一台 `103.14.33.78` + 命名空间 `140e3d39-…`）。
+  ⚠️ 后果：本机启动的服务会**注册进测试环境的注册中心**。测试机一旦也跑起同名服务，
+  网关 `lb://` 就会在「本机实例 / 测试机实例」之间轮询，而两边连的又不是同一个 MySQL ——
+  表现为「接口时好时坏、数据对不上」，且日志里看不出异常。测试机目前只跑中间件（应用端口全未监听），
+  所以这个坑还没被触发，但它是现行配置的必然结果。
+- 换环境只改 `NACOS_ADDR` / `NACOS_NAMESPACE` / `MYSQL_HOST` / `REDIS_HOST` 等环境变量，不改代码。
+- **三档 profile 与剩下的待做**：代码里已有 `dev` / `test` / `prod` 三档
+  （`application-{dev,test,prod}.yml` + `nacos-application-{dev,test,prod}.yml`，每服务 8 件）。
+  `test` 档面向「应用与中间件**同机**跑在测试机」：地址默认 `127.0.0.1`，
+  `SA_TOKEN_JWT_SECRET` 与 `MYSQL_PASSWORD` 必须显式注入（⚠️「无默认值」**不等于** fail-fast，
+  见 §5「安全」的实测结论），起法：`java -jar xxx.jar --spring.profiles.active=test`。
+  ⚠️ **单测的 profile 名是 `unittest`**（`src/test/resources/application-unittest.yml`，H2 内存库）：
+  `test` 已被「测试环境档」占用，两者同名会互相遮蔽（同名资源只取 classpath 里的第一个）**且不报错** ——
+  表现是「单测莫名连上真库」或「测试机起来却用了 H2」。写测试一律 `@ActiveProfiles("unittest")`。
+  待做 ①：本机起 `tools/nacos`，dev 指向 `127.0.0.1:8848`（现状 dev 仍连测试机 Nacos）；
+  待做 ②：测试机建独立命名空间（test 档现与 dev 共用 `f0350c82-…`，只需改默认值一处）。
+- 测试与生产的 Nacos 8848 / MySQL 3306 / Redis 6379 / Qdrant 6333 **只应绑定宿主机
+  `127.0.0.1`**，本机经 SSH 隧道访问（隧道命令见 `deploy/docker/.env.example` 末节）。
+  这套编排文件里已经这么写了，端口对公网开放属于部署环节走样，不是配置缺失。
+- ⚠️ **prod 默认值四个服务不统一（配置债，被 compose 的 env 兜住）**：ai-service 的
+  `application-prod.yml` 是 Nacos `127.0.0.1:8848` + 命名空间 `public` + JDBC 默认 `mysql`，
+  而 content / user / gateway 是 `103.14.33.78:8848` + `140e3d39-…`（content/user 的 JDBC 默认
+  `127.0.0.1`）。不走 compose 直接跑 jar 时，ai-service 会去连不存在的 Nacos。
+
 ## 3. 通用工程规范
 
 - **Git**：功能走 `feature/*` 分支；提交信息格式 `type(范围): 中文主题`，正文用 `-` 列要点。
@@ -243,13 +277,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 所有接口统一返回 `Response<T>`（code/msg/data/traceId）；业务校验失败抛 `BusinessException`
   （用 `BusinessExceptionHelper.of(...)`），全局处理器带 traceId 并写 MDC。
 
-### 配置文件风格（照参考工程，每个服务统一 6 件）
+### 配置文件风格（照参考工程，每个服务统一 8 件）
 | 文件 | 内容 |
 |---|---|
 | `application.yml` | 极简：port + 应用名 + `profiles.active: dev` |
 | `application-dev.yml` | `spring.config.import: optional:nacos:<app>-dev.yaml` + Nacos 配置/发现 + **Druid** 数据源 + sa-token + springdoc/knife4j + actuator 全暴露 + 日志降噪 |
 | `application-prod.yml` | 生产：敏感项全走环境变量（`MYSQL_PASSWORD`、`SA_TOKEN_JWT_SECRET`、`NACOS_ADDR`） |
+| `application-test.yml` | 测试环境（部署在测试机）：默认值面向「应用与中间件**同机**」（`NACOS_ADDR`/`MYSQL_HOST`/`REDIS_HOST` 全默认 `127.0.0.1`）；`SA_TOKEN_JWT_SECRET`、`MYSQL_PASSWORD` 必须显式注入（⚠️ 无默认值**不等于** fail-fast，见 §5「安全」）；actuator 保留 `metrics,loggers` 但高危端点显式关闭；**Redis 段显式写出来**（详见该文件头注释） |
 | `nacos-application-dev.yml` | 上传 Nacos 的动态配置模板（Data ID：`<app>-dev.yaml`），放可调项 |
+| `nacos-application-test.yml` | 测试环境模板（Data ID：`<app>-test.yaml`）。口径同 prod 模板：只放可调项、绝不放密钥 |
 | `nacos-application-prod.yml` | 生产模板（Data ID：`<app>-prod.yaml`）。**只放可调项，绝不放密钥**（远端同名键**实测并不覆盖**本地 yml，见 `docs/architecture/README.md` §Nacos 动态配置；但「密钥不进配置中心」这条口径不变）。prod 是 `optional:` 导入，**不建也能启动** |
 | `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天 + 100MB 滚动，保留 7 天，总上限 2G） |
 
@@ -373,6 +409,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 ### 安全
 - 密码只存 BCrypt；`SA_TOKEN_JWT_SECRET` 生产用环境变量覆盖，
   网关与所有业务服务的 jwt-secret-key 必须一致，代码里不得出现新的硬编码密钥。
+- ⚠️ **`${SA_TOKEN_JWT_SECRET}` 这种「无默认值」写法 ≠ fail-fast（实测）**：未设置环境变量时
+  Spring **不报错**，而是把这个**字面量字符串** `${SA_TOKEN_JWT_SECRET}` 当密钥传下去 ——
+  服务照常启动、JCE 预热成功、`/actuator/env` 里能直接看到那个字面量值。
+  也就是说：凡读到仓库的人都能用这个公开字符串自签一个带 `role` 的 token。
+  现有唯一防线是 `common-core` 的 `SecretGuard`（prod 档：拦空值 / 过短 / 仓库默认值），
+  而**网关不依赖 common-core、没有这一层**（`grep SecretGuard gateway-nacos-sentinel` 为空）。
+  要真正做到 fail-fast 需要三件事：① 给网关补一份等价的启动校验（WebFlux 版）；
+  ② 把 `SecretGuard` 的适用范围从 prod 扩到 test；③ 把这个字面量加进 `FORBIDDEN_SECRETS` 防呆。
+  **未做之前，测试/生产环境启动都必须确认 `SA_TOKEN_JWT_SECRET` 已被真实注入。**
 
 ### AI 模块口径（M0 起建立，后续按里程碑扩展）
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、

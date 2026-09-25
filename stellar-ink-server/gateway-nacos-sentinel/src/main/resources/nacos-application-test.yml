@@ -1,0 +1,73 @@
+# =============================================================
+# Nacos 动态配置模板 · 网关（测试环境）
+# 上传：Data ID = gateway-nacos-sentinel-test.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
+#
+# ⚠️ 当前命名空间**与 dev 共用** f0350c82-…（2026-09 口径：测试机独立命名空间待建）。
+#    应用只在 --spring.profiles.active=test 时拉 gateway-nacos-sentinel-test.yaml，
+#    两份不会互相顶替，但「命名空间」这一层的隔离还没做到 —— 见 AGENTS.md §2「环境矩阵」。
+#
+# 约定（四个服务一致）：
+#   · ⚠️ 实测：**Nacos 上的同名键并不覆盖本地** application-test.yml（这份配置曾因字符集问题整份
+#     没生效，现由启动脚本的 -Dfile.encoding=UTF-8 修好）。所以「改参数只改这里」是错的 —— 两处都改。
+#   · 绝不放：sa-token.jwt-secret-key、任何口令、actuator 高危端点开关。
+#     写进去就等于把密钥交出去（网关的 Redis 参数与撤销校验直接相关，别在这里放凭据）。
+#   · 路由与 CORS 属于对外契约，留在 application-test.yml 走代码评审，不在这里下发。
+# =============================================================
+
+# 基于来源 IP 的限流阈值：**当前网关未启用 Redis 令牌桶过滤器**，下面这几个键没有任何读取方
+# （见 AGENTS.md「Redis 限流尚未实现」）。留着当量级参考，真做的时候再启用：
+# rate-limit:
+#   permits-per-second: 500
+#   burst-capacity: 1000
+
+spring:
+  data:
+    redis:
+      # 只用于 JWT 撤销列表校验：Redis 不可用时返回 503，不允许故障放行，
+      # 因此超时取得短（500ms），网络抖动时更快暴露问题，而不是把请求挂住
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 500ms
+      connect-timeout: 2s
+      lettuce:
+        # 与 application-test.yml 保持一致。（共享连接由 RedisConnectionTuningConfig 关掉：
+        # Boot 3.2 没有 share-native-connection 这个键，启用池也不会自动关。）
+        shutdown-timeout: 200ms
+        pool:
+          enabled: true
+          max-active: 16
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条
+          max-idle: 1
+          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，只会闲到被丢
+          min-idle: 0
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+  cloud:
+    sentinel:
+      eager: true
+      # 没起 Sentinel dashboard 时，心跳失败只记 ERROR 级日志（见 logging 段）
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+      # 网关流控模式
+      filter:
+        enabled: true
+
+sa-token:
+  # 与三个业务服务保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR

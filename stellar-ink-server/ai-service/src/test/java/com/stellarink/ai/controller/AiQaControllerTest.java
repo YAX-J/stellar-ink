@@ -47,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(controllers = AiQaController.class)
 @Import(GlobalExceptionHandler.class)
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 class AiQaControllerTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();

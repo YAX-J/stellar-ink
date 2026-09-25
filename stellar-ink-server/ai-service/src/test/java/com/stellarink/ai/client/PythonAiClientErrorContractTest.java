@@ -50,7 +50,7 @@ import static org.mockito.Mockito.when;
  * 「请求到了配置里的地址」与「上游消息被原样带回来了」。
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 @Import(TestMasterKeyConfig.class)
 class PythonAiClientErrorContractTest {
 

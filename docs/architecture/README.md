@@ -189,6 +189,32 @@ Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会
 | MySQL | **127.0.0.1:3306**（本机 MySQL 8.0.45，库 `stellar_ink`） | 换之前 `USE_REMOTE_MYSQL=1` 可回到远端 |
 | Nacos | 远端 `124.221.158.32:8848`（命名空间不变） | 长轮询自带心跳；本机也有 `tools\nacos` 可随时改本地 |
 
+**三套环境的归属（2026 口径；权威记录见 `AGENTS.md` §2「环境矩阵」）**：
+
+| 环境 | 地址 | 说明 |
+|---|---|---|
+| 开发 dev | `127.0.0.1` | 本机 MySQL / Redis / Nacos；本节所说的「本机」即此 |
+| 测试 test | `124.221.158.32` | 本文档其余章节里写作「远端服务器」「服务器上的」的，指的都是这台测试机 |
+| 生产 prod | `103.14.33.78` | `deploy/docker` 整栈；中间件只绑宿主机回环，本机经 SSH 隧道访问 |
+
+⚠️ 测试与生产是**两台不同的机器**：改运维口径、防火墙规则、部署步骤时别把两者混为一谈。
+
+**隔离现状（2026-09 实测，别当成已分开）**：MySQL / Redis 三层是分开的，但 **Nacos 是「开发 = 测试」共用** ——
+`application-dev.yml` 默认 `NACOS_ADDR=124.221.158.32:8848` + 命名空间 `f0350c82-…`，
+与测试环境同机同空间（生产是 `103.14.33.78` + `140e3d39-…`）。因此本机启动的服务
+**注册在测试环境的注册中心里**：测试机一旦也跑起同名服务，网关 `lb://` 会在两边实例间轮询，
+而两边连的又不是同一个 MySQL，表现为「接口时好时坏、数据对不上」。测试机目前只跑中间件
+（8080/8101/8102/8107/8200 全未监听），所以这个坑还没被触发。要真正分开：
+本机起 `tools/nacos` 让 dev 指向 `127.0.0.1:8848`，测试环境另用独立命名空间。
+
+**三档 profile（2026-09 起）**：`application-{dev,test,prod}.yml` + `nacos-application-{dev,test,prod}.yml`，
+每服务 8 件。`test` 档面向「应用与中间件同机跑在测试机」：`NACOS_ADDR`/`MYSQL_HOST`/`REDIS_HOST`
+全默认 `127.0.0.1`，`SA_TOKEN_JWT_SECRET` 与 `MYSQL_PASSWORD` 必须显式注入
+（⚠️「无默认值」**不等于** fail-fast，见 `AGENTS.md` §5「安全」的实测结论），
+起法 `java -jar xxx.jar --spring.profiles.active=test`。
+⚠️ 单测用的 profile 名是 **`unittest`**（`src/test/resources/application-unittest.yml`，H2 内存库）：
+`test` 已被测试环境档占用，两者同名会互相遮蔽（同名资源只取 classpath 第一个）且**不报错**。
+
 本机库是把远端库补齐过来的：`deploy/sql/10_ai-schema.sql` + `11_ai_model_library.sql`
 建好本机缺的 5 张 `ai_*` 表，再把 `ai_provider_config` / `ai_model` 的数据搬过来
 （密钥列是用本机 `.env` 里的 `AI_SECRET_MASTER_KEY` 加密的，所以搬过来仍能解密）。

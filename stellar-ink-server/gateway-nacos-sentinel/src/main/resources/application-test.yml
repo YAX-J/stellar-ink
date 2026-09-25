@@ -1,0 +1,179 @@
+# 测试环境配置 · 网关
+#
+# 部署形态：应用与中间件**同机**跑在测试机（124.221.158.32），所以下面所有地址默认走 127.0.0.1。
+#   dev 档面向「本机开发、跨公网连测试机」，默认值写的是测试机公网 IP；test 档正好相反 ——
+#   中间件端口收敛到宿主机回环之后，走公网 IP 根本连不上，走 127.0.0.1 才是对的。
+#
+# 启动：java -jar gateway-nacos-sentinel.jar --spring.profiles.active=test
+# 必须显式注入的环境变量（**没有默认值**）：
+#   ⚠️ 别指望「没设就起不来」：Spring 对未定义的占位符**不一定报错** —— 实测 `sa-token.jwt-secret-key`
+#      会退化成字面量字符串 "${SA_TOKEN_JWT_SECRET}" 并照常启动（JCE 预热照样成功）。
+#      真正的防线是 common-core 的 `SecretGuard`；网关当前没有这一层，见 AGENTS.md §5「安全」。
+#   SA_TOKEN_JWT_SECRET  网关与各服务必须一致；**测试与生产不得共用同一密钥**
+#
+# 与 dev 的其余差异：
+#   · CORS 默认**不放行任何跨域来源**（`GATEWAY_CORS_ORIGINS` 留空即空列表）。测试环境的前端
+#     走 nginx 同源反代，本就不需要 CORS；真要跨域直连再显式设这个变量（绝不要填 `*`）。
+#     dev 档的 `"*"` 是图省事，生产档是必填 —— 测试档取「默认安全、要用再开」。
+#   · actuator 保留 metrics/loggers（测试环境需要能改运行期日志级别），高危端点与 dev 一样显式关闭。
+#
+# ⚠️ Nacos 命名空间**暂与 dev 共用** `f0350c82-…`（2026-09 口径：测试机独立命名空间待建）。
+#    建好之后只改下面这处默认值，并同步 nacos-application-test.yml 顶部的说明。
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # Data ID = gateway-nacos-sentinel-test.yaml（可选，未上传不影响启动）
+  cloud:
+    nacos:
+      # 配置中心
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      # 服务发现
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            # 留空 = 不放行任何跨域来源（测试环境走同源反代，不需要 CORS）。
+            # 要跨域直连再设 GATEWAY_CORS_ORIGINS（具体域名，逗号分隔），绝不要填 "*"。
+            allowed-origin-patterns: ${GATEWAY_CORS_ORIGINS:}
+            allowed-methods: [ "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH" ]
+            allowed-headers: "*"
+            max-age: 3600
+      # 服务发现路由：必须保持关闭！
+      # 开启后会为每个注册服务自动生成 /{serviceId}/** 路由（如 /content-service/**），
+      # 该前缀不在任何显式路由与鉴权白名单内，会绕过网关鉴权直接访问下游（含 /internal/**）。
+      discovery:
+        locator:
+          enabled: false
+          lowerCaseServiceId: true
+      # 路由定义（对外契约，与 dev/prod 完全一致；不放进 Nacos 下发）
+      routes:
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/auth/**,/user/**
+        # 用户头像等上传文件的公开读路径（由 user-service 静态资源映射提供），匿名可读
+        - id: user-uploads
+          uri: lb://user-service
+          predicates:
+            - Path=/uploads/**
+        - id: content-service
+          uri: lb://content-service
+          predicates:
+            - Path=/posts/**,/notes/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**
+        # AI 业务服务：对外唯一入口是 /ai/**；Python（8200）不配路由，只能由 ai-service 内网调用
+        - id: ai-service
+          uri: lb://ai-service
+          predicates:
+            - Path=/ai/**
+
+    sentinel:
+      eager: true
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+      filter:
+        enabled: true
+
+  data:
+    redis:
+      # JWT 撤销列表校验走它：Redis 不可用时返回 503（fail-closed，不得放行）
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      # 撤销检查是 fail-closed：超时缩短只是让「Redis 不可达」更快暴露成 503，不会放行任何已撤销令牌
+      timeout: 500ms
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        # ⚠️ 光配这里不够：Spring Boot 3.2 的 spring.data.redis.lettuce 下**没有**
+        # share-native-connection 这个键，关掉它的是 RedisConnectionTuningConfig 里的 BeanPostProcessor。
+        # 池生效的前提是 commons-pool2 在 classpath 上（见 pom 说明）。
+        pool:
+          enabled: true
+          max-active: 16
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的是保活心跳刚热过的那条
+          max-idle: 1
+          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，只会闲到被丢
+          min-idle: 0
+          # 池被借空时的等待上限：宁可快速失败（上层转 503），也不要让请求无限等
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+
+sa-token:
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  # JWT 密钥（必须与各业务服务一致）；无默认值：测试环境不许用仓库里公开的那个串
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    # 安全：高危端点显式关闭。heapdump 尤其危险：导出堆内存（含 JWT 密钥、DB 口令明文），
+    # 脱敏对它无效 —— 绝不要在任何公网可达的实例上打开。
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+    loggers:
+      enabled: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    io.lettuce.core: WARN
+    com.alibaba.csp.sentinel.endpoint.SentinelHealthIndicator: ERROR
+
+stellar:
+  ink:
+    # Redis 连接保活心跳：失败即丢整池重建（见 RedisKeepAliveHeartbeat）。
+    # 同机部署下用不上，但留着 —— 一旦把应用挪回跨公网连中间件，它立刻就是现成的保护。
+    redis:
+      keepalive:
+        enabled: true
+        interval: 30s

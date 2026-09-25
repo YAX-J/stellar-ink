@@ -34,7 +34,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
     username: ${MYSQL_USER:stellar}
-    # 无默认值：缺失即启动失败，避免用开发口令连生产库
+    # 必须注入；未设置时 Spring 不保证报错（占位符可能被原样当值），届时表现为连不上生产库
     password: ${MYSQL_PASSWORD}
     druid:
       # ↓ 跨公网连 MySQL：空闲连接会被 NAT 静默丢弃，必须靠保活把它「用热」
@@ -67,7 +67,9 @@ sa-token:
   token-name: Authorization
   token-style: uuid
   is-log: false
-  # 必须由环境变量提供，与网关/其它服务保持一致；缺失即启动失败
+  # 必须由环境变量提供，与网关/其它服务保持一致。
+  # ⚠️ 「缺失即启动失败」是**错的**：实测未设置时 Spring 会把这个字面量 "${SA_TOKEN_JWT_SECRET}"
+  #    当密钥照常启动（JCE 预热照样成功）。真正的防线是 common-core 的 SecretGuard（prod 档生效）。
   jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
   timeout: 604800
   is-concurrent: true

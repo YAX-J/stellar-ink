@@ -1,0 +1,181 @@
+# 测试环境配置 · 用户服务
+#
+# 部署形态：应用与中间件**同机**跑在测试机（124.221.158.32），所以下面所有地址默认走 127.0.0.1。
+#   dev 档面向「本机开发、跨公网连测试机」，默认值写的是测试机公网 IP；test 档正好相反 ——
+#   中间件端口收敛到宿主机回环之后，走公网 IP 根本连不上，走 127.0.0.1 才是对的。
+#
+# 启动：java -jar user-service.jar --spring.profiles.active=test
+# 必须显式注入的环境变量（**没有默认值**）：
+#   ⚠️ 别指望「没设就起不来」：Spring 对未定义的占位符**不一定报错** —— 实测 `sa-token.jwt-secret-key`
+#      会退化成字面量字符串 "${SA_TOKEN_JWT_SECRET}" 并照常启动（JCE 预热照样成功）。
+#      真正的防线是 common-core 的 `SecretGuard`；网关当前没有这一层，见 AGENTS.md §5「安全」。
+#   SA_TOKEN_JWT_SECRET  网关与各服务必须一致；**测试与生产不得共用同一密钥**
+#   MYSQL_PASSWORD       测试机 MySQL 口令
+#
+# 与 dev 的其余差异：
+#   · Redis 段**显式写在这里**（dev 档没有这一段、靠 Nacos 下发）。原因：Spring Boot 不认
+#     `REDIS_HOST` 这种自定义环境变量名（只认 `SPRING_DATA_REDIS_HOST`），配置里没有占位符时
+#     它会静默退回 `localhost:6379` —— 容器里的 localhost 不是 Redis，症状是「缓存静默失效」
+#     而不是报错，得靠 /actuator/health 的 redis 项或日志才看得出来。
+#   · 头像存储默认 `local`（UPLOAD_DIR：./data/uploads，同机部署，非容器路径）。测试环境不该
+#     把文件写进共用的 COS 桶；要联调对象存储再显式设 STORAGE_TYPE=cos + COS_* 变量。
+#   · actuator 保留 metrics/loggers（测试环境需要能改运行期日志级别），高危端点与 dev 一样显式关闭。
+#
+# ⚠️ Nacos 命名空间**暂与 dev 共用** `f0350c82-…`（2026-09 口径：测试机独立命名空间待建）。
+#    建好之后只改下面这处默认值，并同步 nacos-application-test.yml 顶部的说明。
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # Data ID = user-service-test.yaml（可选，未上传不影响启动）
+  cloud:
+    nacos:
+      # 配置中心
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      # 服务发现
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # allowPublicKeyRetrieval=true 是 MySQL 8 + caching_sha2_password 必需的（prod 档也有，dev 档没有）
+    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路异常时只能等操作系统放弃
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD}
+    druid:
+      # 同机部署其实没有 NAT 丢连接的问题，保活段照留：代价只是每 30s 几条 SELECT 1，
+      # 而一旦把应用挪回「跨公网连中间件」就能立刻顶上（同 dev/prod 的口径）。
+      time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
+      min-evictable-idle-time-millis: 60000      # 空闲 1 分钟就纳入保活（默认 30 分钟太晚）
+      keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
+      keep-alive-between-time-millis: 30000      # 保活间隔 30s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 必须**严格大于** time-between-eviction-runs-millis，否则 Druid 直接抛
+      # 「keepAliveBetweenTimeMillis must be greater than timeBetweenEvictionRunsMillis」拒绝建连
+      # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：Nacos 上也有同名键，
+      # 而代码那份还会把生效值打进启动日志，便于核对。
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true                      # 借出时兜底校验（保活正常时不会触发）
+      test-on-borrow: false                      # 每次借出都校验要多一个 RTT，保活已够
+      test-on-return: false
+
+  data:
+    redis:
+      # 登录失败计数、账号锁定、JWT 撤销、公开作者摘要缓存都走它
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 500ms              # 缓存是旁路：超时到点即回源/返回，不跟着网络抖动弹十几秒
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        # 池子尺寸；「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开
+        pool:
+          enabled: true
+          max-active: 16
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条
+          max-idle: 1
+          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，只会闲到被丢
+          min-idle: 0
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # 测试环境不打印 SQL（排障时换 StdOutImpl）
+
+# 头像存储：测试环境默认 local；切 cos 不需要改代码，密钥只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读
+stellar:
+  ink:
+    # Redis 连接保活心跳：失败即丢整池重建（见 RedisKeepAliveHeartbeat）。
+    # 同机部署下用不上，但留着 —— 一旦把应用挪回跨公网连中间件，它立刻就是现成的保护。
+    redis:
+      keepalive:
+        enabled: true
+        interval: 30s
+    storage:
+      type: ${STORAGE_TYPE:local}
+      cos:
+        bucket: ${COS_BUCKET:}
+        region: ${COS_REGION:ap-shanghai}
+        public-base: ${COS_PUBLIC_BASE:}
+        key-prefix: avatars/
+    upload:
+      dir: ${UPLOAD_DIR:./data/uploads}
+      public-prefix: /uploads
+      avatar-sub-dir: avatars
+      avatar-max-bytes: 1048576
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    # 安全：高危端点显式关闭（即使被误加回 exposure 也不会开启）
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+    loggers:
+      enabled: true
+
+sa-token:
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  # JWT 密钥（必须与网关及其它服务一致）；无默认值：测试环境不许用仓库里公开的那个串
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    com.zaxxer.hikari: WARN
+    io.lettuce.core: WARN

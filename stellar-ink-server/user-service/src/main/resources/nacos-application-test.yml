@@ -1,0 +1,98 @@
+# =============================================================
+# Nacos 动态配置模板 · 用户服务（测试环境）
+# 上传：Data ID = user-service-test.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
+#
+# ⚠️ 当前命名空间**与 dev 共用** f0350c82-…（2026-09 口径：测试机独立命名空间待建）。
+#    应用只在 --spring.profiles.active=test 时拉 user-service-test.yaml，两份不会互相顶替，
+#    但「命名空间」这一层的隔离还没做到 —— 见 AGENTS.md §2「环境矩阵」。
+#
+# 约定（四个服务一致）：
+#   · ⚠️ 实测：**Nacos 上的同名键并不覆盖本地** application-test.yml
+#     （依据见 docs/architecture/README.md §Nacos 动态配置）—— 「改参数只改这里」是错的，两处都要改。
+#   · 绝不放：sa-token.jwt-secret-key、MySQL 口令、COS 密钥、AI 主密钥、actuator 高危端点开关。
+#   · 数据源的 url/username/password 由环境变量在本地文件里拼装，不在这里重复。
+# =============================================================
+
+spring:
+  data:
+    redis:
+      # 登录失败计数、账号锁定、JWT 撤销、公开作者摘要缓存都走它
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 500ms              # 缓存是旁路：超时到点即回源/返回，不跟着网络抖动弹十几秒
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        # 键名以 Spring Boot 3.2 为准（没有 test-while-idle）；
+        # 「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开。
+        pool:
+          enabled: true
+          max-active: 16
+          # 只留一条空闲连接：LIFO 借用保证业务拿到的就是保活心跳刚热过的那条
+          max-idle: 1
+          # min-idle 保持 0：预造的空闲连接永远排在第二个位置、借不到，只会闲到被丢
+          min-idle: 0
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+  datasource:
+    druid:
+      # 同机部署没有 NAT 丢连接的问题，保活段照留（一旦把应用挪回跨公网连中间件即可顶上）
+      time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
+      min-evictable-idle-time-millis: 60000      # 空闲 1 分钟就纳入保活（默认 30 分钟太晚）
+      keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
+      keep-alive-between-time-millis: 30000      # 保活间隔 30s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 必须**严格大于** time-between-eviction-runs-millis，否则 Druid 直接抛
+      # 「keepAliveBetweenTimeMillis must be greater than timeBetweenEvictionRunsMillis」拒绝建连
+      # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：代码那份会把生效值打进启动日志
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true                      # 借出时兜底校验（保活正常时不会触发）
+      test-on-borrow: false                      # 每次借出都校验要多一个 RTT，保活已够
+      test-on-return: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # dev 打印 SQL；测试环境不打
+
+# 头像存储：切换 local / cos 不需要改代码；密钥只从环境变量 COS_SECRET_ID / COS_SECRET_KEY 读。
+# 测试环境默认 local —— 不要让它写进与生产共用的 COS 桶。
+stellar:
+  ink:
+    storage:
+      type: ${STORAGE_TYPE:local}
+      cos:
+        bucket: ${COS_BUCKET:}
+        region: ${COS_REGION:ap-shanghai}
+        public-base: ${COS_PUBLIC_BASE:}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+sa-token:
+  # 与网关、content-service 保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+    com.zaxxer.hikari: WARN
+    io.lettuce.core: WARN

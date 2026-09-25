@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(controllers = AiAgentController.class)
 @Import(GlobalExceptionHandler.class)
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 class AiAgentControllerTest {
 
     private static final String QUESTION = "一年写十八万字的方法是什么？";

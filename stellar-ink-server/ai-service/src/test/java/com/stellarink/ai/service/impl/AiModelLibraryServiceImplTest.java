@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 「库里改了 Key，角色还在用旧的」这种不报错的静默不一致，所以下面专门有一条用例盯它。
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 @Import(TestMasterKeyConfig.class)
 class AiModelLibraryServiceImplTest {
 

@@ -59,7 +59,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(controllers = AiEvalController.class)
 @Import(GlobalExceptionHandler.class)
-@ActiveProfiles("test")
+@ActiveProfiles("unittest")
 class AiEvalControllerTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();

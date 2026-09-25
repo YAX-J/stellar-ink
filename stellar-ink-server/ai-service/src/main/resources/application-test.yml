@@ -1,0 +1,144 @@
+# 测试环境配置 · AI 业务服务
+#
+# 部署形态：应用与中间件（含 Python 编排服务）**同机**跑在测试机（124.221.158.32），
+# 所以下面所有地址默认走 127.0.0.1。dev 档面向「本机开发、跨公网连测试机」，默认值写公网 IP。
+#
+# 启动：java -jar ai-service.jar --spring.profiles.active=test
+# 必须显式注入的环境变量（**没有默认值**）：
+#   ⚠️ 别指望「没设就起不来」：Spring 对未定义的占位符**不一定报错** —— 实测 `sa-token.jwt-secret-key`
+#      会退化成字面量字符串 "${SA_TOKEN_JWT_SECRET}" 并照常启动（JCE 预热照样成功）。
+#      真正的防线是 common-core 的 `SecretGuard`；网关当前没有这一层，见 AGENTS.md §5「安全」。
+#   SA_TOKEN_JWT_SECRET  网关与各服务必须一致；**测试与生产不得共用同一密钥**
+#   MYSQL_PASSWORD       测试机 MySQL 口令（本服务只读写 ai_* 表）
+#   AI_INTERNAL_SECRET   与 Python 侧一致（≥32 字符）；缺失时相关能力直接拒绝，不会静默降级
+#   AI_SECRET_MASTER_KEY 32 字节 base64，用于解 ai_provider_config 的密文
+#
+# 与 dev 的其余差异：
+#   · 数据源只用于 ai_* 表（模型配置、评测数据）；AI 不读写 user / post 等业务表。
+#   · Redis 仍然排除（配额与 nonce 到 M1 才用），因此这里没有 spring.data.redis 段，
+#     stellar.ink.redis.keepalive 也保持 false —— 本服务当前不连 Redis。
+#   · actuator 保留 metrics/loggers（测试环境需要能改运行期日志级别），高危端点与 dev 一样显式关闭。
+#
+# ⚠️ Nacos 命名空间**暂与 dev 共用** `f0350c82-…`（2026-09 口径：测试机独立命名空间待建）。
+#    建好之后只改下面这处默认值，并同步 nacos-application-test.yml 顶部的说明。
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}  # Data ID = ai-service-test.yaml（可选，未上传不影响启动）
+  cloud:
+    nacos:
+      # 配置中心
+      config:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+      # 服务发现
+      discovery:
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        group: DEFAULT_GROUP
+
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # allowPublicKeyRetrieval=true 是 MySQL 8 + caching_sha2_password 必需的（prod 档也有，dev 档没有）
+    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路异常时只能等操作系统放弃
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD}
+    druid:
+      # 同机部署其实没有 NAT 丢连接的问题，保活段照留（代价只是每 30s 几条 SELECT 1）
+      time-between-eviction-runs-millis: 10000   # 淘汰/保活线程每 10s 跑一次（默认 60s）
+      min-evictable-idle-time-millis: 60000      # 空闲 1 分钟就纳入保活（默认 30 分钟太晚）
+      keep-alive: true                           # 对池内连接做真 SELECT 1，而不是只看标志位
+      keep-alive-between-time-millis: 30000      # 保活间隔 30s（默认 2 分钟；实测 2 分钟仍会被丢）
+      # ⚠️ 必须**严格大于** time-between-eviction-runs-millis，否则 Druid 直接抛
+      # 「keepAliveBetweenTimeMillis must be greater than timeBetweenEvictionRunsMillis」拒绝建连
+      # ⚠️ 这几个键**以代码为准**（common-core DruidKeepAliveConfig）：Nacos 上也有同名键，
+      # 而代码那份还会把生效值打进启动日志，便于核对。
+      validation-query: SELECT 1
+      validation-query-timeout: 3
+      test-while-idle: true                      # 借出时兜底校验（保活正常时不会触发）
+      test-on-borrow: false                      # 每次借出都校验要多一个 RTT，保活已够
+      test-on-return: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # 测试环境不打印 SQL（排障时换 StdOutImpl）
+
+sa-token:
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  # JWT 密钥（必须与网关及其它服务一致）；无默认值：测试环境不许用仓库里公开的那个串
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET}
+  timeout: 604800
+  is-concurrent: true
+  is-share: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    # 安全：高危端点显式关闭（即使被误加回 exposure 也不会开启）
+    env:
+      enabled: false
+    configprops:
+      enabled: false
+    beans:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+    shutdown:
+      enabled: false
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+    loggers:
+      enabled: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN
+
+stellar:
+  ink:
+    # 本服务当前不连 Redis（配额与 nonce 到 M1 才用），故保持关闭 —— 与 dev 档一致
+    redis:
+      keepalive:
+        enabled: false
+        interval: 30s
+    ai:
+      # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）。
+      # 测试环境与 Python 同机，故走 127.0.0.1。
+      python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}

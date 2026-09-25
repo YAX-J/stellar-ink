@@ -119,8 +119,9 @@ sa-token:
   is-log: false
   # JWT 密钥（必须与各业务服务一致）
   # 安全：此默认值仅供本地联调，3 个服务共用所以不能各自乱改；
-  #       生产由环境变量 SA_TOKEN_JWT_SECRET 注入（prod 配置无默认值，缺失即启动失败），
-  #       且 common-core 的 SecretGuard 会在 prod 下检测到该默认值直接拒绝启动。
+  #       生产由环境变量 SA_TOKEN_JWT_SECRET 注入（prod 配置无默认值；⚠️ 但「缺失即启动失败」是**错的** ——
+  #       实测未设置时 Spring 会把这个字面量 "${SA_TOKEN_JWT_SECRET}" 当密钥照常启动）。
+  #       ⚠️ 网关不依赖 common-core，所以它**没有** SecretGuard：这一层唯一的保护是运维真的注入了环境变量。
   #       想让本地也走环境变量，可在 deploy/scripts/start-all.bat 或 IDEA 运行配置里设置（两者均已 gitignore）。
   jwt-secret-key: ${SA_TOKEN_JWT_SECRET:stellar-ink-satoken-jwt-secret-32bytes}
   # token有效期，单位s，设置7天

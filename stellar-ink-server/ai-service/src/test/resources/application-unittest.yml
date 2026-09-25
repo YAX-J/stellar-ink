@@ -1,4 +1,11 @@
-# 测试环境配置：让集成测试**不依赖任何外部组件**（无 Nacos、无 MySQL、无 Python）。
+# 单元/集成测试配置：让集成测试**不依赖任何外部组件**（无 Nacos、无 MySQL、无 Python）。
+#
+# ⚠️ profile 名是 `unittest`，**不是** `test`，这是刻意的：
+#   `test` 已被「测试环境档」占用（`src/main/resources/application-test.yml` —— 部署到测试机时用，
+#   会连真实的 Nacos / MySQL）。两者同名时，同名资源只会取 classpath 里第一个（test-classes 排在
+#   classes 之前），于是单测与真实测试环境会互相遮蔽 —— 表现是「单测莫名连上真库」或
+#   「测试机起来却用了 H2」，两种都不会报错，只会给出错误结论。
+#   所以测试代码统一用 `@ActiveProfiles("unittest")`。
 #
 # 与 application-dev.yml 的区别：dev 会去连远端 Nacos 并注册实例、连开发机 MySQL，
 # 测试里那既慢又会在没有数据库的机器上失败；这里换成 H2 内存库 + 关掉注册与配置拉取。
@@ -9,7 +16,7 @@ spring:
         enabled: false
       config:
         enabled: false
-        # test profile 没有 spring.config.import（那是 dev/prod 才有），
+        # unittest profile 没有 spring.config.import（那是 dev / test / prod 才有），
         # 不关掉校验的话启动会直接报「No spring.config.import property has been defined」
         import-check:
           enabled: false

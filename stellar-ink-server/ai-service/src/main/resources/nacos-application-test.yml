@@ -1,0 +1,55 @@
+# =============================================================
+# Nacos 动态配置模板 · AI 业务服务（测试环境）
+# 上传：Data ID = ai-service-test.yaml，Group = DEFAULT_GROUP，
+#       命名空间 = 与 config/discovery 共用（NACOS_NAMESPACE 指定的那个）
+#
+# ⚠️ 当前命名空间**与 dev 共用** f0350c82-…（2026-09 口径：测试机独立命名空间待建）。
+#    应用只在 --spring.profiles.active=test 时拉 ai-service-test.yaml，两份不会互相顶替，
+#    但「命名空间」这一层的隔离还没做到 —— 见 AGENTS.md §2「环境矩阵」。
+#
+# 约定（四个服务一致）：
+#   · ⚠️ 实测：**Nacos 上的同名键并不覆盖本地** application-test.yml
+#     （依据见 docs/architecture/README.md §Nacos 动态配置）—— 「改参数只改这里」是错的，两处都要改。
+#   · 绝不放：sa-token.jwt-secret-key、AI API Key、AI_INTERNAL_SECRET、AI_SECRET_MASTER_KEY、
+#     MySQL 口令、actuator 高危端点开关。
+#   · 本服务**有**数据源（A1 起，只读写 ai_* 表：模型配置、评测数据），但**没有 Redis**
+#     （配额与 nonce 到 M1 才用），所以这里没有 redis 段；datasource 的口令也由环境变量在
+#     本地文件里拼装，不在这里重复。
+# =============================================================
+
+stellar:
+  ink:
+    ai:
+      # Python 编排服务：仅内网可达，不注册 Nacos（Python 不参与 Java 服务发现）
+      python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger.html
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    home-custom-path: /doc.html
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # dev 打印 SQL；测试环境不打
+
+sa-token:
+  # 与网关、其它服务保持一致；jwt-secret-key 不在这里，只从环境变量注入
+  token-name: Authorization
+  token-style: uuid
+  is-log: false
+  timeout: 604800        # 7 天（秒）
+  is-concurrent: true
+  is-share: true
+
+logging:
+  level:
+    com.alibaba.nacos: WARN
+    com.alibaba.nacos.client.naming: WARN
+    com.alibaba.nacos.client.config: WARN

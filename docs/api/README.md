@@ -12,6 +12,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 ```
 
 环境变量：`NACOS_ADDR`（默认 127.0.0.1:8848）、`MYSQL_HOST/PORT/DB/USER/PASSWORD`、`REDIS_HOST/PORT/PASSWORD/DATABASE`、`SA_TOKEN_JWT_SECRET`。
+环境档位（`--spring.profiles.active=`）：`dev`（本机开发，默认）/ `test`（测试机：应用与中间件**同机**，地址默认全 `127.0.0.1`，`SA_TOKEN_JWT_SECRET` 与 `MYSQL_PASSWORD` **必填**；⚠️ 无默认值不等于 fail-fast，见 `AGENTS.md` §5「安全」）/ `prod`（生产）。
 种子账号：`stellar / stellar123`。
 
 ## 服务与端口
