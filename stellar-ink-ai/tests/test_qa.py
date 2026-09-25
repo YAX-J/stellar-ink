@@ -171,6 +171,38 @@ async def test_model_refusal_keeps_the_citations() -> None:
     assert answer.answer, "拒答也要有可展示的文案"
 
 
+async def test_truncated_empty_output_is_not_a_refusal() -> None:
+    """空输出 + `finish_reason=length` 是**预算烧完了**，不是模型拒答。
+
+    这条是接上真实推理模型（deepseek-flash）后实测出来的形态：
+    它先产出 `reasoning_content`，那段也算 `completion_tokens`，
+    于是 `max_tokens` 给小了就是「content 为空 + finish_reason=length」。
+    判成拒答的话，用户会去怀疑安全过滤或提示词 —— 排查方向整个跑偏。
+    """
+    chat = _Chat(text="", finish_reason="length")
+    service = _service(chat)
+
+    answer = await service.answer(_request())
+
+    assert answer.done_reason is DoneReason.LENGTH, "预算截断要如实报 length"
+    assert answer.done_reason is not DoneReason.REFUSED
+    assert "token 预算" in answer.answer, "文案要指向真正的原因（maxTokens 太小）"
+    assert answer.citations, "截断也要保留引用"
+    assert answer.evidence_sufficient is False
+
+
+async def test_partial_answer_is_reported_as_length_not_stop() -> None:
+    """半截答案也不许谎称「答完了」：有内容但被截断时 doneReason 仍是 length。"""
+    chat = _Chat(text="答案是 [1]，但是", finish_reason="length")
+    service = _service(chat)
+
+    answer = await service.answer(_request())
+
+    assert answer.done_reason is DoneReason.LENGTH
+    assert answer.answer == "答案是 [1]，但是", "已经写出来的部分要照常给用户"
+    assert answer.evidence_sufficient is True, "依据够不够与回答完不完整是两件事"
+
+
 async def test_snippet_is_truncated_with_ellipsis() -> None:
     chat = _Chat()
     service = _service(chat, settings=QaSettings(snippet_length=20))

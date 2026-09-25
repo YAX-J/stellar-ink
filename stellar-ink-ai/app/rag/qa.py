@@ -15,10 +15,11 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from app.providers.base import ChatModel
+from app.providers.base import ChatModel, model_tag_of
 from app.providers.models import ChatMessage, ChatResponse, MessageRole, TokenUsage
 from app.rag.eval_runner import RetrievedHit
 from app.rag.pipeline import IndexedChunk, RetrievalPipeline
@@ -35,6 +36,13 @@ from app.schemas.qa_stream import (
 #: 默认拒答文案：说明「没有依据」而不是「我不会」
 DEFAULT_REFUSAL = "这几篇文章里没有找到能回答这个问题的依据。可以换个说法，或者先去写一篇。"
 
+#: 输出被 `max_tokens` 截断且一个字都没拿到时的文案。
+#: 不能说成「模型拒答」：那会让人去查安全过滤或提示词，而真正的原因是预算不够
+TRUNCATED_MESSAGE = (
+    "模型还没写出正文就用完了 token 预算（推理模型的思考也占预算）。"
+    "请调大该角色的 maxTokens，或把问题问得再短一些。"
+)
+
 #: 单条引用的片段上限：引用是给人看的定位线索，不是全文复制
 DEFAULT_SNIPPET_LENGTH = 200
 
@@ -47,6 +55,10 @@ SYSTEM_PROMPT = (
     "每条结论后面用 [1] [2] 这样的编号标注它来自哪段摘录。"
     "如果摘录不足以回答，就直说「文章里没有找到依据」，不要勉强作答。"
 )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +89,44 @@ class _Excerpt:
     chunk: IndexedChunk
     snippet: str
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ModelOutcome:
+    """模型的输出翻成契约字段。"""
+
+    text: str
+    done_reason: DoneReason
+    evidence_sufficient: bool
+
+
+def model_outcome(text: str, finish_reason: str, *, refusal_message: str) -> _ModelOutcome:
+    """**非流式与流式共用同一条判定**（曾经两处各写一遍，其中一处把截断当成了拒答）。
+
+    三种情况，两个维度（有没有内容 / 有没有依据）分开表达：
+    - 有内容：`stop`；若是被截断（`length`）则如实标 `length` —— 半截答案也不该谎称完整；
+    - 空且 `length`：**预算被烧完**，不是拒答。推理模型先写 `reasoning_content`，
+      那段也占 `completion_tokens`，预算小了就是这个形态；
+    - 空且正常结束 / 内容过滤：这才是模型拒答。
+    """
+    truncated = finish_reason == "length"
+    if text.strip():
+        return _ModelOutcome(
+            text=text,
+            done_reason=DoneReason.LENGTH if truncated else DoneReason.STOP,
+            evidence_sufficient=True,
+        )
+    if truncated:
+        return _ModelOutcome(
+            text=TRUNCATED_MESSAGE,
+            done_reason=DoneReason.LENGTH,
+            evidence_sufficient=False,
+        )
+    return _ModelOutcome(
+        text=refusal_message,
+        done_reason=DoneReason.REFUSED,
+        evidence_sufficient=False,
+    )
 
 
 @dataclass(slots=True)
@@ -123,15 +173,21 @@ class QaService:
             model=response.usage.model,
         )
 
-        if response.refused:
-            # 模型自己说答不了（内容过滤或空输出）：按拒答处理，但**保留引用**，
-            # 因为「找到相关段落但答不出」与「什么都没找到」对用户是不同的信息
+        if response.refused or response.truncated:
+            # 模型自己说答不了（内容过滤 / 空输出），或者预算被截断：两种都不算「答完了」，
+            # 但**保留引用** —— 「找到相关段落却答不出」与「什么都没找到」对用户是不同的信息
+            model_result = model_outcome(
+                response.text,
+                response.finish_reason,
+                refusal_message=self.settings.refusal_message,
+            )
             return QaAnswer(
-                answer=response.text.strip() or self.settings.refusal_message,
+                answer=model_result.text,
                 citations=citations,
-                done_reason=DoneReason.REFUSED,
+                done_reason=model_result.done_reason,
                 usage=usage,
-                evidence_sufficient=False,
+                # 依据够不够与回答完不完整是两件事：写了一半被打断时依据仍然是够的
+                evidence_sufficient=model_result.evidence_sufficient,
             )
 
         return QaAnswer(
@@ -187,6 +243,7 @@ class QaService:
         retrieval_ms: int,
     ) -> AsyncIterator[StreamEvent]:
         """模型这一段：能流就流，不能流就一次性回答，再统一收尾。"""
+        started = time.perf_counter()
         if callable(getattr(self.chat, "stream_chat", None)):
             text = ""
             usage: TokenUsage | None = None
@@ -210,6 +267,7 @@ class QaService:
                 usage=usage or TokenUsage(model=self._model_tag()),
                 retrieval_ms=retrieval_ms,
                 citation_count=citation_count,
+                generation_ms=_elapsed_ms(started),
             )
             return
 
@@ -226,6 +284,8 @@ class QaService:
             usage=response.usage,
             retrieval_ms=retrieval_ms,
             citation_count=citation_count,
+            # 两个来源取较大值（自己量的 + 上游报的），不会漏报
+            generation_ms=_elapsed_ms(started),
         )
 
     def _final_event(
@@ -236,30 +296,33 @@ class QaService:
         usage: TokenUsage,
         retrieval_ms: int,
         citation_count: int,
+        generation_ms: int | None = None,
     ) -> StreamEvent:
-        """收尾：把「模型自己拒答」与「正常说完」分开，两者都不吞掉已经发出去的引用。"""
-        refused = finish_reason == "content_filter" or not text.strip()
-        answer = text.strip() or self.settings.refusal_message
+        """收尾：把「模型自己拒答」「预算截断」与「正常说完」分开，三者都不吞掉已发出的引用。
+
+        耗时取「检索 + 生成」：流式的增量块里 `usage.latency_ms` 恒为 0
+        （那是**单块**的耗时，不是整段生成的），照抄它会让一个跑了 20 秒的回答
+        在响应里显示成几毫秒 —— 前端与运维都会据此判断「这个链路很快」。
+        两个来源取**较大值**：自己量的耗时不会漏报，上游真报了大数也照收。
+        """
+        outcome = model_outcome(text, finish_reason, refusal_message=self.settings.refusal_message)
+        model_ms = max(generation_ms or 0, usage.latency_ms)
         return done_event(
-            answer=answer,
-            done_reason=DoneReason.REFUSED if refused else DoneReason.STOP,
+            answer=outcome.text,
+            done_reason=outcome.done_reason,
             usage=Usage(
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
                 total_tokens=usage.total_tokens,
-                latency_ms=retrieval_ms + usage.latency_ms,
+                latency_ms=retrieval_ms + model_ms,
                 model=usage.model or self._model_tag(),
             ),
-            evidence_sufficient=not refused,
+            evidence_sufficient=outcome.evidence_sufficient,
         )
 
     def _model_tag(self) -> str:
-        """从模型对象上取一个可展示的标识（Fake 与真实 Provider 都有）。"""
-        for attribute in ("MODEL_TAG", "model", "name"):
-            value = getattr(self.chat, attribute, None)
-            if isinstance(value, str) and value:
-                return value
-        return "unknown"
+        """从模型对象上取一个可展示的标识（真实 Provider 与离线桩都有）。"""
+        return model_tag_of(self.chat)
 
     def _messages(self, question: str, excerpts: list[_Excerpt]) -> list[ChatMessage]:
         return [

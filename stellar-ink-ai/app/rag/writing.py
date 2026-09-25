@@ -110,6 +110,15 @@ class WritingCopilot:
         )
         self._chat_calls += 1
 
+        if response.truncated and not response.text.strip():
+            # 一个字都没拿到且 finish_reason=length：这是**预算不够**，不是模型不配合。
+            # 报成「解析不出候选」的话，作者会以为自己写的提示词有问题，
+            # 而真相是推理模型的思考也占 max_tokens（实测 deepseek-flash 会先写一大段 reasoning）。
+            raise ValueError(
+                "模型还没写出候选就用完了 token 预算（推理模型的思考也占预算）："
+                "请调大 chat 角色的 maxTokens",
+            )
+
         candidates = parse_candidates(
             response.text,
             limit=request.candidate_count,

@@ -62,9 +62,33 @@ class ChatResponse:
     finish_reason: str = "stop"
 
     @property
+    def truncated(self) -> bool:
+        """被 `max_tokens` 截断。
+
+        ⚠️ 接上推理模型后这一位很关键：DeepSeek 的 `deepseek-flash` / `deepseek-reasoner`
+        会先产出 `reasoning_content`，**那段也算 completion_tokens**
+        （实测：`max_tokens=16` 时 `completion_tokens=17、reasoning_tokens=14、content 为空`）。
+        所以「预算给小了」的表现就是「内容为空 + finish_reason=length」。
+        """
+        return self.finish_reason == "length"
+
+    @property
+    def empty(self) -> bool:
+        """一个字都没产出（拒答与截断都会走到这里）。"""
+        return not self.text.strip()
+
+    @property
     def refused(self) -> bool:
-        """上游是否自称「拒答」（部分模型会返回 refusal 字段或空内容 + 特定原因）。"""
-        return self.finish_reason == "content_filter" or not self.text.strip()
+        """上游自称答不了：内容过滤，或**正常结束却一个字都没给**。
+
+        **截断不算拒答**（曾经算）。判成拒答的后果不是「文案差一点」：
+        用户看到「模型拒答」，会去怀疑安全过滤或提示词，而真正的原因是 `max_tokens` 太小 ——
+        排查方向整个跑偏，且这个错误只在接上真实推理模型后才会出现。
+        截断由 `truncated` 单独表达，上层用 `DoneReason.LENGTH` 如实上报。
+        """
+        if self.finish_reason == "content_filter":
+            return True
+        return self.empty and not self.truncated
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,12 +7,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
 
 from app.providers.fake import FakeProvider
-from app.providers.models import ChatMessage, ChatResponse, ChatStreamChunk, TokenUsage
+from app.providers.models import (
+    ChatMessage,
+    ChatResponse,
+    ChatStreamChunk,
+    ProviderCapabilities,
+    ProviderConfig,
+    TokenUsage,
+)
 from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline
 from app.rag.qa import QaService, QaSettings
 from app.schemas.common import DoneReason
@@ -123,6 +131,64 @@ async def test_deltas_are_incremental_and_joined_in_done() -> None:
     assert final.payload["answer"] == "每天五百字。不是等灵感。"
     assert final.payload["doneReason"] == DoneReason.STOP.value
     assert final.payload["evidenceSufficient"] is True
+
+
+async def test_streamed_usage_reports_the_model_name_not_unknown() -> None:
+    """流式的 `meta.model` 与 `done.usage.model` 都要是真模型名。
+
+    旧代码用 `getattr(chat, "model")` 取值，而真实 Provider 的模型名在 `config.model` 上 ——
+    于是接上真模型后 `meta.model` 一直是 `unknown`：链路完全正常，却看起来像「没接上模型」。
+    """
+
+    class ConfiguredChat(ChunkedChat):
+        """像真实 Provider 一样把配置挂在 `config` 上（没有 `model` 属性）。"""
+
+        config = ProviderConfig(
+            role="chat",
+            provider="openai_compatible",
+            base_url="http://model.invalid/v1",
+            model="deepseek-flash",
+            capabilities=ProviderCapabilities(chat=True),
+        )
+
+    chat = ConfiguredChat(["答。"], usage=TokenUsage.of(10, 2, latency_ms=0, model=None))
+    service = QaService(pipeline=build_pipeline(), chat=chat)  # type: ignore[arg-type]
+
+    events = await collect(service)
+    meta = next(event for event in events if event.type == EVENT_META)
+    final = next(event for event in events if event.type == EVENT_DONE)
+
+    assert meta.payload["model"] == "deepseek-flash", "SSE 的 meta 要说清是哪个模型在答"
+    assert final.payload["usage"]["model"] == "deepseek-flash"
+
+
+async def test_streamed_latency_covers_generation_not_just_retrieval() -> None:
+    """单块的 `usage.latency_ms` 恒为 0（那不是一个回答的耗时）：
+
+    照抄它会让跑了十几秒的流式回答在响应里显示成几毫秒，
+    而前端与运维恰恰用这个数字判断「这条链路快不快」。
+    这里让桩真的慢 30ms，断言报告出来的耗时**确实包含了生成时间**。
+    """
+
+    class SlowChat(ChunkedChat):
+        async def stream_chat(self, messages, *, temperature=None, max_tokens=None):
+            await asyncio.sleep(0.03)
+            async for chunk in super().stream_chat(
+                messages, temperature=temperature, max_tokens=max_tokens
+            ):
+                yield chunk
+
+    chat = SlowChat(
+        ["慢", "地", "写"],
+        usage=TokenUsage.of(505, 1636, latency_ms=0, model="deepseek-flash"),
+    )
+    service = QaService(pipeline=build_pipeline(), chat=chat)  # type: ignore[arg-type]
+
+    events = await collect(service)
+    final = next(event for event in events if event.type == EVENT_DONE)
+
+    assert final.payload["usage"]["latencyMs"] >= 25, "生成耗时必须计进去（旧代码只报检索那几毫秒）"
+    assert final.payload["usage"]["completionTokens"] == 1636, "用量要原样透出"
 
 
 async def test_stream_falls_back_to_one_shot_when_model_cannot_stream() -> None:

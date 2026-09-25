@@ -73,3 +73,28 @@ class RerankModel(Protocol):
         *,
         top_n: int | None = None,
     ) -> RerankResponse: ...
+
+
+def model_tag_of(model: object) -> str:
+    """取一个可展示的模型标识（写进 `usage.model` / SSE 的 `meta.model`）。
+
+    三档来源，按「越具体越优先」排：
+    1. `MODEL_TAG`：离线桩自报家门（`fake` / `fake-copilot`），前端据此显示「离线自测」；
+    2. `config.model`：真实 Provider 的模型名就在它的 `ProviderConfig` 上；
+    3. `model` / `name`：第三方实现直接把自己当属性挂着。
+
+    为什么要收成一个函数：问答编排原来只 `getattr("model")`，
+    而真实 Provider 的模型名在 `config.model` 上 —— 于是接上真模型之后，
+    流式响应的元信息里模型名一直是 `unknown`，链路完全正常却看起来像没接上。
+    """
+    tag = getattr(model, "MODEL_TAG", None)
+    if isinstance(tag, str) and tag:
+        return tag
+    config_model = getattr(getattr(model, "config", None), "model", None)
+    if isinstance(config_model, str) and config_model:
+        return config_model
+    for attribute in ("model", "name"):
+        value = getattr(model, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
