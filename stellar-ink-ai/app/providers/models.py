@@ -68,6 +68,20 @@ class ChatResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatStreamChunk:
+    """流式对话的一个增量块。
+
+    `text` 是**增量**（不是累积），调用方自己拼；`finish_reason` 只在最后一块上有值。
+    用量也只在最后一块：多数 OpenAI 兼容服务要 `stream_options.include_usage` 才回，
+    拿不到就留零 —— 宁可少报 Token，也不要编一个数字。
+    """
+
+    text: str = ""
+    finish_reason: str | None = None
+    usage: TokenUsage | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EmbeddingResponse:
     vectors: list[list[float]]
     dimension: int

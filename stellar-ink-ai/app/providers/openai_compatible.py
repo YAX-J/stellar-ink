@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -30,6 +33,7 @@ from app.providers.errors import (
 from app.providers.models import (
     ChatMessage,
     ChatResponse,
+    ChatStreamChunk,
     EmbeddingResponse,
     ProviderCapabilities,
     ProviderConfig,
@@ -37,6 +41,8 @@ from app.providers.models import (
     RerankResult,
     TokenUsage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider:
@@ -108,6 +114,93 @@ class OpenAICompatibleProvider:
                 latency_ms=latency_ms,
                 model=self._config.model,
             ),
+        )
+
+    # ------------------------------------------------------------ chat 流式
+
+    async def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """流式对话：按 SSE 逐块产出增量。
+
+        三处刻意的处理：
+        - **拿不到 `stream_options` 也不报错**：不是每个 OpenAI 兼容服务都支持它，
+          于是用量可能缺席（`usage is None`）—— 宁可少报 Token，也不要编。
+          同时把「带 stream_options 被 400 拒绝」当成可重试：去掉它再试一次。
+        - **缓冲区按行切**：TCP 分片会把一行 JSON 劈成两半，必须把残行留到下一块。
+        - **异常路径也要关连接**：`async with` 保证上游不被挂住；否则一次 400
+          就会留下一个永远不释放的连接与一个还在生成的请求。
+        """
+        self._require("chat")
+        payload: dict[str, Any] = {
+            "model": self._config.model,
+            "messages": [message.to_payload() for message in messages],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        resolved_temperature = self._resolve(temperature, self._config.temperature)
+        if resolved_temperature is not None:
+            payload["temperature"] = resolved_temperature
+        resolved_max_tokens = max_tokens or self._config.max_tokens
+        if resolved_max_tokens is not None:
+            payload["max_tokens"] = resolved_max_tokens
+
+        started = time.perf_counter()
+        try:
+            async for chunk in self._stream("/chat/completions", payload):
+                yield chunk
+        except ProviderError as first:
+            # 上游不认 stream_options：这是「多要了一个可选字段」，不是配置错误。
+            # 只在带上了它的时候重试一次，避免把真正的 400 也重试成两次调用。
+            if "stream_options" not in payload:
+                raise
+            logger.info("上游拒绝 stream_options，改为不带用量重试一次：%s", first)
+            payload.pop("stream_options", None)
+            async for chunk in self._stream("/chat/completions", payload):
+                yield chunk
+        logger.debug(
+            "stream_chat 结束：model=%s elapsedMs=%d", self._config.model, _elapsed_ms(started)
+        )
+
+    async def _stream(self, path: str, payload: dict[str, Any]) -> AsyncIterator[ChatStreamChunk]:
+        """真正的 SSE 解析：把 `data: {...}` 逐行翻成增量块。"""
+        async with self._client.stream("POST", path, json=payload) as response:
+            if response.status_code >= 400:
+                body = (await response.aread()).decode("utf-8", errors="replace")
+                self._raise_for_status(response.status_code, body)
+
+            buffer = ""
+            async for raw in response.aiter_text():
+                buffer += raw
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    chunk = _parse_stream_line(line.strip())
+                    if chunk is _STREAM_DONE:
+                        return
+                    # 用「是不是真块」判断而不是 `is not _STREAM_SKIP`：
+                    # 后者的否定式收窄 mypy 不认（`is` 只对单例枚举收窄），会一路报 yield 类型不符
+                    if isinstance(chunk, ChatStreamChunk):
+                        yield chunk
+            tail = _parse_stream_line(buffer.strip())
+            if isinstance(tail, ChatStreamChunk):
+                yield tail
+
+    def _raise_for_status(self, status_code: int, body: str) -> None:
+        """与 `_post` 同一套映射：失败形态必须一致，否则流式与非流式会在同一故障下给出不同结论。"""
+        del body  # 上游报文可能含隐私，不写进异常与日志
+        if status_code in (401, 403):
+            raise ProviderAuthError("模型密钥无效或无权限，请检查面板里的 API Key")
+        if status_code == 429:
+            raise ProviderRateLimitError("模型服务限流，请稍后重试")
+        if status_code >= 500:
+            raise ProviderUnavailableError(f"模型服务返回 {status_code}")
+        raise ProviderError(
+            f"模型服务拒绝了请求（HTTP {status_code}）",
+            detail="常见原因：模型名不存在或不支持流式参数",
         )
 
     # ----------------------------------------------------------- embedding
@@ -250,6 +343,74 @@ class OpenAICompatibleProvider:
 
 def _first(choices: Any) -> Any:
     return choices[0] if isinstance(choices, list) and choices else {}
+
+
+#: `data: [DONE]` 与「这一行没有内容」的哨兵。
+#: 用类实例而不是 `object()`：`object` 会把返回类型污染成 `object | ChatStreamChunk`，
+#: mypy 随后在 `yield` 处报错，而这里本可以用类型系统把三种结果分清楚。
+class _StreamSentinel:
+    __slots__ = ("reason",)
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def __repr__(self) -> str:  # pragma: no cover - 只用于排障输出
+        return f"<stream {self.reason}>"
+
+
+_STREAM_DONE = _StreamSentinel("done")
+_STREAM_SKIP = _StreamSentinel("skip")
+
+
+def _parse_stream_line(line: str) -> ChatStreamChunk | _StreamSentinel:
+    """解析一行 SSE。
+
+    返回哨兵表示「结束」或「这行没有增量」（心跳、事件名、空行、解析失败的垃圾行），
+    否则返回一个增量块。**解析失败的行一律跳过**：部分服务会在流里插注释或非 JSON 心跳，
+    为它们整条流中断，比丢掉一行没用的事件更糟。
+    """
+    if not line or line.startswith(":"):
+        return _STREAM_SKIP
+    if line.startswith("data:"):
+        line = line[len("data:") :].strip()
+    if not line:
+        return _STREAM_SKIP
+    if line == "[DONE]":
+        return _STREAM_DONE
+    try:
+        data = json.loads(line)
+    except ValueError:
+        return _STREAM_SKIP
+    if not isinstance(data, dict):
+        return _STREAM_SKIP
+
+    choices = data.get("choices")
+    choice = _first(choices)
+    text = ""
+    finish_reason: str | None = None
+    if isinstance(choice, dict):
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            # 有的服务在 `delta.content` 给 null（只发 role 或只发 tool_calls）
+            text = content if isinstance(content, str) else ""
+        raw_reason = choice.get("finish_reason")
+        finish_reason = str(raw_reason) if raw_reason else None
+
+    usage = _as_mapping(data.get("usage"))
+    if not text and finish_reason is None and not usage:
+        # 例如只带 role 的首块：没有内容也没有结束标记，交给上层忽略
+        return _STREAM_SKIP
+
+    parsed_usage = None
+    if usage:
+        parsed_usage = TokenUsage.of(
+            _as_int(usage.get("prompt_tokens")),
+            _as_int(usage.get("completion_tokens")),
+            latency_ms=0,
+            model=None,
+        )
+    return ChatStreamChunk(text=text, finish_reason=finish_reason, usage=parsed_usage)
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:

@@ -90,7 +90,10 @@ class InternalAuthMiddleware:
             await self._reject(send, "请求体过大或未完整读取")
             return
 
-        request = Request(scope, receive=self._replay(body))
+        # 一次性构造「先吐 body、之后交回真实 receive」的 receive，**验签与下游共用同一个**：
+        # 分开构造的话，验签那个会把 body 读掉，下游再读就空了（业务层会以为请求体是空的）
+        replay = self._replay(body, receive)
+        request = Request(scope, receive=replay)
         try:
             identity = self._verifier.verify(
                 method=request.method,
@@ -107,7 +110,7 @@ class InternalAuthMiddleware:
             await self._reject(send, error.reason)
             return
 
-        await self._app(scope, self._replay(body), send)
+        await self._app(scope, replay, send)
 
     @staticmethod
     async def _read_body(receive: Receive) -> tuple[bytes, bool]:
@@ -121,14 +124,23 @@ class InternalAuthMiddleware:
                 return b"".join(chunks), False
 
     @staticmethod
-    def _replay(body: bytes) -> Receive:
-        """把已读出的 body 重新喂给下游（只发一次，之后返回断开）。"""
+    def _replay(body: bytes, upstream: Receive) -> Receive:
+        """把已读出的 body 重新喂给下游（只发一次），**之后交回真实 receive**。
+
+        这里踩过一个大坑，别再改回去：最初是读完 body 之后一律返回 `http.disconnect`，
+        非流式接口一切正常，但**流式（SSE）会直接 500**（Starlette 报 "No response returned"）。
+        原因是 `BaseHTTPMiddleware`（traceId 中间件）在响应进入流式发送后会通过一个
+        监听任务调用 `receive()` 来等断开信号 —— 拿到「已断开」就取消整个响应任务组，
+        而那时 `http.response.start` 还没发出去。
+        也就是说：**伪造断开等于自己掐断自己的流**。正确做法是让真实 receive 决定
+        （它只在客户端真的断开时才会给出 disconnect）。
+        """
         sent = False
 
         async def receive() -> dict[str, Any]:
             nonlocal sent
             if sent:
-                return {"type": "http.disconnect"}
+                return await upstream()
             sent = True
             return {"type": "http.request", "body": body, "more_body": False}
 

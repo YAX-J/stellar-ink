@@ -11,11 +11,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from app.providers.models import (
     ChatMessage,
     ChatResponse,
+    ChatStreamChunk,
     EmbeddingResponse,
     RerankResponse,
 )
@@ -32,6 +34,25 @@ class ChatModel(Protocol):
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> ChatResponse: ...
+
+
+@runtime_checkable
+class StreamingChatModel(Protocol):
+    """**可选**能力：支持增量输出的对话模型。
+
+    刻意不并进 `ChatModel`：并不是每个 Provider 都能流式（部分自建推理服务只给一次性响应），
+    硬塞进同一个协议会逼所有实现都写一个 `raise UnsupportedCapabilityError` 的桩，
+    于是「支持流式」这件事在类型上就消失了。问答编排用 `isinstance(chat, StreamingChatModel)`
+    判断，拿不到就走一次性回答 —— 用户体验差一点，但功能不会坏。
+    """
+
+    def stream_chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[ChatStreamChunk]: ...
 
 
 @runtime_checkable
