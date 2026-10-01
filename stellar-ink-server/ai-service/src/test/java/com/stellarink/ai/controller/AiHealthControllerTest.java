@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import org.mockito.Answers;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -141,10 +142,18 @@ class AiHealthControllerTest {
 
         String body = bodyOf(mockMvc.perform(get("/ai/health")).andReturn());
 
+        // ⚠️ 只扫**内容字段**，把 `traceId` 排除掉：它是随机十六进制，
+        // 而 `8200` 是**纯数字** —— 于是它偶尔会出现在 traceId 里，让这条断言偶发失败。
+        // 实测遇到过：同样命令跑两次结果不同（隔离跑 7/7、复跑 165 全绿），
+        // 一度以为是「脱敏用的地址与桩消息不逐字相等」；真正的原因是随机字段撞上了纯数字串。
+        // 配置只可能从内容字段泄露，所以这样扫既去掉了假失败、也没有放过任何真实泄露面。
+        String content = body.replaceAll("\"traceId\"\\s*:\\s*\"[^\"]*\"", "\"traceId\":\"<id>\"");
+
         for (String forbidden : new String[]{"8200", "127.0.0.1", "pythonBaseUrl", "python-base-url",
                 "secret", "Secret", "jwt", "token", "nacos", "Nacos", "password"}) {
-            assertFalse(body.contains(forbidden), "公开接口泄露了敏感内容：" + forbidden);
+            assertFalse(content.contains(forbidden), "公开接口泄露了敏感内容：" + forbidden);
         }
+        assertTrue(body.contains("traceId"), "traceId 仍然要在响应里（排障要用），只是不参与敏感串扫描");
     }
 
     @Test
