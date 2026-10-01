@@ -64,7 +64,12 @@ E. 扩展（按需）
       E3-4 观测出口 ✅ 最小形态（Python：进程内 trace 缓冲 + `/internal/trace/{id}`，
         只存结构不存内容、有界；Java：`GET /ai/admin/trace/{id}` 合并调用账与事件，
         Python 不可用时仍回账。跨副本/长期留存要 OTel 或 Langfuse → **待拍板**）
-   E4 GraphRAG / LLM Wiki ⏳ 未开始
+      E2 只读 Agent 前端入口 ✅（阅读页「问星笺」面板的模式切换：一次问答 / 深挖；
+        深挖显示每一步的工具与标签；三种「没给出答案」的形态分开显示；
+        `scripts/agent-selfcheck.mjs` 并入 `npm run check`）
+      B/C 收口 ✅ 除两项环境动作：退避重试 + 嵌入缓存 + 额度识别 + minDenseScore 标定工具
+        （标定要真实嵌入，等额度；Qdrant 冒烟要先开隧道）
+   E4 GraphRAG / LLM Wiki ⏳ 未开始（**范围待拍板**）
 ```
 
 > **做到哪了、还差什么，看 [`status.md`](status.md)**：逐阶段状态表 + 可执行核验命令 +
