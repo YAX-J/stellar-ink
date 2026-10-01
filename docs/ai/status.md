@@ -30,7 +30,7 @@
 | D2s 流式问答 | ✅ | `/qa/stream` 事件契约 + `ResponseBodyEmitter` 出口 + `utils/sse.js` 流式渲染与中止 | `tests/test_qa_stream*.py`；`HttpQaStreamClientTest`；`npm run check` |
 | D3 Copilot | ✅ | `app/rag/writing.py` + `/ai/writing/suggest` + 执笔页差异预览与人工采纳 | `tests/test_writing*.py`；`AiWritingControllerTest`；`npm run check` |
 | E1 写作记忆 | ✅ | `app/rag/style.py`（**不引用原句**）+ `/ai/writing/style` + 只读画像面板 | `tests/test_style*.py`；`AiWritingStyleControllerTest` |
-| E2 只读 Agent | ✅ 核心（**前端入口未接**） | `app/rag/agent.py`（三维预算 + 引用核实 + 中断）+ 只读工具 + `/ai/agent/ask` | `tests/test_agent*.py`；`AiAgentControllerTest` |
+| E2 只读 Agent | ✅ 含前端入口 | `app/rag/agent.py`（三维预算 + 引用核实 + 中断）+ 只读工具 + `/ai/agent/ask`；前端 `stores/agent.js` + 阅读页「深挖」模式（步骤可见、三种「没答案」形态分开显示） | `tests/test_agent*.py`；`AiAgentControllerTest`；`scripts/agent-selfcheck.mjs`（22 条，并入 `npm run check`） |
 | E3-1 调用账（审计 + 成本） | ✅ | `deploy/sql/12_ai_call_log.sql`（账表 + 角色单价两列）+ 五条路径埋点（qa / qa_stream / writing_suggest / agent / eval）+ `GET /ai/admin/usage/summary`（ADMIN） | `AiUsageServiceImplTest`（H2 真落库 + 成本快照 + 缺口计数）；`AiUsageControllerTest`（门槛与形状） |
 | E3-2 配额与并发 | ✅ | 额度在配置（`stellar.ink.ai.quota.*`）、计数在 Redis（`stellar-ink:ai:quota:`，自然日窗口）；拦截挂在 `AiUsageService.around`（调用前检查、调用后计数）；触顶 429、Redis 故障 fail-open + warn；ai-service 放开 `RedisUtils` | `AiQuotaPolicyTest`（窗口/上限边界/键名）；`AiUsageQuotaTest`（10 条：用户·角色·并发三维触顶、回滚、fail-open、拒绝时不调用下游） |
 | E3-3 MCP 工具服务 | ✅ | `app/mcp/protocol.py`（JSON-RPC 2.0 信封与错误码）+ `app/mcp/server.py`（`initialize`/`ping`/`tools/list`/`tools/call`）+ `POST /mcp`（内部签名保护）；`ToolSpec` 增加 `input_schema`/`required_role`/`timeout_ms`/`idempotent`；工具集与 Agent **同一份** | `tests/test_mcp_server.py`（21 条：信封、越权 `-32003`、schema 外参数 `-32602`、工具失败 `isError`、超时、通知不回响应）；`tests/test_mcp_api.py`（8 条：签名、身份透传、错误体形状） |
@@ -177,11 +177,23 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
 需要先开隧道（`ssh -N -L 6333:127.0.0.1:6333 <server>`）或用一个可达的 Qdrant 地址，
 之后跑 `uv run python scripts/qdrant_smoke.py` 即可收口。**已记录并跳过，不阻塞其它切片。**
 
-### 4.3 E2 的 Agent 没有前端入口
+### 4.3 E2 的 Agent 前端入口 —— **已接线**（2026-10-01）
 
-后端与网关都已就绪（`POST /ai/agent/ask`，登录即可），但没有任何页面调用它。
-这是刻意的：Agent 比一次问答慢、也更贵（可能多次调用模型），
-在配额与真实模型接通之前把它挂到界面上，等于给用户一个会烧钱的按钮。
+后端与网关早已就绪（`POST /ai/agent/ask`，登录即可），此前刻意没挂界面：
+Agent 比一次问答慢、也更贵（可能多次调用模型），在配额与真实模型接通之前挂上去，
+等于给用户一个会烧钱的按钮。**配额（E3-2）与真实模型都已到位，所以这一刀补上了。**
+
+做法：阅读页侧栏「问星笺」面板加**模式切换**（一次问答 / 深挖），默认停在便宜的那一档；
+深挖结果展示**每一步的工具名与标签**，并把三种「没给出答案」的形态分开显示：
+预算用尽（`doneReason=length`，**不是失败**，常常还带着引用）、用户停止、
+请求失败（含 429 配额）。前端自检 `scripts/agent-selfcheck.mjs`（22 条）把这三条钉住，
+已并入 `npm run check`。
+
+⚠️ 顺带修正两处**会骗人**的地方：
+① 界面原本想写「深一点（6 步）」，但 ai-service 用 `min(请求值, 4)` 夹住预算 ——
+传 6 只会跑 4，所以改成「快一点（3 步）」与「标准（不带该字段，服务端决定）」；
+② `api/client.js` 的 `request()` 原本不接受调用方的 `signal`，「停止」只是本地不再等，
+服务端照样跑完多步检索（白烧钱）—— 现在真的会中止请求。
 
 ### 4.4 另外两件小事
 

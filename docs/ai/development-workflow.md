@@ -258,9 +258,16 @@ dense-only 扫真实分数分布，输出「仍答对 / 挡住无答案」并给
 （拿假分布定门限，正是历史上把向量通路静默清空的那个坑）。
 额度恢复或换付费模型后跑一次，把推荐值填到 `qa.py` 的 `QA_RETRIEVAL`、
 `agent.py` 的 `AGENT_RETRIEVAL` 与评测台的 `minDenseScore`。
-下一步按顺序：**E2 只读 Agent 前端入口**（离线可做）→ E4 GraphRAG / LLM Wiki；
-Qdrant 冒烟只在隧道可达时做（本机 6333 今天不可达，已记录）。
-⚠️ **待你拍板**：是否部署 OpenTelemetry / Langfuse（决定跨副本回放与长期留存怎么做）；E4 的范围。
+**E2 只读 Agent 的前端入口已接线（2026-10-01）**：阅读页「问星笺」面板加模式切换
+（一次问答 / 深挖），深挖显示每一步的工具与标签，并把三种「没给出答案」的形态分开显示
+（预算用尽 / 用户停止 / 请求失败）。前端自检 `scripts/agent-selfcheck.mjs` 并入 `npm run check`。
+顺带修正两处会骗人的地方：界面不再承诺服务端不会兑现的步数（Java 用 `min(请求值, 4)` 夹住），
+「停止」现在真的中止请求（`api/client.js` 的 `request()` 接受调用方的 `signal`）。
+
+**下一步只剩 E4（GraphRAG / LLM Wiki）** —— ⚠️ **范围待你拍板**：
+先做「实体/关系抽取 + 图检索增强」还是先做「LLM Wiki（把文章整理成互链的知识页）」，
+两者的产物与工作量差别很大。另外两件环境动作仍挂着：`minDenseScore` 标定（等嵌入额度）、
+Qdrant 冒烟（需要隧道）；**是否部署 OTel / Langfuse** 同样待拍板。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

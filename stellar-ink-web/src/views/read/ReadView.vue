@@ -7,6 +7,7 @@ import { useSettingsStore, READ_LIMITS, READ_DEFAULTS } from '@/stores/settings'
 import { useCommentStore } from '@/stores/comments'
 import { useAuthorStore } from '@/stores/authors'
 import { useQaStore } from '@/stores/qa'
+import { useAgentStore } from '@/stores/agent'
 import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
@@ -22,6 +23,7 @@ const settings = useSettingsStore()
 const commentStore = useCommentStore()
 const authorStore = useAuthorStore()
 const qaStore = useQaStore()
+const agentStore = useAgentStore()
 
 const post = computed(() => postStore.byId(route.params.id))
 const prevPost = computed(() => post.value?.prev || null)
@@ -70,10 +72,33 @@ async function deleteComment(comment) {
  */
 const qaDraft = ref('')
 
+/** 引用可点回原文：跳到那篇文章（当前这篇就不跳，只提示） */
+function openCitation(citation) {
+  if (!citation || Number(citation.postId) === Number(route.params.id)) return
+  router.push({ name: 'read', params: { id: citation.postId } })
+}
+
+/* ---- 深挖（只读 Agent，E2）----
+ * 与「问星笺」共用一块面板，因为用户的心智是同一件事：都在这篇文章旁边问站内文章。
+ * 但它**更慢也更贵**（多步检索、可能多次调模型），所以：
+ * ① 只在用户明确切到「深挖」时才可用（不自动跑）；
+ * ② 结果里显示**步骤**与预算状态 —— 否则「转了很久、答案很短」看起来就像坏了；
+ * ③ `doneReason=length`（预算用尽）不是失败：能把查到的引用给出来，就是有用的结果。
+ */
+const qaMode = ref('ask') // 'ask' 一次问答 | 'dig'
+const digDepth = ref('quick')
+
 async function askStar() {
   const question = qaDraft.value.trim()
   if (!question) {
     qaStore.error = '请先写下一个问题'
+    return
+  }
+  if (qaMode.value === 'dig') {
+    try {
+      const result = await agentStore.ask(question, { depth: digDepth.value })
+      if (result) qaDraft.value = ''
+    } catch { /* 错误已进 store.error 并有局部/全局提示 */ }
     return
   }
   try {
@@ -82,10 +107,12 @@ async function askStar() {
   } catch { /* 错误已进 store.error 并有局部/全局提示 */ }
 }
 
-/** 引用可点回原文：跳到那篇文章（当前这篇就不跳，只提示） */
-function openCitation(citation) {
-  if (!citation || Number(citation.postId) === Number(route.params.id)) return
-  router.push({ name: 'read', params: { id: citation.postId } })
+/** 切换模式时把另一边的结果清掉：两套结果的形状不同，混着显示会张冠李戴 */
+function switchMode(mode) {
+  if (qaMode.value === mode) return
+  qaMode.value = mode
+  if (mode === 'dig') qaStore.reset()
+  else agentStore.reset()
 }
 
 /* 正文：Markdown 解析为块级结构交给 MarkdownBody 渲染（首段下沉由该组件判定） */
@@ -320,12 +347,30 @@ onUnmounted(() => {
 
         <section class="qa-panel reveal" style="--d:.33s" aria-label="问星笺">
           <div class="qa-head">
-            <div class="title-row"><h3>问星笺</h3><span class="kicker">ASK · 就全站文章提问</span></div>
-            <button v-if="qaStore.answer" class="qa-reset" type="button" @click="qaStore.reset()">清空</button>
+            <div class="title-row">
+              <h3>{{ qaMode === 'dig' ? '深挖' : '问星笺' }}</h3>
+              <span class="kicker">{{ qaMode === 'dig' ? 'DIG · 多步检索（更慢更贵）' : 'ASK · 就全站文章提问' }}</span>
+            </div>
+            <button
+              v-if="qaMode === 'dig' ? agentStore.result : qaStore.answer"
+              class="qa-reset" type="button"
+              @click="qaMode === 'dig' ? agentStore.reset() : qaStore.reset()"
+            >清空</button>
+          </div>
+
+          <div class="qa-modes">
+            <button
+              class="qa-mode" :class="{ on: qaMode === 'ask' }" type="button"
+              @click="switchMode('ask')"
+            >一次问答</button>
+            <button
+              class="qa-mode" :class="{ on: qaMode === 'dig' }" type="button"
+              @click="switchMode('dig')"
+            >深挖（多步）</button>
           </div>
 
           <p v-if="!auth.isLoggedIn" class="qa-hint">
-            提问需要登录（答案要花算力，也要能按人计费）。
+            {{ qaMode === 'dig' ? '深挖' : '提问' }}需要登录（答案要花算力，也要能按人计费）。
             <RouterLink class="qa-link" :to="{ name: 'login', query: { redirect: route.fullPath } }">去登录</RouterLink>
           </p>
 
@@ -333,23 +378,81 @@ onUnmounted(() => {
             <div class="qa-compose">
               <input
                 v-model="qaDraft" maxlength="500" type="text"
-                placeholder="问点什么，比如：作者为什么坚持写博客？"
+                :placeholder="qaMode === 'dig' ? '问一个需要翻几篇才能答的问题…' : '问点什么，比如：作者为什么坚持写博客？'"
                 @keydown.enter="askStar"
               >
-              <button class="btn btn-primary" :disabled="qaStore.asking" @click="askStar">
-                {{ qaStore.asking ? '生成中…' : '提问' }}
+              <button
+                class="btn btn-primary"
+                :disabled="qaMode === 'dig' ? agentStore.running : qaStore.asking"
+                @click="askStar"
+              >
+                {{ qaMode === 'dig' ? (agentStore.running ? '检索中…' : '深挖') : (qaStore.asking ? '生成中…' : '提问') }}
               </button>
-              <button v-if="qaStore.streaming" class="btn btn-ghost qa-stop" type="button" @click="qaStore.reset()">
-                停止
-              </button>
+              <button
+                v-if="qaMode === 'dig' ? agentStore.running : qaStore.streaming"
+                class="btn btn-ghost qa-stop" type="button"
+                @click="qaMode === 'dig' ? agentStore.abort() : qaStore.reset()"
+              >停止</button>
             </div>
-            <p class="qa-hint">
+
+            <p v-if="qaMode === 'dig'" class="qa-hint">
+              深挖会自己决定查几次、一次查什么（最多
+              <b>{{ digDepth === 'quick' ? 3 : 4 }}</b> 步），所以比一次问答慢，也更费额度。
+              预算只能收紧，想跑更多步要改服务端配置。
+              <select v-model="digDepth" class="qa-depth" :disabled="agentStore.running">
+                <option value="quick">快一点（3 步）</option>
+                <option value="standard">标准（服务端 4 步）</option>
+              </select>
+              <span v-if="agentStore.error"> · <b class="qa-err">{{ agentStore.error }}</b></span>
+            </p>
+            <p v-else class="qa-hint">
               答案只依据站内文章，并给出引用；找不到依据时会直说「没有找到」，不会编。
               <span v-if="qaStore.error"> · <b class="qa-err">{{ qaStore.error }}</b></span>
             </p>
 
-            <!-- 流式时立刻出现：先显示「正在检索」，引用一到就渲染引用，正文边生成边追加 -->
-            <div v-if="qaStore.answer" class="qa-answer">
+            <!-- ---------- 深挖结果（多步检索） ---------- -->
+            <div v-if="qaMode === 'dig' && (agentStore.result || agentStore.running || agentStore.stopped)" class="qa-answer">
+              <p v-if="agentStore.question" class="qa-question">问：{{ agentStore.question }}</p>
+              <p v-if="agentStore.offline" class="qa-offline">离线自测：当前用的是 Fake 模型，回答仅用于验证链路。</p>
+
+              <p v-if="agentStore.running" class="qa-waiting">正在多步检索…（每步之间可以点「停止」）</p>
+              <!-- 预算用尽**不是失败**：它常常带回引用，只是没在预算内收敛 -->
+              <p v-else-if="agentStore.budgetExhausted" class="qa-interrupted">
+                步数用尽了，没能在预算内收敛。下面是这几步查到的东西。
+              </p>
+              <p v-else-if="agentStore.stopped" class="qa-interrupted">
+                已停止等待。服务端会在当前这一步结束后收尾，已经查到的引用仍会记在调用账里。
+              </p>
+
+              <p v-if="agentStore.result?.answer" class="qa-text">{{ agentStore.result.answer }}</p>
+
+              <ol v-if="agentStore.steps.length" class="qa-steps">
+                <li v-for="step in agentStore.steps" :key="step.index">
+                  <span class="qa-step-tool">{{ step.tool || '思考' }}</span>
+                  <span class="qa-step-label" :class="{ bad: !!step.error }">{{ step.error || step.label }}</span>
+                </li>
+              </ol>
+
+              <ul v-if="agentStore.citations.length" class="qa-cites">
+                <li v-for="(cite, index) in agentStore.citations" :key="index">
+                  <button class="qa-cite" type="button" @click="openCitation(cite)">
+                    <b>[{{ index + 1 }}] {{ cite.title }}</b>
+                    <span>{{ cite.snippet }}</span>
+                  </button>
+                </li>
+              </ul>
+              <p v-else-if="!agentStore.running && !agentStore.result?.answer" class="qa-hint">
+                这次既没有答案也没有引用：文章里确实没有能支撑回答的段落。
+              </p>
+
+              <p v-if="agentStore.result" class="qa-hint">
+                共 {{ agentStore.result.toolCalls || 0 }} 次工具调用 · 模型 {{ agentStore.result.usageModel || '未知' }}
+                · {{ agentStore.result.latencyMs || 0 }}ms
+              </p>
+            </div>
+
+            <!-- ---------- 一次问答结果（流式） ---------- -->
+            <div v-else-if="qaMode === 'ask' && qaStore.answer" class="qa-answer">
               <p v-if="qaStore.question" class="qa-question">问：{{ qaStore.question }}</p>
               <p v-if="qaStore.offline" class="qa-offline">离线自测：当前用的是 Fake 模型，回答仅用于验证链路。</p>
               <p v-if="qaStore.answerDone && qaStore.interrupted" class="qa-interrupted">
@@ -532,6 +635,21 @@ onUnmounted(() => {
 .qa-cite:hover{border-color:var(--primary)}
 .qa-cite b{font-size:12px; font-weight:500}
 .qa-cite span{font-size:11px; color:var(--ink-faint); line-height:1.8}
+/* 模式切换：默认「一次问答」，深挖要用户自己切过去 —— 它更慢也更贵，不能默认选中 */
+.qa-modes{display:flex; gap:6px; margin-bottom:12px}
+.qa-mode{border:1px solid var(--line); background:transparent; color:var(--ink-faint); font:inherit;
+  font-size:12px; padding:5px 12px; border-radius:999px; cursor:pointer; transition:all .25s}
+.qa-mode:hover{color:var(--ink-dim); border-color:var(--primary)}
+.qa-mode.on{color:var(--ink); border-color:var(--primary); background:var(--bg-2)}
+.qa-depth{margin-left:8px; background:var(--bg-2); border:1px solid var(--line); color:var(--ink-dim);
+  font:inherit; font-size:11px; border-radius:var(--r-sm); padding:2px 6px}
+.qa-depth:disabled{opacity:.5}
+/* 步骤表：深挖的「过程」要看得见，否则「转很久、答案很短」看起来就像坏了 */
+.qa-steps{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:6px}
+.qa-steps li{display:flex; gap:10px; align-items:baseline; font-size:11px; line-height:1.8}
+.qa-step-tool{font-family:var(--font-mono); color:var(--ink-faint); min-width:88px}
+.qa-step-label{color:var(--ink-dim)}
+.qa-step-label.bad{color:var(--rose)}
 
 /* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
 .read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;

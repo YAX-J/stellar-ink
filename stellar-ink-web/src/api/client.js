@@ -67,11 +67,13 @@ function httpMessage(status, fallback) {
 /**
  * 发送请求并解包统一响应。
  * @param {string} path 以 / 开头的接口路径，如 /auth/login
- * @param {{ method?: string, body?: object, form?: FormData, query?: object, timeout?: number, silent?: boolean }} [opts]
+ * @param {{ method?: string, body?: object, form?: FormData, query?: object, timeout?: number, silent?: boolean, signal?: AbortSignal }} [opts]
  *   body 走 JSON；form 走 multipart（上传文件用，两者互斥，form 优先）。
- *   silent=true 时不弹全局 toast（由调用方自行展示局部错误）
+ *   silent=true 时不弹全局 toast（由调用方自行展示局部错误）。
+ *   signal 是**调用方**的中断信号（用户点「停止」）：接上它，请求才会真的被取消 ——
+ *   否则「停止」只是本地不再等待，服务端照样跑完多步检索，那是白烧钱。
  */
-export async function request(path, { method = 'GET', body, form, query, timeout = 15000, silent = false } = {}) {
+export async function request(path, { method = 'GET', body, form, query, timeout = 15000, silent = false, signal } = {}) {
   /* multipart 的 Content-Type 必须由浏览器自己生成（带 boundary），手写会导致后端解析失败 */
   const headers = form ? {} : { 'Content-Type': 'application/json' }
   const token = getToken()
@@ -88,6 +90,15 @@ export async function request(path, { method = 'GET', body, form, query, timeout
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
+  const forwardAbort = () => controller.abort()
+  if (signal) {
+    if (signal.aborted) controller.abort()
+    else signal.addEventListener('abort', forwardAbort, { once: true })
+  }
+  const release = () => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', forwardAbort)
+  }
   let res
   try {
     res = await fetch(url, {
@@ -97,14 +108,14 @@ export async function request(path, { method = 'GET', body, form, query, timeout
       signal: controller.signal,
     })
   } catch (error) {
-    clearTimeout(timer)
+    release()
     const apiError = error.name === 'AbortError'
       ? new ApiError(408, httpMessage(408), 408)
       : new ApiError(0, httpMessage(0), 0)
     notify(apiError, silent)
     throw apiError
   }
-  clearTimeout(timer)
+  release()
 
   const text = await res.text()
   let json = null
