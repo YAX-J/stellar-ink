@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 评测运行请求（{@code EvalRunRequest}）：AI 实验室「评测台」页签点「跑一轮」时发出。
@@ -33,4 +34,12 @@ public class EvalRunRequestDTO implements Serializable {
 
     /** 只跑前 N 题（调试用；为空则全跑） */
     private Integer maxCases;
+
+    /**
+     * 知识图（一次 {@code /wiki/claims} 返回体）；只有某个策略开了 {@code enableGraph} 才需要。
+     *
+     * <p>为什么由调用方显式给出而不是服务端缓存一份：图检索的上限由**图的覆盖率**决定，
+     * 「这两次评测用的是同一份图吗」必须可回答，否则两张对比表不可比。
+     */
+    private Map<String, Object> graph;
 }

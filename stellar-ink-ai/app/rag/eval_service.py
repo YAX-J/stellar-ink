@@ -30,6 +30,7 @@ from app.providers.base import EmbeddingModel, RerankModel
 from app.providers.fake import FakeProvider
 from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset, StrategySpec, run_dataset
+from app.rag.graph import GraphRetriever, graph_from_payload
 from app.rag.metrics import DEFAULT_KS, CaseResult
 from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline
 from app.schemas.eval import (
@@ -62,6 +63,25 @@ DEFAULT_STRATEGIES: tuple[EvalStrategySpec, ...] = (
 )
 
 _FIXTURE_RELATIVE = Path("tests") / "fixtures" / "eval"
+
+
+class _NoGraphRetriever:
+    """开了图检索却**没带图**时的替身：如实拒答，并说清「这次没图」。
+
+    为什么不用一个空图顶替：空图会让这一行显示成「Recall@1 = 0」，
+    读起来像「图检索效果很差」，实际是「这次根本没跑图检索」—— 那是两件事。
+    """
+
+    def __init__(self) -> None:
+        self.last_note = (
+            "本次请求开了 enableGraph 但没有带 graph（一次 /wiki/claims 返回体）——"
+            "这一行不代表图检索的效果，请带上图后重跑。"
+        )
+
+    async def retrieve(self, question: str, *, top_k: int) -> Any:
+        from app.rag.eval_runner import RetrievalOutcome
+
+        return RetrievalOutcome(posts=[], chunks=[], cited_chunks=[], refused=True, latency_ms=0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,9 +237,20 @@ async def run_evaluation(
 
     specs = strategy_specs(request)
     _require_models(specs, models)
+    graph_index = graph_from_payload(request.graph) if request.graph else None
     plans: list[StrategySpec] = []
     summaries: list[tuple[str, str]] = []
     for spec in specs:
+        if spec.enable_graph:
+            # 图检索**不经过 RetrievalPipeline**：它不走召回+融合那套，
+            # 而是「命中实体 → 沿共现边一跳」。硬塞进 pipeline 只会让两边都变形
+            retriever = GraphRetriever(graph_index) if graph_index else _NoGraphRetriever()
+            description = "graph(local)" + ("" if graph_index else " · ⚠️ 本次没带图")
+            plans.append(
+                StrategySpec(spec.key, retriever, top_k=spec.top_k, description=description)
+            )
+            summaries.append((spec.key, description))
+            continue
         pipeline = RetrievalPipeline(
             corpus=chunks,
             config=_config_of(spec),
