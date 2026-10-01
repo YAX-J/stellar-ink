@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 
 from app.providers import runtime
@@ -32,6 +33,8 @@ from app.providers.errors import ProviderError
 from app.providers.fake import FakeProvider
 from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset, StrategySpec, run_dataset
+from app.rag.eval_service import GRAPH_SECONDARY_METRIC, graph_verdict
+from app.rag.graph import GraphRetriever, graph_from_payload
 from app.rag.metrics import DEFAULT_KS
 from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
 
@@ -39,6 +42,9 @@ from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
 from console import use_utf8_console
 
 GOLDEN = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval" / "golden_v1.json"
+
+#: 图检索那一臂的列名
+GRAPH_KEY = "graph_local"
 
 #: 五组配置：前四组只差开关；最后一组给 Sparse 加上本地基线标定过的门限，用来看门限的影响
 CONFIGS = (
@@ -68,6 +74,12 @@ def parse_args() -> argparse.Namespace:
         choices=("fake", "panel"),
         default="fake",
         help="fake=离线伪向量（默认）；panel=面板里配的真实模型",
+    )
+    parser.add_argument(
+        "--graph",
+        default=None,
+        help="知识图 JSON（一次 /wiki/claims 返回体）：给出它就把图检索作为额外一臂参与对比，"
+        "并在最后打印「保留 / 删掉」的结论",
     )
     return parser.parse_args()
 
@@ -116,6 +128,20 @@ def build_strategies(provider: str) -> list[StrategySpec]:
     ]
 
 
+def _load_graph_payload(path: str) -> dict[str, object] | None:
+    """读知识图（同步函数，**不在 async 里做阻塞 IO** —— 那是 lint 规则 ASYNC240 的用意：
+    async 函数里的阻塞调用会挡住事件循环，而这条脚本将来可能被别的异步代码 import）。"""
+    payload_path = Path(path)
+    if not payload_path.is_file():
+        print(f"✗ 找不到知识图文件：{payload_path}")
+        return None
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        print(f"✗ 知识图必须是对象（一次 /wiki/claims 返回体）：{payload_path}")
+        return None
+    return payload
+
+
 async def main() -> int:
     args = parse_args()
     dataset = EvalDataset.load(GOLDEN)
@@ -135,6 +161,25 @@ async def main() -> int:
         print(f"  配置来源：{describe_sources()}")
         return 1
 
+    graph_keys: list[str] = []
+    if args.graph:
+        payload = _load_graph_payload(args.graph)
+        if payload is None:
+            return 1
+        # 图**不额外花一次模型调用**：它只是一份已有的抽取结果
+        strategies.append(
+            StrategySpec(
+                GRAPH_KEY,
+                GraphRetriever(graph_from_payload(payload)),
+                top_k=10,
+                description="graph(local)：命中实体 → 沿共现边一跳",
+            )
+        )
+        graph_keys.append(GRAPH_KEY)
+        entities = payload.get("entities")
+        count = len(entities) if isinstance(entities, list) else 0
+        print(f"知识图：{args.graph}（实体 {count} 个）")
+
     result = await run_dataset(dataset, strategies, ks=DEFAULT_KS)
 
     print(f"语料 {len(posts)} 篇文章 → {len(corpus)} 个子块")
@@ -147,10 +192,24 @@ async def main() -> int:
     header = "策略".ljust(16) + "".join(column.rjust(width) for column in COLUMNS)
     print(header)
     print("-" * len(header))
-    for config in CONFIGS:
-        metrics = result.per_strategy[config.label]
+    rows = [config.label for config in CONFIGS] + graph_keys
+    for label in rows:
+        metrics = result.per_strategy.get(label)
+        if metrics is None:
+            continue
         cells = "".join(str(metrics.get(column)).rjust(width) for column in COLUMNS)
-        print(config.label.ljust(16) + cells)
+        print(label.ljust(16) + cells)
+
+    if graph_keys:
+        # 结论**由规则给出**，不由人眼读表：同一份数字在任何一次运行里都得到同一个判定
+        verdict = graph_verdict(
+            result.per_strategy,
+            graph_keys,
+            trustworthy=args.provider == "panel",
+        )
+        print(f"\n图检索判定：{verdict['verdict']} —— {verdict['reason']}")
+        if verdict.get("secondaryDelta") is not None:
+            print(f"（次指标 {GRAPH_SECONDARY_METRIC} 的差值是 {verdict['secondaryDelta']}）")
 
     same = sorted(
         (a.label, b.label)

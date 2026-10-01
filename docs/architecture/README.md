@@ -221,6 +221,17 @@ Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会
 E3-1 起又多了一张 `ai_call_log`（AI 调用账）与角色单价两列，脚本是 `12_ai_call_log.sql`
 （**幂等**：`CREATE` 用 `IF NOT EXISTS`、`ALTER` 走 `information_schema` 判断，可重复执行）。
 
+E4 的 LLM Wiki 又添了三组表，各自一个脚本：
+
+| 脚本 | 表 | 幂等锚点（**没有它就别指望重复构建不出脏数据**） |
+|---|---|---|
+| `13_ai_wiki.sql` | `ai_wiki_claim`（带证据的主张） | `(post_id, content_hash, claim_text)` |
+| `14_ai_wiki_entity.sql` | `ai_wiki_entity` / `ai_wiki_entity_mention` / `ai_wiki_relation` / `ai_wiki_relation_evidence` | 实体 `normalized`；提及含 `claim_text`；关系 `(source, target)` 且**两端按 id 排序**（无向边只有一种表示） |
+| `15_ai_wiki_topic.sql` | `ai_wiki_topic` / `ai_wiki_topic_entity` / `ai_wiki_topic_evidence` | 主题**成员签名**（成员规范化名字排序后的 SHA-256），**不是主题名** —— 名字由成员算出来，成员一变名字就变 |
+
+⚠️ 这三张脚本**没执行时，阅读页的「知识条目 / 本文提到的实体 / 本文参与的主题」三块会静默不显示**
+（前端按「辅助信息失败不损伤主流程」降级），现象上就是「功能看着没上线」，日志里只有一条「表不存在」。
+
 ⚠️ **两份数据不再同步**：本地写的内容不会上服务器，服务器上的新内容也不会下来。
 要发布内容仍然必须连远端库（`set USE_REMOTE_MYSQL=1` 再跑 `start-all.bat`）。
 
