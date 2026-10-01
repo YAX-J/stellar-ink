@@ -252,9 +252,14 @@ E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它�
 ⚠️ **重跑标准五组仍未通过，但真因已查清**：免费档是**每模型每日 50 次**
 （`limit_source=openrouter_free_tier_daily`，`Remaining: 0`，次日 UTC 零点重置）。
 这不靠代码解决 —— 需要给 embedding / rerank 换付费或自建模型（或等重置）。
-**`minDenseScore` 标定必须先有真实分数分布，同样等这条腿可用再做**（不要拿伪向量凑门限）。
+**`minDenseScore` 标定工具已就位**（2026-10-01，`scripts/calibrate_dense_score.py`）：
+dense-only 扫真实分数分布，输出「仍答对 / 挡住无答案」并给推荐点（推荐逻辑有离线单测）。
+它需要真实嵌入 —— **额度用尽时如实报错退出，绝不产出全 0 的假分布**
+（拿假分布定门限，正是历史上把向量通路静默清空的那个坑）。
+额度恢复或换付费模型后跑一次，把推荐值填到 `qa.py` 的 `QA_RETRIEVAL`、
+`agent.py` 的 `AGENT_RETRIEVAL` 与评测台的 `minDenseScore`。
 下一步按顺序：**E2 只读 Agent 前端入口**（离线可做）→ E4 GraphRAG / LLM Wiki；
-Qdrant 冒烟只在隧道可达时做。
+Qdrant 冒烟只在隧道可达时做（本机 6333 今天不可达，已记录）。
 ⚠️ **待你拍板**：是否部署 OpenTelemetry / Langfuse（决定跨副本回放与长期留存怎么做）；E4 的范围。
 
 ```bash
