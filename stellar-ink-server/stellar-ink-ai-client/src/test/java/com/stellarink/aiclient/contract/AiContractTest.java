@@ -10,6 +10,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.AiTraceDTO;
+import com.stellarink.aiclient.dto.AiWikiClaimDTO;
+import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
@@ -363,6 +365,30 @@ class AiContractTest {
     }
 
     @Test
+    @DisplayName("Wiki 主张：证据四件套 + 原文片段都要能读出来（这就是「能回到原文」的凭据）")
+    void wikiClaimsRoundTrips() throws IOException {
+        AiWikiClaimsResultDTO result =
+                roundTrip("wiki_claims_result.json", AiWikiClaimsResultDTO.class);
+
+        assertEquals(3, result.getClaims().size());
+        assertEquals(4, result.getStats().getProposed());
+        assertEquals(3, result.getStats().getKept());
+        assertEquals(
+                Map.of("quoteNotFound", 1),
+                result.getStats().getDropped(),
+                "被证据校验挡掉多少必须在契约里：它是「模型不行 vs 引用编造」的唯一线索");
+
+        AiWikiClaimDTO claim = result.getClaims().get(0);
+        assertNotNull(claim.getPostId());
+        assertNotNull(claim.getChunkIndex());
+        assertNotNull(claim.getPostVersion(), "文章版本：文章改了这条主张就该重算");
+        assertNotNull(claim.getContentHash(), "段落哈希：只失效受影响的那几条");
+        assertEquals("每天写五百字，一年就是十八万字", claim.getQuote());
+        assertTrue(claim.getConfidence() > 0);
+        assertTrue(result.getNotes().stream().anyMatch(note -> note.contains("引用找不到原文依据")));
+    }
+
+    @Test
     @DisplayName("fixture 里的键名不得出现蛇形（出现即说明某侧私自换了命名）")
     void fixtureKeysAreCamelCase() throws IOException {
         Set<String> files = Set.of(
@@ -379,6 +405,7 @@ class AiContractTest {
                 "eval_run_request.json",
                 "eval_run_response.json",
                 "trace_replay_response.json",
+                "wiki_claims_result.json",
                 "error_body.json");
 
         for (String fileName : files) {

@@ -713,6 +713,37 @@ curl -s -X POST http://127.0.0.1:8200/mcp -H "Content-Type: application/json" \
 - ⚠️ **目前只在编排网络内暴露**：对外（站外 MCP 客户端）需要 Java 侧再开一条带鉴权的出口，
   否则拿不到签署过的身份头 —— 没有身份就没有权限判定，等于把只读工具变成匿名可查。
 
+**LLM Wiki 落库与读者侧（E4-2）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/admin/wiki/build` | 抽一轮主张并落库；请求 `{maxPosts?, maxClaimsPerChunk?}`，响应 `{posts, proposed, kept, inserted, updated, skipped, dropped, notes, …}` | ADMIN |
+| GET | `/ai/wiki/posts/{postId}/claims` | 按文章读主张（按段落序号排序，**每条都带原文片段**） | **公开** |
+| GET | `/ai/wiki/claims/count?postId=` | 某篇文章有多少条主张（读者侧据此决定要不要显示入口） | **公开** |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/admin/wiki/build \
+  -H "Authorization: <ADMIN token>" -H "Content-Type: application/json" -d '{"maxPosts":5}'
+# => {"code":0,"data":{"posts":1,"proposed":4,"kept":3,"inserted":2,"updated":1,"skipped":0,
+#     "dropped":{"quoteNotFound":1},"usageModel":"deepseek-flash","latencyMs":3120,
+#     "notes":["1 条主张因**引用找不到原文依据**被丢弃 ……","落库：新增 2 条、更新 1 条、未变动 0 条。"]}}
+```
+
+- **两道门槛刻意不同**：构建是 **ADMIN**（批量模型调用、直接花钱，且是「重写全站知识条目」的动作）；
+  读取是**公开**（与文章本身的可见性一致）—— 要登录才能看证据的话，Wiki 就变成了「信我」。
+- **`dropped` 与 `claims` 同等重要**：它是「模型不行」还是「引用编造被证据校验挡下」的唯一线索，
+  Java 侧原样透出、不加工。
+- **落库的三种结果分开计数**（`inserted` / `updated` / `skipped`）：重复构建是常态
+  （新增文章、换模型、手滑重跑），只回「新增 N 条」会让第二次构建看起来又在膨胀知识库。
+- **幂等锚点是 (postId, contentHash, claimText)**，与表上唯一键一致：同一段落的同一版本重复抽取
+  不产生重复行；只把「真的变了」的字段（置信度 / 章节路径 / 片段）写下去。
+- **缺证据字段的记录不落库**（`postId` / `contentHash` / `text` 任一为空），并在 `notes` 里说明 ——
+  写进去就是一条无法核验的「知识」。
+- 构建走**调用账**（`scene=wiki`，E3-1/E3-2）：它是批量模型调用，比一次问答贵得多，
+  更该记清谁跑了多少篇、花了多少 token。
+- ⚠️ 读者侧目前只回**已发布文章**的主张（Python 抽取的语料就是已发布文章）。
+  将来语料若含未发布内容，这里必须补一道可见性过滤（已记进 `status.md` 待办）。
+
 **LLM Wiki 主张抽取（E4-1：带证据的知识条目）**
 
 | 方法 | 路径 | 说明 | 鉴权 |

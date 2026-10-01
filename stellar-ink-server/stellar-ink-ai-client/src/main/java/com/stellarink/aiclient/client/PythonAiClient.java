@@ -2,6 +2,8 @@ package com.stellarink.aiclient.client;
 
 import com.stellarink.aiclient.constant.AiContractPaths;
 import com.stellarink.aiclient.dto.AiTraceDTO;
+import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
+import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
@@ -136,4 +138,17 @@ public interface PythonAiClient {
      */
     @GetMapping(value = AiContractPaths.TRACE_REPLAY, produces = MediaType.APPLICATION_JSON_VALUE)
     AiTraceDTO traceReplay(@PathVariable("traceId") String traceId);
+
+    /**
+     * 抽取带证据的 Wiki 主张（E4-1）。
+     *
+     * <p>返回的 {@code stats.dropped} 与 {@code claims} 同等重要：它说明「模型提了多少、
+     * 被证据校验挡掉多少」，是区分「模型不行」与「引用编造被挡下」的唯一线索 ——
+     * Java 侧原样透出，不加工。
+     */
+    @PostMapping(
+            value = AiContractPaths.WIKI_CLAIMS,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    AiWikiClaimsResultDTO wikiClaims(@RequestBody AiWikiClaimsRequestDTO request);
 }

@@ -10,6 +10,7 @@ import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.common.redis.RedisUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.mockito.Answers;
@@ -79,6 +80,10 @@ class AiWritingStyleControllerTest {
     /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
     @MockBean
     private AiModelLibraryService modelLibraryService;
+
+    /** Wiki 服务（E4-2）依赖 MyBatis Mapper：切片里不 mock 掉，整个上下文起不来。 */
+    @MockBean
+    private AiWikiService wikiService;
 
     private static WritingStyleResultDTO profileOf(boolean enough) {
         WritingStyleResultDTO result = new WritingStyleResultDTO();

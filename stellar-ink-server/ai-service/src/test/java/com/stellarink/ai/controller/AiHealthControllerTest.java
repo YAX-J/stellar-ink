@@ -7,6 +7,7 @@ import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.common.redis.RedisUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,6 +87,10 @@ class AiHealthControllerTest {
     /** 模型库服务同样会被切片扫到，而它依赖 MyBatis Mapper：不 mock 掉，整个切片上下文就起不来。 */
     @MockBean
     private AiModelLibraryService modelLibraryService;
+
+    /** Wiki 服务（E4-2）依赖 MyBatis Mapper：切片里不 mock 掉，整个上下文起不来。 */
+    @MockBean
+    private AiWikiService wikiService;
 
     @Test
     @DisplayName("公开可访问：不带 token 也能探测")
