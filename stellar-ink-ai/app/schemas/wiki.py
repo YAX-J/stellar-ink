@@ -50,11 +50,43 @@ class WikiExtractionStatsView(ContractResponse):
     kept: Annotated[int, Field(ge=0)]
     dropped: Annotated[dict[str, int], Field(default_factory=dict, description="丢弃原因 → 条数")]
     posts: Annotated[int, Field(ge=0, description="实际抽了几篇文章")]
+    entity_proposed: Annotated[int, Field(ge=0, description="模型提出的实体次数")]
+    entity_kept: Annotated[int, Field(ge=0, description="通过证据校验的实体次数")]
+    entities: Annotated[int, Field(ge=0, description="合并后的实体个数")]
+
+
+class WikiEntityMentionView(ContractResponse):
+    """一次实体出现：它挂在哪条主张上（这就是实体能回到证据的那条线）。"""
+
+    name: Annotated[str, Field(min_length=1, max_length=40, description="原文里的写法")]
+    post_id: Annotated[int, Field(ge=1)]
+    chunk_index: Annotated[int, Field(ge=0)]
+    claim_text: Annotated[str, Field(description="它出现在这条主张（或它的原文片段）里")]
+
+
+class WikiEntityView(ContractResponse):
+    """合并后的实体：一个规范化名字 + 它所有的出现。
+
+    ⚠️ 合并只做**确定性归一化**（全角/半角、大小写、空白、首尾标点），不做语义合并 ——
+    「星笺」与「STELLAR INK」是同一个东西，但错合的代价是一个说不清的知识条目，
+    要等 roadmap §14 第 2 步说的 ADMIN 审核流。**那条线是后续切片。**
+    """
+
+    name: Annotated[str, Field(min_length=1, description="代表写法（出现最多的那种）")]
+    normalized: Annotated[str, Field(min_length=1, description="归一化后的键")]
+    kind: Annotated[str, Field(description="person/concept/tool/org/place/other")]
+    count: Annotated[int, Field(ge=1, description="出现次数")]
+    post_ids: Annotated[list[int], Field(default_factory=list, description="出自哪几篇文章")]
+    mentions: Annotated[list[WikiEntityMentionView], Field(default_factory=list)]
 
 
 class WikiClaimsResult(ContractResponse):
     claims: Annotated[
         list[WikiClaimView], Field(default_factory=list, max_length=MAX_CLAIMS_PER_REQUEST)
+    ]
+    entities: Annotated[
+        list[WikiEntityView],
+        Field(default_factory=list, description="合并后的实体（按出现次数排）"),
     ]
     stats: WikiExtractionStatsView
     notes: Annotated[list[str], Field(default_factory=list, description="给人看的提示")]

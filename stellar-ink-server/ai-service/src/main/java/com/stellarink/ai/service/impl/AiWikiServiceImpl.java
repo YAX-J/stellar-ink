@@ -67,22 +67,36 @@ public class AiWikiServiceImpl implements AiWikiService {
             notes.add("⚠️ " + counters.rejected + " 条主张缺证据字段（postId/contentHash/text），"
                     + "已拒绝落库 —— 它们无法回到原文。");
         }
+        AiWikiClaimsResultDTO.AiWikiStatsDTO stats = result.getStats();
         log.info("Wiki 构建完成：抽取 kept={} 落库 inserted={} updated={} skipped={} model={}",
-                result.getStats() == null ? null : result.getStats().getKept(),
+                stats == null ? null : stats.getKept(),
                 counters.inserted, counters.updated, counters.skipped, result.getUsageModel());
 
+        // ⚠️ 用 `orZero` 而不是三元里的 `0`：`条件 ? 0 : 某个 Integer` 会触发**拆箱**，
+        // 字段缺省时直接 NPE（Python 少回一个字段就会炸 —— 跨版本升级时很容易发生）
         return AiWikiBuildVO.builder()
-                .posts(result.getStats() == null ? 0 : result.getStats().getPosts())
-                .proposed(result.getStats() == null ? 0 : result.getStats().getProposed())
-                .kept(result.getStats() == null ? 0 : result.getStats().getKept())
+                .posts(orZero(stats == null ? null : stats.getPosts()))
+                .proposed(orZero(stats == null ? null : stats.getProposed()))
+                .kept(orZero(stats == null ? null : stats.getKept()))
                 .inserted(counters.inserted)
                 .updated(counters.updated)
                 .skipped(counters.skipped)
-                .dropped(result.getStats() == null ? Map.of() : result.getStats().getDropped())
+                .dropped(stats == null ? Map.of() : orEmpty(stats.getDropped()))
+                .entities(orZero(stats == null ? null : stats.getEntities()))
+                .entityProposed(orZero(stats == null ? null : stats.getEntityProposed()))
+                .entityKept(orZero(stats == null ? null : stats.getEntityKept()))
                 .usageModel(result.getUsageModel())
                 .latencyMs(result.getLatencyMs())
                 .notes(notes)
                 .build();
+    }
+
+    private static int orZero(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private static Map<String, Integer> orEmpty(Map<String, Integer> value) {
+        return value == null ? Map.of() : value;
     }
 
     @Override

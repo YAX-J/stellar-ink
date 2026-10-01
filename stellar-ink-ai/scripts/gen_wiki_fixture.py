@@ -29,7 +29,8 @@ POST_ID = 7
 CHUNK_A = "每天写五百字，一年就是十八万字。写作的关键是把目标切到小得不可能失败。"
 CHUNK_B = "深夜写作时，先把手机放到另一个房间，再打开编辑器。"
 
-#: 桩模型：两条**引用为真**、一条**引用是编的**（后者必须被丢弃并计数）
+#: 桩模型：三条**引用为真**、一条**引用是编的**（后者必须被丢弃并计数）；
+#: 实体里有两条能站住、一条依附在**被丢弃的主张**上（必须一起被丢掉）
 STUB_OUTPUT = {
     "claims": [
         {
@@ -56,7 +57,16 @@ STUB_OUTPUT = {
             "quote": "先把手机放到另一个房间",
             "confidence": 0.6,
         },
-    ]
+    ],
+    "entities": [
+        # 出现在留下来的主张里 → 保留
+        {"name": "每天写五百字", "kind": "concept"},
+        # 书写差异（空白/全角）应当合并成同一个实体
+        {"name": "　每天写五百字 ", "kind": "concept"},
+        {"name": "手机干扰", "kind": "concept"},
+        # 只出现在**被丢弃**的那条主张里 → 必须一起被丢掉
+        {"name": "完全断网", "kind": "concept"},
+    ],
 }
 
 
@@ -94,9 +104,17 @@ def main() -> None:
             f"样例不合格：kept={result.stats.kept} dropped={result.stats.dropped}；"
             "它必须同时包含「留下的主张」与「被丢弃的主张」"
         )
+    if not result.entities:
+        raise SystemExit("样例里一个实体都没留下：契约测试就守不住实体那部分字段")
+    if "entityNotInText" not in result.stats.dropped:
+        raise SystemExit(
+            "样例里没有「依附在被丢弃主张上的实体」："
+            "那正是实体校验的关键路径（实体必须站在留下来的主张上）"
+        )
 
     payload = {
         "claims": [claim.to_dict() for claim in result.claims],
+        "entities": [cluster.to_dict() for cluster in result.entities],
         "stats": result.stats.to_dict(),
         "notes": list(result.notes),
         "usageModel": result.usage_model,
@@ -104,7 +122,10 @@ def main() -> None:
         "latencyMs": 0,
     }
     FIXTURE.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"已写入 {FIXTURE.name}：主张 {result.stats.kept} 条，丢弃 {result.stats.dropped}")
+    print(
+        f"已写入 {FIXTURE.name}：主张 {result.stats.kept} 条、实体 {result.stats.entities} 个，"
+        f"丢弃 {result.stats.dropped}"
+    )
 
 
 if __name__ == "__main__":

@@ -28,6 +28,13 @@ from typing import Any
 
 from app.providers.base import ChatModel
 from app.providers.models import ChatMessage, MessageRole
+from app.rag.entities import (
+    ENTITY_KINDS,
+    EntityCluster,
+    EntityMention,
+    collect_entities,
+    merge_entities,
+)
 from app.rag.pipeline import IndexedChunk
 
 logger = logging.getLogger(__name__)
@@ -52,13 +59,16 @@ DROP_DUPLICATE = "duplicate"
 #: JSON 示例**单独放一个常量**：直接写在提示词里的话，`str.format` 会把
 #: `{"claims": …}` 当成字段名去取值，报一个与真实原因毫不相干的 KeyError。
 CLAIM_JSON_EXAMPLE = (
-    '{"claims":[{"text":"原子主张","chunkIndex":0,"quote":"该段落里的原文片段","confidence":0.8}]}'
+    '{"claims":[{"text":"原子主张","chunkIndex":0,'
+    '"quote":"该段落里的原文片段","confidence":0.8}],'
+    '"entities":[{"name":"实体名","kind":"concept"}]}'
 )
 
 PROMPT = """你在为一篇中文技术博客建立**带证据的知识条目**。
 
 下面会给你一篇文章的若干段落，每段带一个段落序号（chunkIndex）。
-请抽取**原子主张**：一句话只说一件事，且必须能在某个段落里找到原文依据。
+请抽取**原子主张**（一句话只说一件事，且必须能在某个段落里找到原文依据），
+并顺带列出主张里出现的**实体**。
 
 只输出 JSON，不要解释：
 {example}
@@ -67,6 +77,7 @@ PROMPT = """你在为一篇中文技术博客建立**带证据的知识条目**�
 - `quote` **必须逐字来自**你标注的那个段落（可以截取片段，但不要改写、不要拼接两处）；
 - 每段最多 {max_per_chunk} 条，没有依据就不要写；
 - `confidence` 是 0 到 1 之间的小数，表示你对「这段原文确实支持这条主张」的把握；
+- `entities` 的 `name` **必须能在某条主张或它的原文片段里逐字找到**；`kind` 取值：{kinds}；
 - 宁可少写：写得少只是内容薄，编一条就要靠人去核对。
 
 文章：《{title}》
@@ -104,12 +115,16 @@ class WikiClaim:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionStats:
-    """抽取账：提出多少、留下多少、按什么原因丢了多少。"""
+    """抽取账：提出多少、留下多少、按什么原因丢了多少（主张与实体各一份）。"""
 
     proposed: int
     kept: int
     dropped: dict[str, int] = field(default_factory=dict)
     posts: int = 0
+    #: 实体：模型提出多少、通过证据校验多少、合并成几个实体簇
+    entity_proposed: int = 0
+    entity_kept: int = 0
+    entities: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,6 +132,9 @@ class ExtractionStats:
             "kept": self.kept,
             "dropped": dict(self.dropped),
             "posts": self.posts,
+            "entityProposed": self.entity_proposed,
+            "entityKept": self.entity_kept,
+            "entities": self.entities,
         }
 
 
@@ -124,6 +142,8 @@ class ExtractionStats:
 class ExtractionResult:
     claims: list[WikiClaim]
     stats: ExtractionStats
+    #: 合并后的实体（按出现次数排序）；实体必须依附在留下来的主张上
+    entities: list[EntityCluster] = field(default_factory=list)
     #: 给人看的提示（例如「有 N 条因引用找不到被丢弃」）
     notes: list[str] = field(default_factory=list)
     usage_model: str = ""
@@ -200,6 +220,10 @@ async def extract_claims_async(
     proposed = 0
     usage_model = ""
     seen: set[tuple[int, str]] = set()
+    #: 本文通过校验的主张（实体要依附在它们上面，见 entities.py 的口径）
+    kept_of_post: list[WikiClaim] = []
+    mentions: list[EntityMention] = []
+    entity_proposed = 0
 
     for post_id, post_chunks in grouped:
         response = await chat.chat(
@@ -207,7 +231,10 @@ async def extract_claims_async(
         )
         usage_model = response.usage.model or usage_model
         parsed = _parse_claims(response.text)
+        raw_entities = _parse_entities(response.text)
+        entity_proposed += len(raw_entities)
         proposed += len(parsed)
+        kept_of_post = []
         for item in parsed:
             claim, reason = _verify(item, post_id=post_id, post_chunks=post_chunks, seen=seen)
             if claim is None:
@@ -215,22 +242,36 @@ async def extract_claims_async(
                 continue
             seen.add((post_id, _normalize(claim.text)))
             claims.append(claim)
+            kept_of_post.append(claim)
 
+        # 实体在**本篇文章的主张都校验完之后**处理：它必须依附在留下来的主张上
+        mentions.extend(
+            collect_entities(raw_entities, post_id=post_id, claims=kept_of_post, dropped=dropped)
+        )
+
+    clusters = merge_entities(mentions)
     stats = ExtractionStats(
         proposed=proposed,
         kept=len(claims),
-        dropped=dict(dropped),
+        dropped={reason: count for reason, count in dropped.items() if count},
         posts=len(grouped),
+        entity_proposed=entity_proposed,
+        entity_kept=len(mentions),
+        entities=len(clusters),
     )
     logger.info(
-        "主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s",
+        "主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；实体 提出 %d、留下 %d、合并成 %d",
         stats.posts,
         stats.proposed,
         stats.kept,
         stats.dropped or "无",
+        stats.entity_proposed,
+        stats.entity_kept,
+        stats.entities,
     )
     return ExtractionResult(
         claims=claims,
+        entities=clusters,
         stats=stats,
         notes=_notes(stats),
         usage_model=usage_model,
@@ -274,6 +315,7 @@ def _prompt(post_chunks: list[IndexedChunk], max_claims_per_chunk: int) -> str:
         chunks="\n\n".join(blocks),
         max_per_chunk=max_claims_per_chunk,
         example=CLAIM_JSON_EXAMPLE,
+        kinds="/".join(ENTITY_KINDS),
     )
 
 
@@ -289,17 +331,34 @@ def _chunk_text(chunk: IndexedChunk) -> str:
     return chunk.text
 
 
-def _parse_claims(raw: str) -> list[dict[str, Any]]:
-    """解析模型输出。**解析失败返回空列表而不是抛错**：一次格式抖动不该炸掉整轮抽取。"""
+def _parse_entities(raw: str) -> list[dict[str, Any]]:
+    """解析模型输出里的实体列表（与主张同一次调用，不额外花钱）。"""
+    payload = _parse_payload(raw)
+    if payload is None:
+        return []
+    items = payload.get("entities")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _parse_payload(raw: str) -> dict[str, Any] | None:
+    """取出模型输出里的 JSON 对象。**解析失败返回 None 而不是抛错**：格式抖动不该炸掉整轮。"""
     text = (raw or "").strip()
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
-        return []
+        return None
     try:
         payload = json.loads(text[start : end + 1])
     except ValueError:
-        return []
-    if not isinstance(payload, dict):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_claims(raw: str) -> list[dict[str, Any]]:
+    """解析模型输出里的主张列表。**解析失败返回空列表而不是抛错**：一次格式抖动不该炸掉整轮抽取。"""
+    payload = _parse_payload(raw)
+    if payload is None:
         return []
     items = payload.get("claims")
     if not isinstance(items, list):

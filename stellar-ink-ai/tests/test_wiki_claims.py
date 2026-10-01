@@ -337,19 +337,31 @@ async def test_fake_provider_yields_no_claims_but_does_not_crash() -> None:
 def test_contract_fixture_matches_the_schema() -> None:
     """两侧共读的 fixture 必须能被契约模型解析 —— 否则 Java 侧读到的字段名与 Python 已经不同。
 
-    样例里**故意含一条被丢弃的主张**（`dropped.quoteNotFound`）：那个字段才是
-    「是模型不行还是校验挡掉了」的判据，空着就守不住它。
+    样例里**故意含两类被丢弃**（`quoteNotFound` 一条主张、`entityNotInText` 一个实体）：
+    那两个计数才是「模型不行 vs 证据校验挡下」的判据，空着就守不住它们。
     """
     from pathlib import Path
 
     from app.schemas.wiki import WikiClaimsResult
 
     fixture = Path(__file__).resolve().parent / "fixtures" / "wiki_claims_result.json"
-    parsed = WikiClaimsResult.model_validate_json(fixture.read_text(encoding="utf-8"))
+    raw = fixture.read_text(encoding="utf-8")
+    parsed = WikiClaimsResult.model_validate_json(raw)
 
     assert len(parsed.claims) == 3
     assert parsed.stats.proposed == 4 and parsed.stats.kept == 3
-    assert parsed.stats.dropped == {DROP_QUOTE_NOT_FOUND: 1}
+    assert parsed.stats.dropped == {DROP_QUOTE_NOT_FOUND: 1, "entityNotInText": 1}
     # 每条主张都要能回到**具体版本**的文章与段落
     assert all(claim.post_version and claim.content_hash for claim in parsed.claims)
     assert all(claim.quote in CHUNK_A or claim.quote in CHUNK_B for claim in parsed.claims)
+
+    # 实体：写法差异合并成一个，且每个提及都挂在一句具体主张上
+    assert parsed.stats.entity_proposed == 4
+    assert parsed.stats.entity_kept == 3, "两条写法重复的实体都留下了（合并前）"
+    assert parsed.stats.entities == 2, "合并后是两个实体"
+    assert [entity.name for entity in parsed.entities] == ["每天写五百字", "手机干扰"]
+    assert parsed.entities[0].count == 2, "写法差异（空白/全角）应当合并"
+    assert all(mention.claim_text for entity in parsed.entities for mention in entity.mentions), (
+        "每个实体提及都要挂在一条具体主张上 —— 那是它回到证据的那条线"
+    )
+    assert "完全断网" not in raw, "只出现在被丢弃主张里的实体必须一起被丢掉"
