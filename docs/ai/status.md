@@ -13,7 +13,7 @@
 并**各打通过一次真实调用** —— `uv run python scripts/provider_smoke.py` 3/3 通过
 （chat 702ms / embedding 2048 维 / rerank 首名正确）。真实嵌入下的检索数字也跑出来了，
 见 §3 的第二张表。**仍未实测的是 Qdrant 的真实往返**（§4.2）；`minDenseScore` 的标定被
-免费档限流挡在路上（§4.1）。
+免费档的**每日**额度挡住（§4.1，已定位为「用户侧动作」而不是代码缺陷）。
 
 ## 2. 逐阶段核验
 
@@ -133,11 +133,28 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
   ⚠️ 顺带修正一处文档口径：`scripts/calibrate_min_score.py` **扫的是 BM25 的 `min_score`
   （稀疏路），不是 `minDenseScore`** —— 它证明的是「拒答只能靠绝对下限」，不是 Dense 门限。
   Dense 门限目前没有现成工具，得先补一个「按真实分数分布扫 `minDenseScore`」的入口。
-- **免费档吞吐不够跑完标准五组**。OpenRouter 的 `:free` 模型在 30 题 × 多策略下会 429
-  （实测 `errorCount=30`）。两处放大因素：① 评测里**每个 dense 策略各自嵌入整库一遍**
-  （`prepare()` 的 `self._vectors` 是实例级的），五组里三组带 dense = 三次整库嵌入；
-  ② 逐题嵌入与重排没有退避重试。要跑真实评测，得先处理这两条（缓存嵌入 / 429 退避），
-  或者换一个不限额的嵌入与重排服务。
+  ⏳ **且它今天做不了**：要真实分布就必须真的嵌入 30 道题，而嵌入腿的免费档每日额度已用尽（见下条）。
+  先补工具、等额度恢复或换付费模型再跑标定 —— 不要拿伪向量的分布凑一个门限出来。
+- **免费档吞吐不够跑完标准五组** —— **已定位为「每日额度」而不是「瞬时限流」**（2026-10-01 实测）。
+  两处放大因素已修：① 评测里每个 dense 策略各自嵌入整库一遍 → 已加**嵌入缓存**
+  （`app/providers/embedding_cache.py`，在 `ProviderRegistry._build` 里包，整库只嵌一次）；
+  ② 逐题嵌入与重排没有退避重试 → 已加**退避重试**（`app/providers/retry.py`，只重试 `retryable` 的）。
+  但重跑标准五组时三个 dense 策略**仍然** 30/30 失败，直接探测上游才发现真因：
+  ```
+  HTTP 429  limit_source=openrouter_free_tier_daily
+  X-RateLimit-Limit: 50   X-RateLimit-Remaining: 0   X-RateLimit-Reset: 次日 UTC 零点
+  ```
+  **免费档是「每模型每日 50 次」**，退避几秒救不了；`Retry-After` 说 600 秒也没法在一个请求里等。
+  因此这一条**不是代码缺陷，是用户侧动作**：给这三条腿换付费/自建模型（上游原话是
+  「Add 10 credits to unlock 1000 free model requests per day」），或等次日重置后再跑。
+  已做的改进是**让它说出来**：新增 `ProviderQuotaExhaustedError`
+  （`retryable=False`，不重试；对外错误码仍是 `AI_RATE_LIMITED`，前端 429 文案不变），
+  消息里带「每日上限 + 重置时间 + 重试无用」。真实 smoke 输出：
+  ```
+  ✗ embedding  nvidia/llama-nemotron-embed-vl-1b-v2:free
+      上游额度已用尽（每日上限 50 次）（将于 10-02 08:00（本地时间）重置；重试无用 —— 请改用付费/自建模型，或等重置后再跑）
+  ```
+  在此之前这句话是「模型服务限流，请稍后重试」——**会让人白折腾一天**。
 - Qdrant 的真实往返仍未做（见 §4.2）。
 
 ⚠️ 配真实**推理**模型时一定要调大该角色的 `maxTokens`（建议 ≥2048）：

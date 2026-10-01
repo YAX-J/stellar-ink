@@ -29,6 +29,7 @@ from app.providers import (
     ProviderUnavailableError,
     UnsupportedCapabilityError,
 )
+from app.providers.retry import RetryPolicy
 
 CHAT_CONFIG = ProviderConfig(
     role="chat",
@@ -75,8 +76,18 @@ class _Recorder:
 def _provider(
     config: ProviderConfig, response: httpx.Response
 ) -> tuple[OpenAICompatibleProvider, _Recorder]:
+    """构造一个**关闭重试**的 provider。
+
+    这些用例断言的是「状态码 → 错误分类」与「请求体长什么样」；重试退避是另一件事，
+    由 `test_provider_retry.py` 专门测。不关掉的话，5 个失败态用例会各自真等 5.6 秒
+    （800ms + 1.6s + 3.2s），整个测试套件从 8 秒变成 35 秒 —— 而它们本来只想看一眼错误类型。
+    """
     recorder = _Recorder(response)
-    provider = OpenAICompatibleProvider(config, transport=httpx.MockTransport(recorder.handler))
+    provider = OpenAICompatibleProvider(
+        config,
+        transport=httpx.MockTransport(recorder.handler),
+        retry=RetryPolicy.disabled(),
+    )
     return provider, recorder
 
 
@@ -273,7 +284,10 @@ async def test_timeout_maps_to_retryable_timeout_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("too slow", request=request)
 
-    provider = OpenAICompatibleProvider(CHAT_CONFIG, transport=httpx.MockTransport(handler))
+    # 关掉重试：这里验的是「超时 → 哪一类错误」，不关掉就要真等 5.6 秒退避
+    provider = OpenAICompatibleProvider(
+        CHAT_CONFIG, transport=httpx.MockTransport(handler), retry=RetryPolicy.disabled()
+    )
 
     with pytest.raises(ProviderTimeoutError) as excinfo:
         await provider.chat([ChatMessage(MessageRole.USER, "hi")])
@@ -286,7 +300,9 @@ async def test_connection_failure_maps_to_unavailable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    provider = OpenAICompatibleProvider(CHAT_CONFIG, transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        CHAT_CONFIG, transport=httpx.MockTransport(handler), retry=RetryPolicy.disabled()
+    )
 
     with pytest.raises(ProviderUnavailableError):
         await provider.chat([ChatMessage(MessageRole.USER, "hi")])

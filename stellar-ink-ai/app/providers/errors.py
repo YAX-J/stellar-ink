@@ -56,6 +56,21 @@ class ProviderRateLimitError(ProviderError):
     retryable = True
 
 
+class ProviderQuotaExhaustedError(ProviderRateLimitError):
+    """**额度用尽**（例如免费档「50 次/日」）：退避重试毫无意义 —— 等的是次日重置。
+
+    与父类的区别只在 `retryable=False`，但它带来两个实际后果：
+    ① 重试策略不再白等（`should_retry` 直接读这个标志）；
+    ② 消息里会说清「什么时候重置、现在该做什么」，而不是让人以为「过一分钟再试就行」。
+
+    对外错误码**保持 `AI_RATE_LIMITED`**：前端已有 429 的专属文案
+    （`isRateLimited()` 认 status/code 双 429）与 Java 的错误映射，不为了内部细分去改契约。
+    """
+
+    code = "AI_RATE_LIMITED"
+    retryable = False
+
+
 class ProviderTimeoutError(ProviderError):
     """连接或读取超时：链路抖动或上游过载，可重试。"""
 

@@ -243,13 +243,18 @@ E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它�
 ⚠️ 这一刀放开了 ai-service 的 `RedisUtils`：**每个 `@WebMvcTest` 切片都要 `@MockBean` 它**，
 否则切片上下文起不来（新增需要 Redis 的组件时同样如此）。
 
-**E3-4 观测出口已交付（最小形态，2026-10-01）**：一个 traceId 看完整条链路 ——
-Python 侧进程内事件缓冲（检索 / 工具 / 模型，**只存结构不存内容**、有界）+
-Java 侧 `GET /ai/admin/trace/{traceId}` 合并调用账与事件，**Python 不可用时仍回账**。
-契约由两侧共读的 `trace_replay_response.json` 守住（`AiContractTest` + `test_trace_contract.py`）。
+**B/C 收口第一刀已交付（2026-10-01）**：`app/providers/retry.py`（退避重试：只重试 `retryable` 的，
+次数与等待都有上限；上游给 `Retry-After` 就听它的，仍封顶）+ `app/providers/embedding_cache.py`
+（嵌入缓存：键含模型指纹、有界 LRU、失败不缓存；在 `ProviderRegistry._build` 里包，
+整库嵌入从「每个管道一遍」降到「全局一遍」）+ **额度用尽与瞬时限流分开**
+（`ProviderQuotaExhaustedError`：不重试，消息里带「每日上限 + 重置时间 + 重试无用」）。
 
-**E3 四刀到这里全部收口。** 下一步按顺序是 **B/C 收口**（嵌入缓存 + 429 退避、`minDenseScore` 标定、
-Qdrant 冒烟若可达）→ **E2 前端入口** → **E4 GraphRAG / LLM Wiki**。
+⚠️ **重跑标准五组仍未通过，但真因已查清**：免费档是**每模型每日 50 次**
+（`limit_source=openrouter_free_tier_daily`，`Remaining: 0`，次日 UTC 零点重置）。
+这不靠代码解决 —— 需要给 embedding / rerank 换付费或自建模型（或等重置）。
+**`minDenseScore` 标定必须先有真实分数分布，同样等这条腿可用再做**（不要拿伪向量凑门限）。
+下一步按顺序：**E2 只读 Agent 前端入口**（离线可做）→ E4 GraphRAG / LLM Wiki；
+Qdrant 冒烟只在隧道可达时做。
 ⚠️ **待你拍板**：是否部署 OpenTelemetry / Langfuse（决定跨副本回放与长期留存怎么做）；E4 的范围。
 
 ```bash

@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from app.providers.base import ChatModel, EmbeddingModel, RerankModel
+from app.providers.embedding_cache import CachingEmbeddingModel
 from app.providers.errors import ProviderError, UnsupportedCapabilityError
 from app.providers.fake import FakeProvider
 from app.providers.models import ProviderConfig
@@ -94,7 +95,13 @@ class ProviderRegistry:
         if config.provider == "fake":
             return FakeProvider(config)
         if config.provider == "openai_compatible":
-            return OpenAICompatibleProvider(config)
+            provider = OpenAICompatibleProvider(config)
+            # 嵌入能力包一层缓存：整库嵌入从「每个管道一遍」降到「全局一遍」。
+            # 包在**这里**而不是各端点：注册表是模型的唯一出口，包在这儿
+            # 问答 / 评测 / Agent / MCP 全部自动受益，也不会有人漏包。
+            if config.capabilities.embedding:
+                return CachingEmbeddingModel(provider)
+            return provider
         raise ProviderError(
             f"未知的 provider 实现：{config.provider}",
             detail="当前支持 openai_compatible 与 fake",
