@@ -620,11 +620,14 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：E1 / E2 / E3 与 B/C 收口都已落地
-  （E3 四刀：调用账、配额与并发、MCP 工具服务、观测出口；E2 只读 Agent 已接前端）——
-  **剩下的只有 E4**。E4 **已定范围：先做 LLM Wiki**（从带证据的主张抽取起步），GraphRAG 排后面。
+- **未做的事（别当成已做）**：E1 / E2 / E3 / B-C 收口与 **E4（LLM Wiki 全十一段：带证据抽取 →
+  落库 → 读者侧条目/实体/主题 → 增量失效）都已落地**。**现在只剩 E5 GraphRAG**：
+  E5-1 的图检索核心（Local/Global Search）已落地，E5-2 要把它接成评测策略、
+  与 dense/sparse/hybrid 在同一批跨文章问题上比 —— **证明收益才保留**，
+  不因为它叫 GraphRAG 就默认更好（这一条是 fast-track-plan 的约定，也是它唯一的上线条件）。
   两件环境动作**由用户处理**（换付费/自建 embedding 与 rerank、开 Qdrant 隧道），
-  之后跑 `scripts/calibrate_dense_score.py` 与 `scripts/qdrant_smoke.py` 收口。
+  之后跑 `scripts/calibrate_dense_score.py` 与 `scripts/qdrant_smoke.py` 收口；
+  **E5-2 的对比同样要在这两件做完之后才有意义**（免费档每日 50 次连一轮评测都跑不完）。
   **观测出口的接受形态就是进程内回放**（已拍板不部署 OTel/Langfuse；
   跨副本查不到时返回 `found=false` 是**已知且被接受的限制**，不是缺陷，别再当成待办）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
