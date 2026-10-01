@@ -64,6 +64,116 @@ DEFAULT_STRATEGIES: tuple[EvalStrategySpec, ...] = (
 
 _FIXTURE_RELATIVE = Path("tests") / "fixtures" / "eval"
 
+#: 判定「图检索有没有收益」时看的指标。主指标只选一个，是为了让结论**只有一种读法** ——
+#: 从一堆指标里挑最好看的那个来宣布胜利，是这类对比最常见的自欺。
+GRAPH_PRIMARY_METRIC = "recall@1"
+GRAPH_SECONDARY_METRIC = "ndcg@5"
+
+#: 收益的最小幅度：主指标要**高出这么多**才算数。
+#: 为什么不是「高一点点就算」：30 道题的黄金集上，一道题就是 3.3 个百分点，
+#: 而调度顺序、上游抖动都能造成一两题的差别 —— 阈值定在噪声之上，结论才站得住。
+GRAPH_MARGIN = 0.02
+
+
+def graph_verdict(
+    per_strategy: dict[str, dict[str, Any]],
+    graph_keys: Sequence[str],
+    *,
+    trustworthy: bool,
+    margin: float = GRAPH_MARGIN,
+) -> dict[str, Any]:
+    """判定图检索是否**值得保留**（E5-2/E5-3 的结论规则，写在代码里而不是靠人眼读表）。
+
+    规则（故意简单，好复述）：
+
+    1. 基线 = **非图策略里主指标最好的那一行**（不是随便挑一行 —— 拿弱基线比等于自欺）；
+    2. 图检索里最好的一行，主指标要高出基线 `margin` 才算**有收益**；
+    3. 任一侧有 `errorCount`（限流/超时被记成拒答）→ **inconclusive**：
+       那种行的数字不是检索质量的反映（实测踩过：免费档 429 让 `hybrid+rerank` 整行 recall 0）；
+    4. `trustworthy=False`（离线 Fake 模型）→ **inconclusive**：那一刻其它策略用的是伪向量，
+       比出来的差异没有含义。
+
+    :returns `{verdict, baseline, bestGraph, delta, secondaryDelta, reason}`；
+        `verdict` ∈ `beneficial`（保留并接读者侧）/ `no-benefit`（**按约定删掉，不留半成品**）
+        / `inconclusive`（现在下不了结论，原因里说明缺什么）
+    """
+    if not graph_keys:
+        return {
+            "verdict": "inconclusive",
+            "baseline": None,
+            "bestGraph": None,
+            "delta": None,
+            "reason": "这次没有图检索策略参与对比。",
+        }
+
+    graph_set = set(graph_keys)
+
+    def value(key: str, metric: str) -> float:
+        raw = per_strategy.get(key, {}).get(metric)
+        return float(raw) if isinstance(raw, (int, float)) else 0.0
+
+    baselines = [key for key in per_strategy if key not in graph_set]
+    if not baselines:
+        return {
+            "verdict": "inconclusive",
+            "baseline": None,
+            "bestGraph": None,
+            "delta": None,
+            "reason": "只有图检索一行，没有可比对象。",
+        }
+    if not trustworthy:
+        return {
+            "verdict": "inconclusive",
+            "baseline": None,
+            "bestGraph": None,
+            "delta": None,
+            "reason": "本轮用的是离线 Fake 模型（其它策略是伪向量），数字不能用来判定收益。",
+        }
+    dirty = {
+        key: metrics.get("errorCount")
+        for key, metrics in per_strategy.items()
+        if metrics.get("errorCount")
+    }
+    if dirty:
+        return {
+            "verdict": "inconclusive",
+            "baseline": None,
+            "bestGraph": None,
+            "delta": None,
+            "reason": f"有行含上游失败（被记成拒答），这些数字不可用：{dirty}。请稍后重跑。",
+        }
+
+    baseline = max(baselines, key=lambda key: value(key, GRAPH_PRIMARY_METRIC))
+    best_graph = max(graph_keys, key=lambda key: value(key, GRAPH_PRIMARY_METRIC))
+    delta = round(
+        value(best_graph, GRAPH_PRIMARY_METRIC) - value(baseline, GRAPH_PRIMARY_METRIC), 4
+    )
+    secondary_delta = round(
+        value(best_graph, GRAPH_SECONDARY_METRIC) - value(baseline, GRAPH_SECONDARY_METRIC), 4
+    )
+
+    if delta > margin:
+        verdict = "beneficial"
+        reason = (
+            f"图检索在 {GRAPH_PRIMARY_METRIC} 上比最好的基线（{baseline}）高 {delta}"
+            f"（阈值 {margin}）—— 收益成立，可以接读者侧。"
+        )
+    else:
+        verdict = "no-benefit"
+        reason = (
+            f"图检索在 {GRAPH_PRIMARY_METRIC} 上对最好基线（{baseline}）的差距是 {delta}"
+            f"（需要 >{margin}）—— **按约定删掉这条路径，不留半成品**："
+            "一个不比现有检索更好、却多一层维护成本的组件，留着只会让下次判断更难。"
+        )
+    return {
+        "verdict": verdict,
+        "baseline": baseline,
+        "bestGraph": best_graph,
+        "delta": delta,
+        "secondaryDelta": secondary_delta,
+        "reason": reason,
+    }
+
 
 class _NoGraphRetriever:
     """开了图检索却**没带图**时的替身：如实拒答，并说清「这次没图」。

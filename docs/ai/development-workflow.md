@@ -264,19 +264,30 @@ dense-only 扫真实分数分布，输出「仍答对 / 挡住无答案」并给
 顺带修正两处会骗人的地方：界面不再承诺服务端不会兑现的步数（Java 用 `min(请求值, 4)` 夹住），
 「停止」现在真的中止请求（`api/client.js` 的 `request()` 接受调用方的 `signal`）。
 
-**E4-2 / E4-3 已交付（2026-10-01）**：`ai_wiki_claim` 表（幂等锚点 = 文章 + 段落哈希 + 主张文本）+
-`POST /ai/admin/wiki/build`（ADMIN，落库的「新增/更新/未变动」分开计数，走调用账 `scene=wiki`）+
-读者侧公开读；阅读页「知识条目」区块（主张与**原文片段并排**，「在正文中定位」**按文本找**而不是
-按块下标找；没有条目时整块不出现，取数失败静默降级）。前端自检 `scripts/wiki-selfcheck.mjs`（20 条）。
+**E4 已全部交付（2026-10-01/02，共十一段）**：主张抽取（带证据校验）→ 落库（幂等锚点 + 三种结果
+分开计数）→ 读者侧条目 → 实体与别名 → 共现关系 → 知识图落库 → 读者侧实体 → 主题社区发现 →
+主题落库与读取 → 阅读页主题展示 → **增量失效**（`current`/`stale`/`orphan` 三态分开报、
+`postIds` 定向重建、**盘点不自动重建**）。逐段细节见 `docs/ai/status.md` 的状态表。
 
-**E4-4 实体抽取与别名合并已交付（2026-10-01）**：`app/rag/entities.py` —— 实体必须能在
-**留下来的主张**或它的原文片段里逐字找到（只出现在被丢弃主张里的实体跟着一起消失）；
-合并只做确定性归一化（全角/半角、大小写、空白、首尾标点），**语义合并留给 ADMIN 审核流**；
-与主张在**同一次**模型调用里抽取，不额外花钱。
+**E5 GraphRAG 进行中**：E5-1 图检索核心（Local/Global）与 E5-2 接成评测策略都已落地
+（`app/rag/graph.py` + `GraphRetriever`，图**直接从 `/wiki/claims` 返回体装**）。
+**E5-3 的收益结论需要真实额度**，一条命令拿结论：
 
-**下一刀 E4-5：实体落库与关系**（`ai_wiki_entity` / `ai_wiki_relation` + 低置信合并项的审核流），
-再往后是主题社区发现 → 页面生成 → 增量失效，最后才是 GraphRAG。
-⚠️ 用户侧的环境动作仍挂着：建 `13_ai_wiki.sql`、换付费/自建 embedding 与 rerank、开 Qdrant 隧道。
+```bash
+cd stellar-ink-ai
+# 1) 先拿一份知识图（一次抽取的返回体）：ADMIN 跑一次构建，把 data 存成文件
+#    或在离线脚本里用同一个 stub 生成；两份都可以，脚本只认字段名
+# 2) 真实模型下与普通 RAG 对比（含图检索那一臂）
+uv run python scripts/compare_strategies.py --provider panel --graph /path/to/wiki_result.json
+```
+
+脚本会打印对比表 + 一行**判定**（规则写在 `app/rag/eval_service.py::graph_verdict`，不由人眼读表）：
+`beneficial` = 图检索主指标（recall@1）比**最强基线**高出 2 个百分点以上 → 保留并接读者侧；
+`no-benefit` = **按约定删掉这条路径，不留半成品**；`inconclusive` = 有上游失败或用的是离线 Fake
+模型 —— 这两种情况下的数字不是检索质量的反映，**不下结论**。
+
+⚠️ 用户侧的环境动作仍挂着：建 `13_ai_wiki.sql` / `14_ai_wiki_entity.sql` / `15_ai_wiki_topic.sql`、
+换付费/自建 embedding 与 rerank、开 Qdrant 隧道。前两件不做，阅读页的 Wiki 三块会静默不显示。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

@@ -48,7 +48,7 @@
 | E4-11 增量失效 | ✅ **E4 收口** | `app/rag/staleness.py`：三种状态**分开报**（`current` 不用动 / `stale` 内容变了→重建 / `orphan` 段落没了→清理）；判定**只看段落哈希**、哈希缺失按 current（否则会逼人做全量重建）。定向重建：`POST /wiki/claims` 的 `postIds`（「就要这几篇」，与 `maxPosts` 的「按顺序取几篇」是**两个意图**）；`GET /ai/admin/wiki/stale`（ADMIN）**只报告不重建** | Python `tests/test_wiki_staleness.py`（8 条）+ `tests/test_wiki_api.py`（+5 条：定向只抽点名文章、超长列表 422、盘点三态分开、空列表说「不用重建」）+ Java `AiWikiServiceImplTest`（+2）+ `AiWikiControllerTest`（+3：读者 403、报告可执行、定向去重保序、封顶） |
 | E5-1 GraphRAG 图检索核心 | ✅ 前半（Python） | `app/rag/graph.py`：**Local Search**（问题里命中的实体 → 沿共现边一跳 → 收集这一片的主张与原文）+ **Global Search**（按主题聚合，回答「覆盖了什么」）。每条结果带 `via`（凭什么捞出来）；**没命中就说没落点并回退向量检索**，不拿弱相关的边充数 | `tests/test_rag_graph.py`（11 条：种子命中、一跳不跨社区、最长实体优先、没命中不是错误、阈值过滤、截断不静默、结果可复现、全局按关键词命中、主题未知如实说） |
 | E5-2 GraphRAG 接成评测策略 | ✅ 接线（**数字待真实额度**） | `GraphRetriever`（`Retriever` 协议）+ `graph_from_payload`（**直接从 `/wiki/claims` 返回体装图**，不造第二份格式）+ 评测请求的 `enableGraph` / `graph`：没带图时如实回一条「本次没带图」的行，而不是少一列或显示成 0 分 | `tests/test_rag_graph.py`（+6：检索器按图顺序出文章、没落点 refused、top_k、全局无主题如实说、返回体装图、缺字段不炸）+ 两侧契约（fixture 加 `enableGraph`/`graph`，Java DTO 同步） |
-| E5-3 GraphRAG 的收益结论 | ⏳ **等用户环境** | 在真实额度下与 dense/sparse/hybrid 比；结论只能是「保留并接读者侧」或「删掉，不留半成品」 | — |
+| E5-3 GraphRAG 的收益结论 | ⏳ **等用户环境** | 在真实额度下与 dense/sparse/hybrid 比；结论只能是「保留并接读者侧」或「删掉，不留半成品」。**判定规则已落地为代码**：`graph_verdict`（基线取最强非图行、阈值 2 个百分点、有上游失败或用 Fake 时判 inconclusive）+ `compare_strategies.py --graph` 一条命令打印结论 | `tests/test_graph_verdict.py`（7 条：有收益/无收益要写成动作/阈值内不算赢/上游失败不下结论/Fake 不下结论/缺图臂/缺基线各如实说） |
 
 ## 3. 一次完整核验的命令与结果
 
