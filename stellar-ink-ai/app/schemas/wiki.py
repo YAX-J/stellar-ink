@@ -53,6 +53,29 @@ class WikiExtractionStatsView(ContractResponse):
     entity_proposed: Annotated[int, Field(ge=0, description="模型提出的实体次数")]
     entity_kept: Annotated[int, Field(ge=0, description="通过证据校验的实体次数")]
     entities: Annotated[int, Field(ge=0, description="合并后的实体个数")]
+    relations: Annotated[int, Field(ge=0, description="实体之间的共现关系条数")]
+
+
+class WikiRelationEvidenceView(ContractResponse):
+    """一条共现关系是从哪句主张里看出来的 —— 边也要能回到原文。"""
+
+    post_id: Annotated[int, Field(ge=1)]
+    chunk_index: Annotated[int, Field(ge=0)]
+    claim_text: Annotated[str, Field(min_length=1)]
+
+
+class WikiRelationView(ContractResponse):
+    """实体之间的**共现**关系（同一句主张里同时出现）。
+
+    ⚠️ 它**不是**语义关系（因果 / 属于 / 依赖）：那些需要模型抽取 + 人工审核。
+    如实叫「共现」，`weight` 是「被一起谈论的主张条数」。
+    无向边只有一种表示（`source < target`），否则 (A,B) 与 (B,A) 会各存一行、权重看着只有一半。
+    """
+
+    source: Annotated[str, Field(min_length=1, description="规范化名字（字典序较小的一端）")]
+    target: Annotated[str, Field(min_length=1)]
+    weight: Annotated[int, Field(ge=1, description="共同出现的主张条数")]
+    evidence: Annotated[list[WikiRelationEvidenceView], Field(default_factory=list)]
 
 
 class WikiEntityMentionView(ContractResponse):
@@ -87,6 +110,10 @@ class WikiClaimsResult(ContractResponse):
     entities: Annotated[
         list[WikiEntityView],
         Field(default_factory=list, description="合并后的实体（按出现次数排）"),
+    ]
+    relations: Annotated[
+        list[WikiRelationView],
+        Field(default_factory=list, description="实体共现关系（边也带证据）"),
     ]
     stats: WikiExtractionStatsView
     notes: Annotated[list[str], Field(default_factory=list, description="给人看的提示")]

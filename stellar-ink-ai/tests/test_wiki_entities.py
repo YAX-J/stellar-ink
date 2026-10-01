@@ -22,6 +22,7 @@ from app.rag.entities import (
     entity_kind,
     merge_entities,
     normalize_entity,
+    relation_edges,
 )
 from app.rag.wiki import WikiClaim
 
@@ -173,3 +174,93 @@ def test_spelling_variants_merge_into_one_cluster(spelling: str) -> None:
     )
 
     assert len(merge_entities(mentions)) == 1
+
+
+# ------------------------------------------------------------------ 共现关系
+
+
+def _two_entities_in_one_claim() -> list:
+    """一句主张里同时出现两个实体 —— 共现关系的来源。"""
+    claims = [claim("每天写五百字可以累积成十八万字", "每天写五百字，一年就是十八万字")]
+    return collect_entities(
+        [{"name": "每天写五百字", "kind": "concept"}, {"name": "十八万字", "kind": "concept"}],
+        post_id=7,
+        claims=claims,
+        dropped=Counter(),
+    )
+
+
+def test_co_occurrence_creates_one_undirected_edge() -> None:
+    relations = relation_edges(_two_entities_in_one_claim())
+
+    assert len(relations) == 1
+    edge = relations[0]
+    # 无向边只有一种表示：否则 (A,B) 与 (B,A) 各存一行，权重看起来只有实际的一半
+    assert edge.source < edge.target
+    assert edge.weight == 1
+
+
+def test_edge_carries_its_evidence() -> None:
+    """边必须能回到原文：哪篇文章的哪句话同时提到了这两个实体。"""
+    edge = relation_edges(_two_entities_in_one_claim())[0]
+
+    assert edge.evidence == [(7, 0, "每天写五百字可以累积成十八万字")]
+    assert edge.to_dict()["evidence"][0]["claimText"] == "每天写五百字可以累积成十八万字"
+
+
+def test_entities_in_different_claims_are_not_connected() -> None:
+    """没在同一句里出现过就不该连边 —— 否则图会连成一片，等于什么都没说。"""
+    mentions = collect_entities(
+        [{"name": "甲概念", "kind": "concept"}],
+        post_id=7,
+        claims=[claim("甲概念很重要", "甲概念很重要")],
+        dropped=Counter(),
+    ) + collect_entities(
+        [{"name": "乙概念", "kind": "concept"}],
+        post_id=8,
+        claims=[claim("乙概念也很重要", "乙概念也很重要", post_id=8)],
+        dropped=Counter(),
+    )
+
+    assert relation_edges(mentions) == []
+
+
+def test_repeated_co_occurrence_raises_weight() -> None:
+    """同两个实体在两句话里都出现 → 权重 2、证据两条（「被一起谈论的程度」）。"""
+    claim_a = claim("每天写五百字可以累积成十八万字", "每天写五百字")
+    # ⚠️ 第二句必须**同时**含这两个实体，否则测的就不是共现（第一版这里漏了一个字，
+    # 于是用例红了 —— 红的是测试数据，不是实现）
+    claim_b = claim("十八万字来自每天写五百字的复利", "十八万字", chunk_index=1)
+    separate = collect_entities(
+        [{"name": "每天写五百字", "kind": "concept"}],
+        post_id=7,
+        claims=[claim_a],
+        dropped=Counter(),
+    ) + collect_entities(
+        [{"name": "十八万字", "kind": "concept"}],
+        post_id=7,
+        claims=[claim_b],
+        dropped=Counter(),
+    )
+
+    # 两个实体分别在两条主张里各出现一次 —— 没有共现，就不该连边
+    assert relation_edges(separate) == []
+
+    both = collect_entities(
+        [{"name": "每天写五百字", "kind": "concept"}, {"name": "十八万字", "kind": "concept"}],
+        post_id=7,
+        claims=[claim_a, claim_b],
+        dropped=Counter(),
+    )
+    edges = relation_edges(both)
+    assert len(edges) == 1, "两句里都同时出现，仍然只有一条边"
+    assert edges[0].weight == 2, "权重是共同出现的主张条数"
+    assert len(edges[0].evidence) == 2
+
+
+def test_relation_order_is_deterministic() -> None:
+    mentions = _two_entities_in_one_claim()
+    first = [(r.source, r.target, r.weight) for r in relation_edges(mentions)]
+    second = [(r.source, r.target, r.weight) for r in relation_edges(list(reversed(mentions)))]
+
+    assert first == second, "输入顺序不该影响输出顺序"

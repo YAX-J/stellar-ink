@@ -34,6 +34,9 @@ public class AiWikiClaimsResultDTO implements Serializable {
     /** 合并后的实体（E4-4）：按出现次数排序，每个提及都能回到某条主张 */
     private List<AiWikiEntityDTO> entities;
 
+    /** 实体之间的共现关系（E4-5）：每条边都带证据 */
+    private List<AiWikiRelationDTO> relations;
+
     private AiWikiStatsDTO stats;
 
     /** 给人看的提示（例如「N 条因引用找不到原文依据被丢弃」） */
@@ -67,5 +70,8 @@ public class AiWikiClaimsResultDTO implements Serializable {
         private Integer entityKept;
 
         private Integer entities;
+
+        /** 共现关系条数（E4-5） */
+        private Integer relations;
     }
 }

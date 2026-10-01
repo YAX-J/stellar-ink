@@ -128,22 +128,25 @@ def collect_entities(
         if len(normalized) > MAX_ENTITY_CHARS:
             dropped[DROP_ENTITY_TOO_LONG] += 1
             continue
-        evidence = _find_evidence(normalized, claims)
-        if evidence is None:
+        evidences = _find_evidences(normalized, claims)
+        if not evidences:
             # **这就是「实体也要有证据」的实现**：不在任何一条留下来的主张里 → 丢弃
             dropped[DROP_ENTITY_NOT_IN_TEXT] += 1
             continue
-        claim_text, chunk_index = evidence
-        kept.append(
-            EntityMention(
-                name=name,
-                normalized=normalized,
-                kind=entity_kind(item.get("kind")),
-                post_id=post_id,
-                chunk_index=chunk_index,
-                claim_text=claim_text,
+        # **每条匹配到的主张各记一次提及**（而不是只记第一条）：
+        # 只记第一条会把「它还出现在哪几句」丢掉，而共现权重正是按「同处一句」算的 ——
+        # 丢了这个信息，边权会系统性偏小（实测：两句话里的共现被算成 1）
+        for claim_text, chunk_index in evidences:
+            kept.append(
+                EntityMention(
+                    name=name,
+                    normalized=normalized,
+                    kind=entity_kind(item.get("kind")),
+                    post_id=post_id,
+                    chunk_index=chunk_index,
+                    claim_text=claim_text,
+                )
             )
-        )
     return kept
 
 
@@ -175,13 +178,82 @@ def merge_entities(mentions: list[EntityMention]) -> list[EntityCluster]:
     return sorted(clusters, key=lambda cluster: (-cluster.count, cluster.normalized))
 
 
-def _find_evidence(normalized: str, claims: list[Any]) -> tuple[str, int] | None:
-    """在前面的主张里找这条实体的依据：返回 `(主张文本, 段落序号)`。"""
+def relation_edges(mentions: list[EntityMention]) -> list[EntityRelation]:
+    """从实体的出现位置推出**共现关系**：同一句主张里同时出现的两个实体连一条边。
+
+    为什么第一版用共现而不是「让模型抽关系」：
+    - 它是**可核对**的 —— 每条边都带着「哪几篇文章的哪几句话同时提到了它们」，
+      点开就是原文；模型抽的关系同样需要证据，而证据最终还是回到「它们是否同处一句」；
+    - 它**不额外花钱**（不需要再一次模型调用），也不会引入一批无法验证的语义标签；
+    - 边权是「共同出现的主张条数」，语义清楚：它衡量的是「被一起谈论的程度」。
+
+    ⚠️ 它**不是**语义关系（因果、属于、依赖）：那些需要模型抽取 + 人工审核。
+    这里如实叫「共现」，别在界面上把它说成「知识图谱中的因果关系」。
+
+    无向边只有一种表示：两端按规范化名字排序，`source < target` —— 否则 (A,B) 与 (B,A)
+    会各存一行，权重看起来只有实际的一半。
+    """
+    # 按「哪条主张」聚合：(post_id, chunk_index, claim_text) 唯一确定一条主张
+    by_claim: dict[tuple[int, int, str], set[str]] = {}
+    for mention in mentions:
+        key = (mention.post_id, mention.chunk_index, mention.claim_text)
+        by_claim.setdefault(key, set()).add(mention.normalized)
+
+    weights: Counter[tuple[str, str]] = Counter()
+    evidence: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
+    for (post_id, chunk_index, claim_text), entities in by_claim.items():
+        pair_names = sorted(entities)
+        for index, source in enumerate(pair_names):
+            for target in pair_names[index + 1 :]:
+                edge = (source, target)
+                weights[edge] += 1
+                evidence.setdefault(edge, []).append((post_id, chunk_index, claim_text))
+
+    relations = [
+        EntityRelation(
+            source=source,
+            target=target,
+            weight=weight,
+            evidence=sorted(evidence[(source, target)]),
+        )
+        for (source, target), weight in weights.items()
+    ]
+    return sorted(relations, key=lambda rel: (-rel.weight, rel.source, rel.target))
+
+
+@dataclass(frozen=True, slots=True)
+class EntityRelation:
+    """一条共现关系（无向：`source < target`，两端都是规范化名字）。"""
+
+    source: str
+    target: str
+    weight: int
+    #: `(post_id, chunk_index, claim_text)`：这条边是从哪几条主张里看出来的
+    evidence: list[tuple[int, int, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "target": self.target,
+            "weight": self.weight,
+            "evidence": [
+                {"postId": post_id, "chunkIndex": chunk_index, "claimText": claim_text}
+                for post_id, chunk_index, claim_text in self.evidence
+            ],
+        }
+
+
+def _find_evidences(normalized: str, claims: list[Any]) -> list[tuple[str, int]]:
+    """找出这条实体出现在**哪些**留下来的主张里（可能不止一条）。
+
+    返回全部而不是第一条：共现关系是按「同处一句」计算的，只留第一条会让边权系统性偏小。
+    """
+    found: list[tuple[str, int]] = []
     for claim in claims:
         haystacks = (
             normalize_entity(getattr(claim, "text", "")),
             normalize_entity(getattr(claim, "quote", "")),
         )
         if any(normalized in haystack for haystack in haystacks):
-            return str(getattr(claim, "text", "")), int(getattr(claim, "chunk_index", 0))
-    return None
+            found.append((str(getattr(claim, "text", "")), int(getattr(claim, "chunk_index", 0))))
+    return found

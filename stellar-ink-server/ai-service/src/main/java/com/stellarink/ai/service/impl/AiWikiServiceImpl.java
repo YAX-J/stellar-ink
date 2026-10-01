@@ -85,6 +85,7 @@ public class AiWikiServiceImpl implements AiWikiService {
                 .entities(orZero(stats == null ? null : stats.getEntities()))
                 .entityProposed(orZero(stats == null ? null : stats.getEntityProposed()))
                 .entityKept(orZero(stats == null ? null : stats.getEntityKept()))
+                .relations(orZero(stats == null ? null : stats.getRelations()))
                 .usageModel(result.getUsageModel())
                 .latencyMs(result.getLatencyMs())
                 .notes(notes)

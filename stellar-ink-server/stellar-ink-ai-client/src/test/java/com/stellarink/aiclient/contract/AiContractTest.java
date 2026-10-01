@@ -12,6 +12,7 @@ import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
+import com.stellarink.aiclient.dto.AiWikiRelationDTO;
 import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
@@ -389,10 +390,10 @@ class AiContractTest {
         assertTrue(result.getNotes().stream().anyMatch(note -> note.contains("引用找不到原文依据")));
 
         // 实体（E4-4）：写法差异合并成一个，且每个提及都能回到某条主张
-        assertEquals(4, result.getStats().getEntityProposed());
-        assertEquals(3, result.getStats().getEntityKept());
-        assertEquals(2, result.getStats().getEntities());
-        assertEquals(2, result.getEntities().size());
+        assertEquals(5, result.getStats().getEntityProposed());
+        assertEquals(4, result.getStats().getEntityKept());
+        assertEquals(3, result.getStats().getEntities());
+        assertEquals(3, result.getEntities().size());
         assertEquals("每天写五百字", result.getEntities().get(0).getName());
         assertEquals(2, result.getEntities().get(0).getCount(), "空白/全角差异应当合并");
         assertEquals(List.of(7L), result.getEntities().get(0).getPostIds());
@@ -402,6 +403,19 @@ class AiContractTest {
                         .allMatch(mention -> mention.getClaimText() != null
                                 && !mention.getClaimText().isEmpty()),
                 "每个实体提及都要挂在一条具体主张上 —— 那是它回到证据的那条线");
+
+        // 共现关系（E4-5）：无向边只有一种表示，且**边也带证据**
+        assertEquals(1, result.getStats().getRelations());
+        assertEquals(1, result.getRelations().size());
+        AiWikiRelationDTO relation = result.getRelations().get(0);
+        assertTrue(
+                relation.getSource().compareTo(relation.getTarget()) < 0,
+                "无向边按字典序存，否则 (A,B)/(B,A) 会各存一行、权重看着只有一半");
+        assertEquals(1, relation.getWeight());
+        assertFalse(relation.getEvidence().isEmpty(), "边必须能回到原文");
+        assertEquals(
+                "每天写五百字，一年可以累积十八万字",
+                relation.getEvidence().get(0).getClaimText());
     }
 
     @Test
