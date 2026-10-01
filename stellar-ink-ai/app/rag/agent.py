@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
 
+from app.core.trace import record_event
 from app.providers.base import ChatModel
 from app.providers.models import ChatMessage, MessageRole
 from app.schemas.common import Citation, Role
@@ -309,10 +310,20 @@ class Agent:
 
                 step.tool = spec.name
                 step.arguments = decision.arguments
+                tool_started = time.perf_counter()
                 result = await spec.handler(decision.arguments)
                 step.label = result.label
                 steps.append(step)
                 citations = _merge_citations(citations, result.citations)
+                record_event(
+                    "tool",
+                    tool=spec.name,
+                    label=result.label,
+                    citations=len(result.citations),
+                    latencyMs=int((time.perf_counter() - tool_started) * 1000),
+                    # 参数只记**键名**不记值：值里可能是作者的草稿或问题原文
+                    argumentKeys=sorted(decision.arguments),
+                )
 
                 # 先算观察预算再计一次工具调用：**没拿到可进提示词的观察就不算花掉了调用额度**。
                 # 反过来写会出现「第三次调用只得到一个空观察，却已经计进 tool_calls」——

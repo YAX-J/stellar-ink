@@ -61,7 +61,8 @@ E. 扩展（按需）
         Redis 故障 fail-open 并告警）
       E3-3 MCP 工具服务 ✅（`POST /mcp`，JSON-RPC 2.0；工具集与 Agent 同一份；
         工具带 schema / 权限标签 / 超时 / 幂等；schema 外参数拒绝、身份只从签名头来）
-      E3-4 观测出口 ⏳ 未开始
+      E3-4 观测出口 ⏳ 一半（Python：进程内 trace 缓冲 + `/internal/trace/{id}` 回放，
+        只存结构不存内容、有界；Java 侧聚合出口与面板待做。跨副本要 OTel/Langfuse → **需拍板**）
    E4 GraphRAG / LLM Wiki ⏳ 未开始
 ```
 

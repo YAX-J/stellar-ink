@@ -702,6 +702,34 @@ curl -s -X POST http://127.0.0.1:8200/mcp -H "Content-Type: application/json" \
 - ⚠️ **目前只在编排网络内暴露**：对外（站外 MCP 客户端）需要 Java 侧再开一条带鉴权的出口，
   否则拿不到签署过的身份头 —— 没有身份就没有权限判定，等于把只读工具变成匿名可查。
 
+**按 traceId 回放链路（E3-4）**
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | **`/internal/trace/{traceId}`（直连 Python :8200，不经网关）** | 返回该 traceId 的结构化事件：`{traceId, found, events:[{atMs, kind, …}]}`；`kind` 为 `retrieval` / `tool` / `model` | **内部签名** |
+
+```bash
+curl -s http://127.0.0.1:8200/internal/trace/<traceId> -H "X-AI-Signature: …" …
+# => {"traceId":"…","found":true,"events":[
+#     {"atMs":…,"kind":"retrieval","topK":4,"posts":3,"refused":false,"latencyMs":41,
+#      "sparse":true,"dense":true,"rerank":false},
+#     {"atMs":…,"kind":"model","call":"chat","role":"chat","model":"deepseek-flash",
+#      "promptTokens":49,"completionTokens":51,"finishReason":"stop","latencyMs":702}]}
+```
+
+- **只存结构，不存内容**：事件里是计数、标识与耗时；提示词 / 草稿 / 答案 / 正文片段
+  **在代码层被拒绝**（`record_event` 遇到这些字段名直接抛错，而不是静默截断）。要看链路形状，
+  Java 侧的调用账（E3-1）与网关日志已经够了；把用户内容再存一份进内存是最容易被忽略的隐私面。
+- **有界**：最多 200 个 trace、每个 trace 120 条事件，超出丢最旧的 —— 无上限的环形缓冲就是内存泄漏。
+- **进程内**：`found=false` 表示**这一台没有这条链路的记录**（缓冲已淘汰，或链路落在别的副本上），
+  不代表「链路不存在」。要跨副本回放必须集中存储（OpenTelemetry / Langfuse）——
+  那是需要单独拍板的部署决定。
+- 三段链路各自记在**执行它的那一层**：检索在 `RetrievalPipeline.retrieve`、工具在 Agent 的工具循环、
+  模型调用在 `OpenAICompatibleProvider`（含失败状态码 —— 「一次 429 让整行指标归零」那类事故
+  正是靠它才能在回放里看见）。
+- ⏳ **Java 侧的聚合出口（把调用账 + Python 事件合成一份「全链路」）与面板尚未做**，属 E3-4 的后半；
+  现在排障靠「网关响应头 `X-Trace-Id` → 本接口 + `/ai/admin/usage/summary`」两处对照。
+
 ### 各服务通用
 
 | 方法 | 路径 | 说明 |

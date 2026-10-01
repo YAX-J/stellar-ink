@@ -243,8 +243,11 @@ E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它�
 ⚠️ 这一刀放开了 ai-service 的 `RedisUtils`：**每个 `@WebMvcTest` 切片都要 `@MockBean` 它**，
 否则切片上下文起不来（新增需要 Redis 的组件时同样如此）。
 
-**接着做 E3-4 观测出口**（traceId 已全链路，缺 OTel/Langfuse 出口；「是否部署 Langfuse」是用户输入，
-**需要拍板** —— 不拍板就先做一个「按 traceId 回放」的最小出口：复用调用账 + 网关/服务的 traceId）。
+**E3-4 观测出口做了一半（2026-10-01）**：Python 侧进程内 trace 缓冲 + `GET /internal/trace/{id}` 回放
+（检索 / 工具 / 模型三段；**只存结构不存内容**，内容字段名直接抛错；有界）。
+**下一步**：Java 侧聚合出口（把 `ai_call_log` 与 Python 事件按 traceId 合成一份「全链路」）+ 面板。
+⚠️ **需要你拍板**：是否部署 Langfuse / OTel —— 不部署的话回放只覆盖单副本，跨副本要集中存储；
+拍板前先按最小形态推进（Python 缓冲 + Java 聚合）。
 之后是 B/C 收口（嵌入缓存 + 429 退避、`minDenseScore` 标定）、E2 前端入口、E4 GraphRAG / LLM Wiki。
 
 ```bash

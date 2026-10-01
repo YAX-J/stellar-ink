@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from app.core.trace import record_event
 from app.providers.base import EmbeddingModel, RerankModel
 from app.rag.chunking import ChunkingConfig, PostDocument, chunk_document
 from app.rag.eval_runner import RetrievalOutcome, RetrievedHit
@@ -260,6 +261,14 @@ class RetrievalPipeline:
         candidates = await self._gated(self._recall(question))
         if not candidates:
             # 没有候选就是「没有依据」，如实拒答；不得返回空列表装作「待评估」
+            record_event(
+                "retrieval",
+                topK=top_k,
+                candidates=0,
+                posts=0,
+                refused=True,
+                latencyMs=_elapsed_ms(started),
+            )
             return RetrievalOutcome(
                 posts=[], chunks=[], refused=True, latency_ms=_elapsed_ms(started)
             )
@@ -289,6 +298,19 @@ class RetrievalPipeline:
             )
             for candidate in cited
         ]
+        record_event(
+            "retrieval",
+            topK=top_k,
+            candidates=len(candidates),
+            posts=len(accepted_posts),
+            chunks=len(chunks),
+            refused=not accepted_posts,
+            latencyMs=_elapsed_ms(started),
+            # 开关也记下来：排障时「这次为什么没走向量」几乎总是配置问题
+            sparse=self.config.enable_sparse,
+            dense=self.config.enable_dense,
+            rerank=self.config.enable_rerank,
+        )
         return RetrievalOutcome(
             posts=accepted_posts,
             chunks=chunks,

@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from app.core.trace import record_event
 from app.providers.errors import (
     ProviderAuthError,
     ProviderError,
@@ -105,15 +106,27 @@ class OpenAICompatibleProvider:
         text = str(message.get("content") or "") if isinstance(message, dict) else ""
         usage = _as_mapping(data.get("usage"))
         finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        record = TokenUsage.of(
+            _as_int(usage.get("prompt_tokens")),
+            _as_int(usage.get("completion_tokens")),
+            latency_ms=latency_ms,
+            model=self._config.model,
+        )
+        # 链路事件只记结构：哪个角色、哪个模型、多少 token、多久、怎么结束的（**不记内容**）
+        record_event(
+            "model",
+            call="chat",
+            role=self._config.role,
+            model=self._config.model,
+            promptTokens=record.prompt_tokens,
+            completionTokens=record.completion_tokens,
+            finishReason=str(finish_reason or "stop"),
+            latencyMs=latency_ms,
+        )
         return ChatResponse(
             text=text,
             finish_reason=str(finish_reason or "stop"),
-            usage=TokenUsage.of(
-                _as_int(usage.get("prompt_tokens")),
-                _as_int(usage.get("completion_tokens")),
-                latency_ms=latency_ms,
-                model=self._config.model,
-            ),
+            usage=record,
         )
 
     # ------------------------------------------------------------ chat 流式
@@ -192,6 +205,7 @@ class OpenAICompatibleProvider:
     def _raise_for_status(self, status_code: int, body: str) -> None:
         """与 `_post` 同一套映射：失败形态必须一致，否则流式与非流式会在同一故障下给出不同结论。"""
         del body  # 上游报文可能含隐私，不写进异常与日志
+        _record_model_failure(self._config, status_code)
         if status_code in (401, 403):
             raise ProviderAuthError("模型密钥无效或无权限，请检查面板里的 API Key")
         if status_code == 429:
@@ -238,6 +252,15 @@ class OpenAICompatibleProvider:
             )
 
         usage = _as_mapping(data.get("usage"))
+        record_event(
+            "model",
+            call="embed",
+            role=self._config.role,
+            model=self._config.model,
+            inputs=len(texts),
+            dimension=dimension,
+            latencyMs=latency_ms,
+        )
         return EmbeddingResponse(
             vectors=vectors,
             dimension=dimension,
@@ -289,6 +312,15 @@ class OpenAICompatibleProvider:
             results.append(RerankResult(index=index, score=score))
 
         usage = _as_mapping(data.get("usage"))
+        record_event(
+            "model",
+            call="rerank",
+            role=self._config.role,
+            model=self._config.model,
+            documents=len(documents),
+            results=len(results),
+            latencyMs=latency_ms,
+        )
         return RerankResponse(
             results=results,
             usage=TokenUsage.of(
@@ -328,6 +360,7 @@ class OpenAICompatibleProvider:
             raise ProviderUnavailableError(f"模型服务返回 {response.status_code}")
         if response.status_code >= 400:
             # 400 多为模型名写错、参数不被支持：属于配置问题，不可重试
+            _record_model_failure(self._config, response.status_code)
             raise ProviderError(
                 f"模型服务拒绝了请求（HTTP {response.status_code}）",
                 detail="常见原因：模型名不存在或不支持该参数",
@@ -339,6 +372,20 @@ class OpenAICompatibleProvider:
         if not isinstance(data, dict):
             raise ProviderUnavailableError("模型服务返回结构异常")
         return data
+
+
+def _record_model_failure(config: ProviderConfig, status_code: int) -> None:
+    """失败也进链路事件：这正是「一次 429 让整行指标归零」那类事故最需要的线索。
+
+    **只记状态码，不记报文**：上游报文可能回显用户内容。
+    """
+    record_event(
+        "model",
+        call="failed",
+        role=config.role,
+        model=config.model,
+        status=status_code,
+    )
 
 
 def _first(choices: Any) -> Any:
