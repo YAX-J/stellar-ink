@@ -25,7 +25,16 @@ public enum AiCallScene {
     AGENT("agent", "chat"),
 
     /** 评测台跑一轮：一次包含嵌入与重排，token 用量目前不由 Python 回报，故为空 */
-    EVAL("eval", null);
+    EVAL("eval", null),
+
+    /**
+     * LLM Wiki 构建一轮（E4）：批量模型调用，按文章逐篇抽取主张。
+     *
+     * <p>单独立一个场景而不是并进 {@code EVAL}：它俩的成本形状完全不同 ——
+     * 评测是「一轮几十道题」，Wiki 构建是「一轮 N 篇文章」，
+     * 混在一个场景里会让成本看板上那行数字既不是评测也不是构建。
+     */
+    WIKI("wiki", "chat");
 
     private final String code;
 

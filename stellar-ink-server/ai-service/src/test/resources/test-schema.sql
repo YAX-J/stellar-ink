@@ -77,3 +77,21 @@ CREATE TABLE IF NOT EXISTS `ai_call_log` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`)
 );
+
+-- LLM Wiki 主张（E4-2）。与 deploy/sql/13_ai_wiki.sql 一致（含那条幂等唯一键 ——
+-- 「重复构建不产生重复行」正是靠它，测试里必须真的建出来才有意义）。
+CREATE TABLE IF NOT EXISTS `ai_wiki_claim` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `post_id` BIGINT NOT NULL,
+    `chunk_index` INT NOT NULL,
+    `post_version` VARCHAR(64) NOT NULL,
+    `content_hash` VARCHAR(64) NOT NULL,
+    `claim_text` VARCHAR(200) NOT NULL,
+    `quote` VARCHAR(500) NOT NULL,
+    `heading_path` VARCHAR(255) NOT NULL DEFAULT '',
+    `confidence` DECIMAL(4,3) NOT NULL DEFAULT 0.500,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_claim` UNIQUE (`post_id`, `content_hash`, `claim_text`)
+);

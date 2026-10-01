@@ -5,6 +5,7 @@ import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.redis.RedisUtils;
@@ -64,6 +65,10 @@ class AiTraceControllerTest {
 
     @MockBean
     private AiModelLibraryService modelLibraryService;
+
+    /** Wiki 服务（E4-2）依赖 MyBatis Mapper：切片里不 mock 掉，整个上下文起不来。 */
+    @MockBean
+    private AiWikiService wikiService;
 
     private static AiTraceCallVO call() {
         return AiTraceCallVO.builder()

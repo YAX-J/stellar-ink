@@ -44,6 +44,9 @@ public final class AiContractPaths {
     /** 按 traceId 回放 Python 侧的链路事件（E3-4）：检索 / 工具 / 模型三段 */
     public static final String TRACE_REPLAY = "/internal/trace/{traceId}";
 
+    /** LLM Wiki 主张抽取（E4）：带证据的原子主张，引用必须能在原文里找到 */
+    public static final String WIKI_CLAIMS = "/wiki/claims";
+
     private AiContractPaths() {
     }
 }

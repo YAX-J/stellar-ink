@@ -365,7 +365,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   已有库升级脚本按顺序各执行一次：`03_multi-author`（多作者归属）、
   `04_post_views_glow`（计数 + 点赞明细 + 浏览闸门）、`05_user_role`（早期库缺 `user.role`
   会让所有用户查询报 Unknown column）、`06_note`、`07_role_apply`、`08_user_avatar`、`09_comment`、
-  `10_ai-schema`、`11_ai_model_library`、`12_ai_call_log`（后三个是 AI 域的表/列）；
+  `10_ai-schema`、`11_ai_model_library`、`12_ai_call_log`、`13_ai_wiki`（后四个是 AI 域的表/列）；
   各脚本改了什么见文件头注释。
 - 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
   最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
@@ -489,6 +489,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   「让模型写一段摘要」的根本区别：**没有证据的文本不许进 Wiki**。
   ⚠️ 提示词里的 JSON 示例要放**单独常量**并用 `{example}` 注入：
   直接写进模板会被 `str.format` 当成字段名，报一个与真实原因毫不相干的 KeyError（踩过）。
+  **落库（E4-2）**：表是 `ai_wiki_claim`（`deploy/sql/13_ai_wiki.sql`），幂等锚点
+  `(post_id, content_hash, claim_text)` —— 重复构建是常态，没有它库会一天天膨胀、
+  而且看起来「一直在产出新知识」。三种结果必须分开计数（新增/更新/未变动）；
+  缺证据字段的记录**不落库**。读者侧读取**公开**（要登录才能看证据，Wiki 就成了「信我」），
+  构建是 ADMIN（批量模型调用、直接花钱），并走调用账 `scene=wiki`。
 - **模型配置口径（重要）**：**面板是模型的唯一来源，代码里没有任何默认模型或厂商预设**。
   前端 `AiLabView` 不预置厂商、不带默认端点与模型名（端点与模型名照服务方文档填），
   Python 侧按角色（`chat` / `fast` / `reasoning` / `embedding` / `rerank`）从
