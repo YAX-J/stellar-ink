@@ -446,6 +446,16 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   ① `0`/负数 = **不限**（默认不拦任何人，否则升级会让功能突然不可用）；
   ② 触顶返回 **429**（前端 `isRateLimited()` 认 status/code 双 429）；
   ③ Redis 不可用时 **fail-open + warn**（配额不是安全边界，安全边界才 fail-closed）。
+- **MCP 口径（E3-3）**：`POST /mcp`（Python :8200，**不走网关**）是只读工具的标准协议面，
+  工具集与 Agent **同一份**（`read_only_tools`）。三条必须保持：
+  ① **它只是协议层**，不替代 Java 网关门槛、服务内复核与 `ToolBox` 白名单
+  （只读仍是「装不进来」而不是运行期判断）；
+  ② **身份只从签名的 `X-AI-*` 头来，schema 之外的参数一律 `-32602` 拒绝**
+  （作者身份不进参数 —— 这是「客户端不能靠构造参数扩权」的落点）；
+  ③ 错误语义照规范分三层：协议错误走 JSON-RPC `error`、权限不足 `-32003`、
+  **工具执行失败是 `result.isError=true`**（客户端要喂回模型，不是协议故障）。
+  新增工具时同时补 `input_schema` / `required_role` / `timeout_ms`（都在 `ToolSpec` 上）；
+  新增路由要同步 `tests/test_app.py` 的 `EXPOSED_PATHS`（那条断言会直接红）。
 - **模型配置口径（重要）**：**面板是模型的唯一来源，代码里没有任何默认模型或厂商预设**。
   前端 `AiLabView` 不预置厂商、不带默认端点与模型名（端点与模型名照服务方文档填），
   Python 侧按角色（`chat` / `fast` / `reasoning` / `embedding` / `rerank`）从
@@ -521,8 +531,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：E3 的**MCP 工具服务、观测出口**未开始（E3-1 调用账、E3-2 配额与并发
-  已落地）；E4（GraphRAG / LLM Wiki）未开始；
+- **未做的事（别当成已做）**：E3 只剩**观测出口（E3-4）**未开始（E3-1 调用账、E3-2 配额与并发、
+  E3-3 MCP 工具服务已落地）；E4（GraphRAG / LLM Wiki）未开始；
   E2 只读 Agent 没有前端入口；Qdrant 从未连过真实实例（欠一次 `uv run python scripts/qdrant_smoke.py`）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
   ⚠️ 这条里的「Redis 限流」指**博客 API 的边缘限流**；**AI 域的调用配额已获用户明确放行**

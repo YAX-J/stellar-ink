@@ -19,7 +19,7 @@ from app.rag.agent import ToolResult, ToolSpec
 from app.rag.pipeline import IndexedChunk, RetrievalPipeline
 from app.rag.qa import QaSettings
 from app.rag.style import StyleSettings, build_style_profile
-from app.schemas.common import Citation
+from app.schemas.common import Citation, Role
 
 #: 一次检索默认取多少篇：Agent 会自己决定要不要再查，所以首轮不必贪多
 DEFAULT_TOOL_TOP_K = 4
@@ -127,6 +127,11 @@ def read_only_tools(
 
     哪些工具可用取决于调用方给什么：没有检索管线就只给画像，反之亦然。
     一个工具都没有时 `ToolBox` 会直接报错 —— 那种 Agent 只会瞎猜。
+
+    E3-3 起每条工具还带上 MCP 需要的三样：`input_schema`（客户端据此构造调用）、
+    `required_role`（谁能调）与 `timeout_ms`。**schema 里没有的参数一律会被 MCP 层拒掉** ——
+    这是「客户端不能靠自行构造参数扩大权限」的落点：作者身份来自签名的 `X-AI-User-Id`，
+    而不是请求体里的某个字段（所以 `author_style` 的 schema 是空的）。
     """
     tools: list[ToolSpec] = []
     if pipeline is not None:
@@ -137,6 +142,27 @@ def read_only_tools(
                 description=tool.description,
                 handler=tool.run,
                 arguments="question（必填）、topK（1-20，可选）",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "要检索的问题",
+                            "minLength": 1,
+                            "maxLength": 500,
+                        },
+                        "topK": {
+                            "type": "integer",
+                            "description": f"返回几段，1-20，默认 {DEFAULT_TOOL_TOP_K}",
+                            "minimum": 1,
+                            "maximum": 20,
+                        },
+                    },
+                    "required": ["question"],
+                    "additionalProperties": False,
+                },
+                required_role=Role.READER,
+                timeout_ms=20_000,
             )
         )
     if style_posts:
@@ -149,6 +175,10 @@ def read_only_tools(
                 description=style_tool.description,
                 handler=style_tool.run,
                 arguments="无参数",
+                # 空 schema = 不接受任何参数。作者身份由签名头决定，**不能**从参数传
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                required_role=Role.AUTHOR,
+                timeout_ms=10_000,
             )
         )
     return tools

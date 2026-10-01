@@ -88,13 +88,15 @@ EXPOSED_PATHS = {
     "/writing/style",
     # 只读 Agent（E2）：受内部签名保护，工具全部只读
     "/agent/ask",
+    # MCP 工具服务（E3-3）：JSON-RPC 2.0，工具集与 Agent 同一份；同样受内部签名保护
+    "/mcp",
 }
 
 
 def test_exposed_paths_are_the_intended_whitelist(app: FastAPI) -> None:
     """公开路由白名单：探活 + 评测接口（非生产另有内部签名自检）。
 
-    问答 / 写作建议 / 索引接口分别属于 D 与 B 阶段，出现即说明越界开发
+    问答 / 写作建议 / 索引 / MCP 接口分别属于 D、B、E3 阶段，出现即说明越界开发
     （docs/ai/development-workflow.md §7.6：新接口先写进 docs/api 再实现）。
     用 OpenAPI schema 判断而不是遍历内部路由对象，避免绑定框架内部结构。
     """

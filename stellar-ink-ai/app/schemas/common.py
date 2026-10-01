@@ -16,11 +16,33 @@ ShortText = Annotated[str, Field(min_length=1, max_length=MAX_TITLE_LENGTH)]
 
 
 class Role(StrEnum):
-    """与 Java ``shared-model`` 的 ``Role`` 枚举取值一致（仅用于日志与配额，不做鉴权）。"""
+    """与 Java ``shared-model`` 的 ``Role`` 枚举取值一致（仅用于日志与配额，不做鉴权）。
+
+    ⚠️ **别把它当成鉴权**：真正的门槛在 Java——网关按 JWT 里的角色拦一道，服务内再复核一次。
+    Python 侧拿到的角色来自**参与签名的** ``X-AI-Role``（内网也改不了），所以它可以用来做
+    「这条工具当前调用方够不够格」的判定（见 ``app/mcp/server.py``），但它是**防御性**的：
+    拿不到身份时应当拒绝，而不是当成 READER 放行。
+    """
 
     READER = "READER"
     AUTHOR = "AUTHOR"
     ADMIN = "ADMIN"
+
+    @property
+    def rank(self) -> int:
+        """权限累积，三档递增。用显式映射而不是枚举下标：下标会随枚举顺序变化而悄悄改语义。"""
+        return _ROLE_RANK[self]
+
+    def at_least(self, required: "Role") -> bool:
+        return self.rank >= required.rank
+
+
+#: 角色 → 等级。与 Java ``Role`` 的三档累积口径一致（READER ⊂ AUTHOR ⊂ ADMIN）
+_ROLE_RANK: dict["Role", int] = {
+    Role.READER: 0,
+    Role.AUTHOR: 1,
+    Role.ADMIN: 2,
+}
 
 
 class DoneReason(StrEnum):

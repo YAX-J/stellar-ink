@@ -37,7 +37,7 @@ from typing import Any, Protocol
 
 from app.providers.base import ChatModel
 from app.providers.models import ChatMessage, MessageRole
-from app.schemas.common import Citation
+from app.schemas.common import Citation, Role
 
 #: 单次运行的默认预算。三个上限都要有：只限步数挡不住「一步里塞十个工具调用」，
 #: 只限调用次数挡不住「一次观察把整篇文章灌回来」。
@@ -89,7 +89,13 @@ class AgentTool(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
-    """一条工具的实现，用函数而不是类：工具本身没有状态，包一层类只是仪式感。"""
+    """一条工具的实现，用函数而不是类：工具本身没有状态，包一层类只是仪式感。
+
+    E3-3 起它同时是**工具的标准描述**（MCP 的 `tools/list` 直接由它生成），因此除了给模型看的
+    `description` / `arguments`（中文自然语言），还要有给程序看的 `input_schema`（JSON Schema）
+    与三条治理字段：`required_role`（谁能调）、`timeout_ms`（多久算超时）、`idempotent`（能否重试）。
+    两套描述放同一个对象里是刻意的：分开维护迟早会出现「提示词说能传 topK、schema 里没有」。
+    """
 
     name: str
     description: str
@@ -98,6 +104,27 @@ class ToolSpec:
     read_only: bool = True
     #: 参数说明（拼进提示词，让模型知道该传什么）
     arguments: str = ""
+    #: 参数的 JSON Schema（MCP 客户端据此构造调用）；空表示**不接受任何参数**
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    #: 调用这条工具所需的最低角色（与 Java 三档一致：READER ⊂ AUTHOR ⊂ ADMIN）
+    required_role: Role = Role.READER
+    timeout_ms: int = 15_000
+    #: 幂等：同样的参数重复调用不产生副作用。只读工具都应该是 True，客户端据此决定能否重试
+    idempotent: bool = True
+
+    def __post_init__(self) -> None:
+        if self.timeout_ms <= 0:
+            raise ValueError(f"工具超时必须为正：{self.name}={self.timeout_ms}")
+        if not self.read_only and self.idempotent:
+            # 写操作还声称幂等，等于鼓励客户端重试 —— 这正是「重复副作用」的来源
+            raise ValueError(f"非只读工具不得声明幂等：{self.name}")
+
+    def argument_names(self) -> set[str]:
+        """schema 里声明的参数名；**空 schema 就是不接受任何参数**。"""
+        properties = self.input_schema.get("properties")
+        if not isinstance(properties, dict):
+            return set()
+        return {str(key) for key in properties}
 
 
 class ToolBox:
