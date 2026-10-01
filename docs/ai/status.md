@@ -39,7 +39,8 @@
 | E4-2 落库与读者侧 | ✅ | `deploy/sql/13_ai_wiki.sql`（`ai_wiki_claim`，**幂等锚点 (postId, contentHash, claimText)**）+ `POST /ai/admin/wiki/build`（ADMIN；落库三种结果分开计数）+ 读者侧**公开**读（`GET /ai/wiki/posts/{id}/claims`、`/ai/wiki/claims/count`）；构建走调用账 `scene=wiki` | `AiWikiServiceImplTest`（5 条：首次全新增、**重复构建未变动**、置信度变了是更新、缺证据不落库、读者侧按段落排序）+ `AiWikiControllerTest`（6 条：两档门槛不同、预算只能收紧、证据一起回）+ `AiContractTest.wikiClaimsRoundTrips` |
 | E4-3 前端入口（读者侧展示） | ✅ | 阅读页「知识条目」区块（`stores/wiki.js` + `utils/wiki.js`）：主张与**原文片段并排**，可「在正文中定位」；**没有条目时整块不出现**，取数失败**静默降级**（`failed` 与 `claims` 是两件事） | `scripts/wiki-selfcheck.mjs`（20 条：成功/无条目/失败三态分开、切文先清空、空 id 不发请求；定位的 located/missing/unavailable、空白差异、过短片段不跳） |
 | E4-4 实体抽取与别名合并 | ✅ | `app/rag/entities.py`：实体必须能在**留下来的主张**或它的原文片段里逐字找到（否则丢弃计数）；合并只做确定性归一化（全角/半角/大小写/空白/首尾标点）；**不加模型调用**（与主张同一次请求） | `tests/test_wiki_entities.py`（11 条：实体必须有证据、被丢弃主张里的实体跟着消失、归一化合并、长度边界、顺序确定）+ 契约样例（含 `entityNotInText`）+ `AiContractTest` |
-| E4-5 实体落库与关系 | ⏳ 下一刀 | `ai_wiki_entity` / `ai_wiki_relation`（roadmap §14 的后续表）+ ADMIN 审核流（低置信合并项进人工） | — |
+| E4-5 实体共现关系 | ✅ 前半（Python） | `relation_edges`：同一句主张里同时出现的实体连边，`weight` = 被一起谈论的主张条数，**每条边都带证据**（哪几句主张）；无向边只有一种表示。⚠️ 如实叫「共现」而不是语义关系（因果/属于/依赖要模型抽取 + 人工审核） | `tests/test_wiki_entities.py`（+5 条：同句才连边、边带证据、重复共现加权、顺序确定）+ 契约样例 + `AiContractTest` |
+| E4-6 实体/关系落库 | ⏳ 下一刀 | `14_ai_wiki_entity.sql`（实体 / 提及 / 关系三张表）+ 幂等锚点 + 读者侧实体页 | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果
