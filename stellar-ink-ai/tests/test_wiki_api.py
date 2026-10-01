@@ -97,3 +97,74 @@ async def test_missing_chat_model_gives_actionable_hint(
     assert status == 400
     assert "模型配置" in body["message"], "提示里要有「去哪儿配」，否则用户只能猜"
     assert "来源" in body["message"], "空配置的两个原因（真没配 / 读不到）要分开说"
+
+
+# ---------------------------------------------------------------- 定向重建（E4-11）
+
+
+async def test_targeted_rebuild_only_extracts_the_asked_posts(app: FastAPI, secret: str) -> None:
+    """`postIds` 是「就要这几篇」，不是「按顺序取几篇」。
+
+    这条口径要紧：报告说「3 篇要重建」，实际却重建了「头 5 篇里的 1 篇」——
+    现象是「点了重建却没变化」，而原因藏在两个参数的语义混用里。
+    """
+    status, body = await post(app, secret, {"postIds": [999], "maxPosts": 5})
+
+    assert status == 200
+    assert body["stats"]["posts"] == 0, "999 不在语料里 → 一篇都没抽"
+    assert any("定向重建" in note for note in body["notes"]), "定向重建要说明抽了几篇"
+    assert any("找不到" in note for note in body["notes"]), "请求了不存在的文章要如实说出来"
+
+
+async def test_targeted_rebuild_rejects_oversized_list(app: FastAPI, secret: str) -> None:
+    """一次请求能点几篇重建也是成本闸门（与 `maxPosts` 同一口径）。"""
+    status, _ = await post(app, secret, {"postIds": list(range(1, 80))})
+
+    assert status == 422
+
+
+# ------------------------------------------------------------------ 失效盘点（E4-11）
+
+STALE_PATH = "/wiki/stale"
+
+
+async def post_stale(app: FastAPI, secret: str, payload: dict) -> tuple[int, dict]:
+    import json
+
+    body = json.dumps(payload)
+    headers = {
+        **signed_headers("POST", STALE_PATH, secret=secret, body=body, role="ADMIN", user_id=1),
+        "Content-Type": "application/json",
+    }
+    response = await call(app, "POST", STALE_PATH, headers=headers, content=body)
+    return response.status_code, response.json()
+
+
+async def test_stale_needs_internal_signature(app: FastAPI) -> None:
+    response = await call(app, "POST", STALE_PATH, json={"claims": []})
+
+    assert response.status_code == 401
+
+
+async def test_stale_reports_three_states_separately(app: FastAPI, secret: str) -> None:
+    """ "内容变了"与"段落没了"处置不同（重建 / 清理），必须在响应里分得开。"""
+    status, body = await post_stale(
+        app,
+        secret,
+        {"claims": [{"postId": 999, "chunkIndex": 0, "contentHash": "whatever"}]},
+    )
+
+    assert status == 200
+    assert body["checked"] == 1
+    assert body["orphan"] == 1, "语料里没有这篇 → 段落已不存在"
+    assert body["stale"] == 0
+    assert body["orphanPostIds"] == [999]
+    assert body["notes"], "状态的含义要写出来，否则没人知道该干什么"
+
+
+async def test_stale_of_empty_list_says_nothing_to_do(app: FastAPI, secret: str) -> None:
+    status, body = await post_stale(app, secret, {"claims": []})
+
+    assert status == 200
+    assert (body["checked"], body["current"], body["stale"], body["orphan"]) == (0, 0, 0, 0)
+    assert any("不需要重建" in note for note in body["notes"])

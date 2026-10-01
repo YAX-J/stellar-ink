@@ -4,6 +4,7 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiStaleVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 
 import java.util.List;
@@ -51,4 +52,15 @@ public interface AiWikiService {
      * 排序：权重降序、名字升序 —— 顺序确定。
      */
     List<AiWikiTopicVO> topicsOfPost(Long postId);
+
+    /**
+     * 失效盘点（E4-11）：把库里存的主张锚点交给 Python 比对当前语料。
+     *
+     * <p>为什么要问 Python：段落序号与内容哈希都是**切块的产物**，只有它知道当前是哪一版。
+     * Java 只负责「从库里读锚点、把结果翻成人能读的话」，这也守住了「Python 不碰库」。
+     *
+     * <p>⚠️ 它**不重建**：重建要花钱打模型，报告是免费的 —— 判定与重建分开，
+     * 由 ADMIN 看着报告决定点哪些文章（`stalePostIds` 可以直接当 build 的 `postIds`）。
+     */
+    AiWikiStaleVO inspectStale();
 }

@@ -5,10 +5,13 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiEntityDTO;
 import com.stellarink.aiclient.dto.AiWikiRelationDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleRequestDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleResultDTO;
 import com.stellarink.aiclient.dto.AiWikiTopicDTO;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
 import com.stellarink.ai.pojo.AiWikiClaim;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiStaleVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,11 +22,14 @@ import org.springframework.test.context.ActiveProfiles;
 import java.util.List;
 import java.util.Map;
 
+import org.mockito.ArgumentCaptor;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -392,5 +398,48 @@ class AiWikiServiceImplTest {
     void entitiesOfPostIsEmptyForUnknownPost() {
         assertTrue(service.entitiesOfPost(999L).isEmpty());
         assertTrue(service.entitiesOfPost(null).isEmpty(), "空 postId 直接返回空");
+    }
+
+    @Test
+    @DisplayName("失效盘点：把库里的锚点交回去，结果与人能读的话都带回")
+    void inspectStalePassesAnchorsToPython() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any())).thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"));
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        when(pythonAiClient.wikiStale(any())).thenReturn(AiWikiStaleResultDTO.builder()
+                .checked(1).current(0).stale(1).orphan(0)
+                .stalePostIds(List.of(7L)).orphanPostIds(List.of())
+                .notes(List.of("1 条主张所在的段落内容变了（1 篇文章）——需要重建这些文章。"))
+                .build());
+
+        AiWikiStaleVO report = service.inspectStale();
+
+        assertEquals(1, report.getChecked());
+        assertEquals(1, report.getStale());
+        assertEquals(List.of(7L), report.getStalePostIds(), "报告里的文章可以直接拿去定向重建");
+        assertEquals(Boolean.FALSE, report.getTruncated());
+        assertTrue(report.getNotes().stream().anyMatch(note -> note.contains("需要重建")),
+                "状态的含义要带回给人看，否则没人知道下一步做什么");
+
+        // 交过去的锚点必须带齐三个字段：只给 postId 的话 Python 判不出「是不是那一版」
+        ArgumentCaptor<AiWikiStaleRequestDTO> captor =
+                ArgumentCaptor.forClass(AiWikiStaleRequestDTO.class);
+        verify(pythonAiClient).wikiStale(captor.capture());
+        var anchor = captor.getValue().getClaims().get(0);
+        assertEquals(7L, anchor.getPostId());
+        assertEquals("hash0", anchor.getContentHash());
+    }
+
+    @Test
+    @DisplayName("失效盘点：Python 少回字段时不炸（缺省按 0 / 空处理）")
+    void inspectStaleToleratesMissingFields() {
+        when(pythonAiClient.wikiStale(any())).thenReturn(AiWikiStaleResultDTO.builder().build());
+
+        AiWikiStaleVO report = service.inspectStale();
+
+        assertEquals(0, report.getChecked());
+        assertTrue(report.getStalePostIds().isEmpty());
+        assertEquals(Boolean.FALSE, report.getTruncated());
     }
 }

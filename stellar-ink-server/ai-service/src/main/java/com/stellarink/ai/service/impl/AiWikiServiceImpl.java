@@ -7,6 +7,8 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiEntityDTO;
 import com.stellarink.aiclient.dto.AiWikiRelationDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleRequestDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleResultDTO;
 import com.stellarink.aiclient.dto.AiWikiTopicDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
@@ -30,6 +32,7 @@ import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiStaleVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,6 +74,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class AiWikiServiceImpl implements AiWikiService {
+
+    /** 一次失效盘点最多看多少条主张（Python 侧契约同样是 5000） */
+    static final int STALE_SCAN_LIMIT = 5000;
 
     private final PythonAiClient pythonAiClient;
 
@@ -494,6 +500,50 @@ public class AiWikiServiceImpl implements AiWikiService {
 
     private static <T> List<T> nullSafe(List<T> items) {
         return items == null ? List.of() : items;
+    }
+
+    @Override
+    public AiWikiStaleVO inspectStale() {
+        // 一次盘点最多带这么多条锚点：请求体要能一次性发出去，而盘点是同步接口。
+        // ⚠️ 截断了就**必须说**（truncated），否则运维看到的是「全站没问题」——
+        // 而真相是「前面 5000 条没问题」
+        List<AiWikiClaim> rows = claimMapper.selectList(
+                new LambdaQueryWrapper<AiWikiClaim>()
+                        .orderByAsc(AiWikiClaim::getId)
+                        .last("LIMIT " + (STALE_SCAN_LIMIT + 1)));
+        boolean truncated = rows.size() > STALE_SCAN_LIMIT;
+        if (truncated) {
+            rows = rows.subList(0, STALE_SCAN_LIMIT);
+        }
+
+        List<AiWikiStaleRequestDTO.AnchorDTO> anchors = rows.stream()
+                .map(row -> AiWikiStaleRequestDTO.AnchorDTO.builder()
+                        .postId(row.getPostId())
+                        .chunkIndex(row.getChunkIndex())
+                        .contentHash(row.getContentHash())
+                        .build())
+                .toList();
+
+        AiWikiStaleResultDTO result = pythonAiClient.wikiStale(
+                AiWikiStaleRequestDTO.builder().claims(anchors).build());
+        List<String> notes = new ArrayList<>(nullSafe(result.getNotes()));
+        if (truncated) {
+            notes.add("⚠️ 主张太多，这次只盘点了前 " + STALE_SCAN_LIMIT
+                    + " 条 —— 不能当成「全站都没问题」。");
+        }
+        log.info("Wiki 失效盘点：查 {} 条 → 有效 {}、内容变了 {}、段落没了 {}（截断={}）",
+                orZero(result.getChecked()), orZero(result.getCurrent()),
+                orZero(result.getStale()), orZero(result.getOrphan()), truncated);
+        return AiWikiStaleVO.builder()
+                .checked(orZero(result.getChecked()))
+                .current(orZero(result.getCurrent()))
+                .stale(orZero(result.getStale()))
+                .orphan(orZero(result.getOrphan()))
+                .stalePostIds(nullSafe(result.getStalePostIds()))
+                .orphanPostIds(nullSafe(result.getOrphanPostIds()))
+                .notes(notes)
+                .truncated(truncated)
+                .build();
     }
 
     /**

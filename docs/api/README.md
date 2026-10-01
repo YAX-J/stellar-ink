@@ -780,8 +780,18 @@ curl -s -X POST http://127.0.0.1:8200/wiki/claims -H "Content-Type: application/
   「星笺」与「STELLAR INK」是同一个东西，但错合一组的代价是一个说不清的知识条目；
   roadmap §14 第 2 步要求的 ADMIN 审核流还没做，**那条线是后续切片**。
   实体不额外花模型调用：与主张在**同一次**请求里抽取。
+- **增量失效（E4-11）**：`POST /wiki/claims` 的请求体多了 `postIds`（**定向重建**：只抽这几篇）。
+  ⚠️ 它与 `maxPosts` 是**两个不同的意图**（「按顺序取几篇」vs「就要这几篇」）：
+  同时传时以 `postIds` 为准、`maxPosts` 不再截断 —— 否则会出现「报告说 3 篇要重建，
+  实际重建的是头 5 篇里的 1 篇」这种查不出的现象。请求里不存在的文章 id 会写进 `notes`。
+  失效盘点 `POST /wiki/stale`（**内部签名**，Java 侧 `GET /ai/admin/wiki/stale` 是 ADMIN）：
+  输入是库里存的主张锚点 `[{postId, chunkIndex, contentHash}]`，输出三种状态**分开**报 ——
+  `current`（不用动）/ `stale`（段落内容变了 → 重建这几篇）/ `orphan`（段落已不存在 → 清理，
+  它们再也回不到原文）。判定**只看段落哈希**，不看主张文本（文本是模型输出，重跑本来就可能变）；
+  哈希缺失按 `current` 处理（凭缺失判失效会把整库判成过期）。
+  ⚠️ **盘点不重建**：重建要花钱打模型，报告是免费的 —— 由 ADMIN 看着报告决定点哪些文章。
 - ⚠️ **只回结果、不落库**：持久化归 Java（`ai_wiki_*` 表），Python 不碰库 ——
-  与其它 AI 能力的边界一致。增量失效是 E4 的后续切片。
+  与其它 AI 能力的边界一致。
 - **主题读取（E4-9）**：`GET /ai/wiki/posts/{postId}/topics`（**公开**）只回**涉及本文**的主题：
   `entities` 是成员（按提及数降序、名字升序），`evidence` 是主题页上那段可核对的原文
   （每段都带 `postId` + `chunkIndex` + `claimText`）。落库的幂等锚点是**成员签名**
