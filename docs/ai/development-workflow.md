@@ -264,10 +264,15 @@ dense-only 扫真实分数分布，输出「仍答对 / 挡住无答案」并给
 顺带修正两处会骗人的地方：界面不再承诺服务端不会兑现的步数（Java 用 `min(请求值, 4)` 夹住），
 「停止」现在真的中止请求（`api/client.js` 的 `request()` 接受调用方的 `signal`）。
 
-**下一步只剩 E4（GraphRAG / LLM Wiki）** —— ⚠️ **范围待你拍板**：
-先做「实体/关系抽取 + 图检索增强」还是先做「LLM Wiki（把文章整理成互链的知识页）」，
-两者的产物与工作量差别很大。另外两件环境动作仍挂着：`minDenseScore` 标定（等嵌入额度）、
-Qdrant 冒烟（需要隧道）；**是否部署 OTel / Langfuse** 同样待拍板。
+**E4-1 带证据的主张抽取已交付（2026-10-01）**：`app/rag/wiki.py` + `POST /wiki/claims`。
+原子主张绑定 `postId` / `chunkIndex` / `postVersion` / `contentHash` / `quote`，并**逐条校验引用
+真的出现在那一段里**（编造的引用直接丢弃、按原因计数）。契约样例
+`tests/fixtures/wiki_claims_result.json` 由脚本生成（故意含一条被丢弃的主张），留给 Java 侧共读。
+
+**下一刀 E4-2：Java 落库与读者侧**（`deploy/sql/13_ai_wiki.sql` 建 `ai_wiki_claim` 表 →
+ai-service 的 ADMIN 构建出口 → 读者侧列表/详情，条目能点回原文）。
+再往后是实体消歧 / 关系 / 社区发现 / 页面生成 / 增量失效，最后才是 GraphRAG。
+两件环境动作仍挂着（`minDenseScore` 标定等嵌入额度、Qdrant 冒烟需要隧道）。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

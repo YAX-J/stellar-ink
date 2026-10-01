@@ -35,7 +35,9 @@
 | E3-2 配额与并发 | ✅ | 额度在配置（`stellar.ink.ai.quota.*`）、计数在 Redis（`stellar-ink:ai:quota:`，自然日窗口）；拦截挂在 `AiUsageService.around`（调用前检查、调用后计数）；触顶 429、Redis 故障 fail-open + warn；ai-service 放开 `RedisUtils` | `AiQuotaPolicyTest`（窗口/上限边界/键名）；`AiUsageQuotaTest`（10 条：用户·角色·并发三维触顶、回滚、fail-open、拒绝时不调用下游） |
 | E3-3 MCP 工具服务 | ✅ | `app/mcp/protocol.py`（JSON-RPC 2.0 信封与错误码）+ `app/mcp/server.py`（`initialize`/`ping`/`tools/list`/`tools/call`）+ `POST /mcp`（内部签名保护）；`ToolSpec` 增加 `input_schema`/`required_role`/`timeout_ms`/`idempotent`；工具集与 Agent **同一份** | `tests/test_mcp_server.py`（21 条：信封、越权 `-32003`、schema 外参数 `-32602`、工具失败 `isError`、超时、通知不回响应）；`tests/test_mcp_api.py`（8 条：签名、身份透传、错误体形状） |
 | E3-4 观测出口 | ✅（最小形态；OTel/Langfuse **待拍板**） | Python：进程内事件缓冲（有界、**只存结构不存内容**）+ 三段埋点（检索 / 工具 / 模型含失败状态码）+ `GET /internal/trace/{traceId}`；Java：`GET /ai/admin/trace/{traceId}` 合并调用账与 Python 事件，**Python 不可用时仍回账** | `tests/test_trace.py`（9）+ `test_trace_api.py`（3）+ `test_trace_contract.py`（3，与 Java 共读 fixture）；`AiTraceControllerTest`（6）+ `AiUsageServiceImplTest.traceCalls` + `AiContractTest.traceReplayRoundTrips` |
-| E4 LLM Wiki（**先做**） | ⏳ 已定范围，未开工 | 按 roadmap §14：带证据的主张抽取（E4-1）→ 实体/别名消歧 → 关系 → 社区发现 → 页面生成 → 增量失效。**验收：事实性文本必须能回到证据** | — |
+| E4-1 带证据的主张抽取 | ✅ | `app/rag/wiki.py`（原子主张 + **引用校验** + 丢弃分类计数）+ `POST /wiki/claims`；主张绑定 `postId`/`chunkIndex`/`postVersion`/`contentHash`/`quote` | `tests/test_wiki_claims.py`（22 条：编造引用被挡、跨段落引用不算、空白差异不算不实、重复计数、长度边界、格式抖动不炸、契约样例可解析）+ `test_wiki_api.py`（4 条） |
+| E4-2 落库与读者侧 | ⏳ 下一刀 | Java：`ai_wiki_*` 表 + ADMIN 触发的构建出口 + 读者侧列表/详情（可按 `postId` 回跳原文） | — |
+| E4 其余（消歧/关系/社区/页面/增量） | ⏳ 未开始 | roadmap §14 的后续步骤，建在 E4-1 的「可回到证据」之上 | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果
