@@ -4,6 +4,7 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 
 import java.util.List;
 
@@ -41,4 +42,13 @@ public interface AiWikiService {
      * <p>排序：提及多的在前，其次按名字 —— 顺序确定，否则同一份数据两次请求顺序不同。
      */
     List<AiWikiEntityVO> entitiesOfPost(Long postId);
+
+    /**
+     * 按文章列主题（读者侧，E4-9）：只回**涉及这篇文章**的主题。
+     *
+     * <p>为什么按文章过滤而不是给一个「全站主题列表」：读者是在读文章，
+     * 「这篇文章参与了哪些主题」才是当下有用的信息；全站索引是另一件事（列表页）。
+     * 排序：权重降序、名字升序 —— 顺序确定。
+     */
+    List<AiWikiTopicVO> topicsOfPost(Long postId);
 }

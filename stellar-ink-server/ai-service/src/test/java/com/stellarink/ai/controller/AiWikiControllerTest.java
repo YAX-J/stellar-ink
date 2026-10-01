@@ -14,6 +14,7 @@ import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -217,5 +218,29 @@ class AiWikiControllerTest {
                         .value("每天写五百字可以累积成十八万字"))
                 .andExpect(jsonPath("$.data[0].relations[0].name").value("十八万字"))
                 .andExpect(jsonPath("$.data[0].relations[0].evidence[0].chunkIndex").value(0));
+    }
+
+    @Test
+    @DisplayName("读取主题：公开，且带回成员与可核对的原文")
+    void topicsArePublic() throws Exception {
+        when(wikiService.topicsOfPost(7L)).thenReturn(List.of(AiWikiTopicVO.builder()
+                .id(21L).name("每天写五百字 · 十八万字")
+                .keywords(List.of("每天写五百字", "十八万字"))
+                .size(2).weight(1).postIds(List.of(7L))
+                .entities(List.of(AiWikiTopicVO.EntityBriefVO.builder()
+                        .id(11L).name("每天写五百字").kind("concept").mentionCount(2).build()))
+                .evidence(List.of(AiWikiTopicVO.EvidenceVO.builder()
+                        .postId(7L).chunkIndex(0)
+                        .claimText("每天写五百字可以累积成十八万字").build()))
+                .build()));
+
+        mockMvc.perform(get("/ai/wiki/posts/{postId}/topics", 7))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data[0].name").value("每天写五百字 · 十八万字"))
+                .andExpect(jsonPath("$.data[0].weight").value(1))
+                .andExpect(jsonPath("$.data[0].entities[0].name").value("每天写五百字"))
+                .andExpect(jsonPath("$.data[0].evidence[0].claimText")
+                        .value("每天写五百字可以累积成十八万字"));
     }
 }

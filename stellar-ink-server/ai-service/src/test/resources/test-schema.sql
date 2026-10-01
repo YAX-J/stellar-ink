@@ -143,3 +143,38 @@ CREATE TABLE IF NOT EXISTS `ai_wiki_relation_evidence` (
     PRIMARY KEY (`id`),
     CONSTRAINT `uk_relation_evidence` UNIQUE (`relation_id`, `post_id`, `chunk_index`, `claim_text`)
 );
+
+-- LLM Wiki 主题（E4-9）。与 deploy/sql/15_ai_wiki_topic.sql 一致（幂等锚点是**成员签名**，
+-- 不是主题名 —— 名字由成员算出来，拿它当锚点会凭空多出一行）。
+CREATE TABLE IF NOT EXISTS `ai_wiki_topic` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `signature` CHAR(64) NOT NULL,
+    `name` VARCHAR(191) NOT NULL,
+    `keywords` VARCHAR(191) NOT NULL DEFAULT '',
+    `size` INT NOT NULL DEFAULT 0,
+    `weight` INT NOT NULL DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_topic_signature` UNIQUE (`signature`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_wiki_topic_entity` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `topic_id` BIGINT NOT NULL,
+    `entity_id` BIGINT NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_topic_entity` UNIQUE (`topic_id`, `entity_id`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_wiki_topic_evidence` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `topic_id` BIGINT NOT NULL,
+    `post_id` BIGINT NOT NULL,
+    `chunk_index` INT NOT NULL,
+    `claim_text` VARCHAR(200) NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_topic_evidence` UNIQUE (`topic_id`, `post_id`, `chunk_index`, `claim_text`)
+);
