@@ -46,8 +46,8 @@
 | E4-9 主题落库与读取 | ✅ | `deploy/sql/15_ai_wiki_topic.sql` 三张表（主题 / 成员 / 证据）+ `storeTopics`：**幂等锚点是成员签名**（成员规范化名字排序后的 SHA-256）而不是主题名 —— 名字由成员算出来，拿它当锚点会凭空多出一行；成员与证据**先清后写**；`GET /ai/wiki/posts/{id}/topics`（**公开**） | `AiWikiServiceImplTest`（+3：签名锚点与读者侧、重复构建不累加、无证据返回空）+ `AiWikiControllerTest.topicsArePublic` |
 | E4-10 主题页前端 | ✅ | 阅读页「本文参与的主题」：一行看「叫什么、多大、涉及几篇」，按需**展开成员与原文**（不新增一级导航 —— 它固定 6 项）；主题与条目/实体是**三套独立状态** | `wiki-selfcheck.mjs`（+9 条：主题独立失败、失败不影响条目与实体、空列表 ≠ 失败、换文章清空、空 id 不发请求） |
 | E4-11 增量失效 | ✅ **E4 收口** | `app/rag/staleness.py`：三种状态**分开报**（`current` 不用动 / `stale` 内容变了→重建 / `orphan` 段落没了→清理）；判定**只看段落哈希**、哈希缺失按 current（否则会逼人做全量重建）。定向重建：`POST /wiki/claims` 的 `postIds`（「就要这几篇」，与 `maxPosts` 的「按顺序取几篇」是**两个意图**）；`GET /ai/admin/wiki/stale`（ADMIN）**只报告不重建** | Python `tests/test_wiki_staleness.py`（8 条）+ `tests/test_wiki_api.py`（+5 条：定向只抽点名文章、超长列表 422、盘点三态分开、空列表说「不用重建」）+ Java `AiWikiServiceImplTest`（+2）+ `AiWikiControllerTest`（+3：读者 403、报告可执行、定向去重保序、封顶） |
-| E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
-| E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
+| E5-1 GraphRAG 图检索核心 | ✅ 前半（Python） | `app/rag/graph.py`：**Local Search**（问题里命中的实体 → 沿共现边一跳 → 收集这一片的主张与原文）+ **Global Search**（按主题聚合，回答「覆盖了什么」）。每条结果带 `via`（凭什么捞出来）；**没命中就说没落点并回退向量检索**，不拿弱相关的边充数 | `tests/test_rag_graph.py`（11 条：种子命中、一跳不跨社区、最长实体优先、没命中不是错误、阈值过滤、截断不静默、结果可复现、全局按关键词命中、主题未知如实说） |
+| E5-2 GraphRAG 与普通 RAG 的对比 | ⏳ 下一刀 | 把它接成评测策略，在同一批跨文章问题上与 dense/sparse/hybrid 比 —— **证明收益才保留**（fast-track-plan 的约定） | — |
 
 ## 3. 一次完整核验的命令与结果
 
