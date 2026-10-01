@@ -374,3 +374,13 @@ def test_contract_fixture_matches_the_schema() -> None:
     assert {relation.source, relation.target} == {"十八万字", "每天写五百字"}
     assert relation.weight == 1
     assert relation.evidence[0].claim_text == "每天写五百字，一年可以累积十八万字"
+
+    # 主题（E4-8）：连通分量；名字是关键词组合，且主题页带**可核对的原文**
+    assert parsed.stats.topics == 1
+    assert len(parsed.topics) == 1
+    topic = parsed.topics[0]
+    assert topic.size == 2
+    assert set(topic.entities) == {"每天写五百字", "十八万字"}
+    assert topic.keywords and set(topic.keywords) <= set(topic.entities)
+    assert topic.post_ids == [7]
+    assert topic.evidence[0].claim_text == "每天写五百字，一年可以累积十八万字"

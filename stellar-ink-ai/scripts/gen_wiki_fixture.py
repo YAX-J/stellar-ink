@@ -118,11 +118,16 @@ def main() -> None:
             "样例里没有共现关系：契约测试就守不住「边也带证据」那部分字段"
             "（把两个能站住的实体放进同一句主张即可）"
         )
+    if not result.topics:
+        raise SystemExit(
+            "样例里没有主题：契约测试就守不住主题页那部分字段（两个实体有共现边就会有一个主题）"
+        )
 
     payload = {
         "claims": [claim.to_dict() for claim in result.claims],
         "entities": [cluster.to_dict() for cluster in result.entities],
         "relations": [relation.to_dict() for relation in result.relations],
+        "topics": [topic.to_dict() for topic in result.topics],
         "stats": result.stats.to_dict(),
         "notes": list(result.notes),
         "usageModel": result.usage_model,

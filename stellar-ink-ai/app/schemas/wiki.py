@@ -54,6 +54,34 @@ class WikiExtractionStatsView(ContractResponse):
     entity_kept: Annotated[int, Field(ge=0, description="通过证据校验的实体次数")]
     entities: Annotated[int, Field(ge=0, description="合并后的实体个数")]
     relations: Annotated[int, Field(ge=0, description="实体之间的共现关系条数")]
+    topics: Annotated[int, Field(ge=0, description="主题个数（共现图上的连通分量）")]
+
+
+class WikiTopicEvidenceView(ContractResponse):
+    """主题页上那段可核对的原文。"""
+
+    post_id: Annotated[int, Field(ge=1)]
+    chunk_index: Annotated[int, Field(ge=0)]
+    claim_text: Annotated[str, Field(min_length=1)]
+
+
+class WikiTopicView(ContractResponse):
+    """一个主题：一组被反复一起谈论的实体 + 它们的证据。
+
+    `name` 是**关键词组合**（由权重最高的几个实体名拼成），不是模型拟的标题 ——
+    别指望它读起来像一句话；反过来它总是诚实的：名字就是这页里的东西。
+    ⚠️ 一次构建只看到这一批文章，所以主题是**增量**长出来的，不是全站快照。
+    """
+
+    name: Annotated[str, Field(min_length=1)]
+    keywords: Annotated[
+        list[str], Field(default_factory=list, description="这页讲什么（前几个实体）")
+    ]
+    entities: Annotated[list[str], Field(default_factory=list, description="规范化名字，顺序确定")]
+    size: Annotated[int, Field(ge=1)]
+    weight: Annotated[int, Field(ge=0, description="主题内共现边总权重")]
+    post_ids: Annotated[list[int], Field(default_factory=list)]
+    evidence: Annotated[list[WikiTopicEvidenceView], Field(default_factory=list)]
 
 
 class WikiRelationEvidenceView(ContractResponse):
@@ -114,6 +142,10 @@ class WikiClaimsResult(ContractResponse):
     relations: Annotated[
         list[WikiRelationView],
         Field(default_factory=list, description="实体共现关系（边也带证据）"),
+    ]
+    topics: Annotated[
+        list[WikiTopicView],
+        Field(default_factory=list, description="主题（共现图上的连通分量，主题页的原料）"),
     ]
     stats: WikiExtractionStatsView
     notes: Annotated[list[str], Field(default_factory=list, description="给人看的提示")]
