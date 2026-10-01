@@ -661,6 +661,47 @@ curl -s -X POST http://127.0.0.1:8080/ai/agent/ask \
   循环、预算、引用核实、中断全是真的，只有「模型怎么想下一步」是桩。
 - 前端入口尚未接线（Agent 比一次问答慢且贵，等有真实模型与配额后再决定放哪个页面）。
 
+**MCP 工具服务（E3-3：标准化的只读工具协议面）**
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | **`/mcp`（直连 Python :8200，不经网关）** | JSON-RPC 2.0；方法 `initialize` / `ping` / `tools/list` / `tools/call` | **内部签名**（`X-AI-*`，与其它内网端点同一套） |
+
+```bash
+# 必须带内部签名头（Python 直连；对外没有这条出口）
+curl -s -X POST http://127.0.0.1:8200/mcp -H "Content-Type: application/json" \
+  -H "X-AI-Signature: …" -H "X-AI-Timestamp: …" -H "X-AI-Nonce: …" \
+  -H "X-AI-User-Id: 7" -H "X-AI-Role: AUTHOR" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+# => {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_posts",
+#     "inputSchema":{"type":"object","properties":{"question":{…},"topK":{…}},"required":["question"],
+#                    "additionalProperties":false},
+#     "annotations":{"readOnlyHint":true,"idempotentHint":true,"requiredRole":"READER","timeoutMs":20000}}]}}
+```
+
+- **工具集与 Agent 是同一份**（`read_only_tools` + `AGENT_RETRIEVAL`）：协议层另起一套工具，
+  迟早会出现「Agent 能查的 MCP 查不到」。当前暴露 `search_posts`（READER）；
+  装上作者上下文后还会暴露 `author_style`（**AUTHOR**）。
+- **MCP 只是协议层**（计划原文）：它**不替代** Java 的网关门槛、服务内复核与 `ToolBox` 白名单。
+  工具仍然「装不进来」而不是运行期判断 —— `read_only=False` 的工具在装配时就被拒。
+- **身份只从签名的 `X-AI-*` 头来**（`userId` / `role` 参与签名，内网也改不了）。
+  因此 `author_style` 的 `inputSchema` 是**空的**：作者身份不能从参数传。
+- **schema 之外的参数一律拒绝**（`-32602`）——这是「客户端不能靠自行构造参数扩权」的落点：
+  工具实现忽略未知参数只是运气好，不能当成约定。
+- **错误语义分三层**（照 MCP 规范）：
+  | 情况 | 返回 |
+  |---|---|
+  | 坏 JSON / 信封不对 | `-32700` / `-32600`，**HTTP 200** |
+  | 未知方法 | `-32601`（`data.supported` 列出可用方法） |
+  | 未知工具 / 参数不合法 / 缺 `name` | `-32602`（未知工具带 `data.available`） |
+  | 权限不足 | `-32003`（实现定义区间；带 `data.requiredRole`），客户端应当**停止**而不是换参数重试 |
+  | 工具执行失败 / 超时 | `result.isError = true`（**不是**协议错误：客户端要把它喂回模型） |
+  | 通知（无 `id`） | **202 空体**（回响应就是协议违规） |
+- **审计**：每次 `tools/call` 的结果带 `_meta`（`tool` / `role` / `traceId` / `latencyMs` /
+  `readOnly` / `idempotent`），与调用账（E3-1）里的 `scene=agent` 记录互相印证。
+- ⚠️ **目前只在编排网络内暴露**：对外（站外 MCP 客户端）需要 Java 侧再开一条带鉴权的出口，
+  否则拿不到签署过的身份头 —— 没有身份就没有权限判定，等于把只读工具变成匿名可查。
+
 ### 各服务通用
 
 | 方法 | 路径 | 说明 |

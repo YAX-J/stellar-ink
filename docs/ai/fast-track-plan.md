@@ -59,7 +59,9 @@ E. 扩展（按需）
         身份只在 Java、表归 ai-service，成本按角色单价快照，缺口计数如实暴露）
       E3-2 配额与并发 ✅（用户·角色·并发三维；额度在配置、计数在 Redis；触顶 429；
         Redis 故障 fail-open 并告警）
-      E3-3 MCP 工具服务 / E3-4 观测出口 ⏳ 未开始
+      E3-3 MCP 工具服务 ✅（`POST /mcp`，JSON-RPC 2.0；工具集与 Agent 同一份；
+        工具带 schema / 权限标签 / 超时 / 幂等；schema 外参数拒绝、身份只从签名头来）
+      E3-4 观测出口 ⏳ 未开始
    E4 GraphRAG / LLM Wiki ⏳ 未开始
 ```
 
