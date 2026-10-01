@@ -7,6 +7,7 @@ import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -86,6 +87,13 @@ public class AiWikiController {
     @Operation(summary = "某篇文章有多少条 Wiki 主张（公开）", description = "读者侧据此判断要不要显示入口")
     public Response<Long> countOfPost(@RequestParam("postId") Long postId) {
         return Response.success(wikiService.countOfPost(postId));
+    }
+
+    @GetMapping("/wiki/posts/{postId}/entities")
+    @Operation(summary = "按文章读实体与共现关系（公开）",
+            description = "实体只带**本文**的提及与共现关系；每次提及都回到一句具体主张")
+    public Response<List<AiWikiEntityVO>> entitiesOfPost(@PathVariable("postId") Long postId) {
+        return Response.success(wikiService.entitiesOfPost(postId));
     }
 
     private static int bounded(Integer requested, int ceiling) {

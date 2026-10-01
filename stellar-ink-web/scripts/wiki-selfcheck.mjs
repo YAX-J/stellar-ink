@@ -36,6 +36,24 @@ let next = {
   },
 }
 
+/** 实体接口的响应（**独立于**上面那份：两条路径可以各自成功/失败） */
+let nextEntities = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: [
+      { id: 11, name: '每天写五百字', normalized: '每天写五百字', kind: 'concept',
+        mentionCount: 3, postCount: 2,
+        mentions: [{ postId: 7, chunkIndex: 0, claimText: '每天写五百字可以累积成十八万字' }],
+        relations: [{ entityId: 12, name: '十八万字', weight: 2, evidence: [] }] },
+      { id: 12, name: '十八万字', normalized: '十八万字', kind: 'concept',
+        mentionCount: 1, postCount: 1,
+        mentions: [{ postId: 7, chunkIndex: 0, claimText: '每天写五百字可以累积成十八万字' }],
+        relations: [{ entityId: 11, name: '每天写五百字', weight: 2, evidence: [] }] },
+    ],
+  },
+}
+
 globalThis.fetch = async (url, init = {}) => {
   const path = new URL(String(url)).pathname
   calls.push(path)
@@ -45,6 +63,11 @@ globalThis.fetch = async (url, init = {}) => {
     headers: { get: () => null },
     text: async () => JSON.stringify(payload),
   })
+  if (path.endsWith('/entities')) {
+    return nextEntities.status === 200
+      ? reply(200, nextEntities.payload)
+      : reply(nextEntities.status, nextEntities.payload)
+  }
   if (!path.startsWith('/ai/wiki/posts/')) {
     return reply(404, { code: 404, msg: `自检未覆盖的接口：${path}` })
   }
@@ -91,6 +114,45 @@ report(wiki.loading === false, '失败后不卡在加载中')
 const before = calls.length
 report((await wiki.load(null)).length === 0, '空 id 返回空数组')
 report(calls.length === before, '空 id 不发请求')
+
+// —— 实体（E4-7）：与条目分开取、分开失败 ——
+// ⚠️ 显式恢复条目接口的响应：上面几个用例把它改成了失败/空（自检里的桩是共享状态，
+// 不显式恢复的话，「断言」测的就是上一个用例留下的残局）
+next = { status: 200, payload: { code: 0, data: [
+  { id: 1, postId: 7, chunkIndex: 0, text: '每天写五百字可以累积成十八万字',
+    quote: '每天写五百字，一年就是十八万字', headingPath: '写作方法', confidence: 0.9 },
+  { id: 2, postId: 7, chunkIndex: 1, text: '深夜写作要先清掉干扰',
+    quote: '先把手机放到另一个房间', headingPath: '写作方法', confidence: 0.6 },
+] } }
+await wiki.load(7)
+await wiki.loadEntities(7)
+report(wiki.entities.length === 2, '拿到两个实体')
+report(wiki.hasEntities === true, 'hasEntities 判据成立')
+report(calls.at(-1) === '/ai/wiki/posts/7/entities', '实体请求打到按文章的实体接口')
+report(wiki.entities[0].relations[0].name === '十八万字', '共现关系的另一端带名字（读者不看 id）')
+report(wiki.entitiesFailed === false, '成功时不标记失败')
+
+// 实体取不到 → 静默降级，且**不影响已经拿到的条目**
+nextEntities = { status: 503, payload: { code: 503, msg: 'Python 在跑批' } }
+await wiki.loadEntities(7)
+report(wiki.entities.length === 0, '实体失败时列表为空')
+report(wiki.entitiesFailed === true, '实体失败被单独记下来')
+report(wiki.claims.length === 2, '实体失败不影响知识条目（两条路径互不牵连）')
+report(wiki.failed === false, '实体失败不会把条目也标成失败')
+
+// 实体为空 ≠ 失败
+nextEntities = { status: 200, payload: { code: 0, data: [] } }
+await wiki.loadEntities(7)
+report(wiki.entities.length === 0 && wiki.entitiesFailed === false, '「没有实体」不是「失败」')
+
+// 切文章先清空：否则会拿上一篇的实体配这一篇
+await wiki.loadEntities(8)
+report(wiki.entities.length === 0, '换文章时实体先清空')
+
+// 空 id 不发请求
+const beforeEntities = calls.length
+report((await wiki.loadEntities(null)).length === 0, '空 id 返回空数组（实体）')
+report(calls.length === beforeEntities, '空 id 不发实体请求')
 
 // —— 定位逻辑 ——
 function node(text) {

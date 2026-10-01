@@ -13,6 +13,7 @@ import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -189,5 +190,32 @@ class AiWikiControllerTest {
         mockMvc.perform(get("/ai/wiki/claims/count").param("postId", "7"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").value(3));
+    }
+
+    @Test
+    @DisplayName("读取实体：公开，且带回本文提及与共现关系的另一端名字")
+    void entitiesArePublic() throws Exception {
+        when(wikiService.entitiesOfPost(7L)).thenReturn(List.of(AiWikiEntityVO.builder()
+                .id(11L).name("每天写五百字").normalized("每天写五百字").kind("concept")
+                .mentionCount(2).postCount(1)
+                .mentions(List.of(AiWikiEntityVO.MentionVO.builder()
+                        .postId(7L).chunkIndex(0)
+                        .claimText("每天写五百字可以累积成十八万字").build()))
+                .relations(List.of(AiWikiEntityVO.RelationVO.builder()
+                        .entityId(12L).name("十八万字").weight(1)
+                        .evidence(List.of(AiWikiEntityVO.MentionVO.builder()
+                                .postId(7L).chunkIndex(0)
+                                .claimText("每天写五百字可以累积成十八万字").build()))
+                        .build()))
+                .build()));
+
+        mockMvc.perform(get("/ai/wiki/posts/{postId}/entities", 7))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data[0].name").value("每天写五百字"))
+                .andExpect(jsonPath("$.data[0].mentions[0].claimText")
+                        .value("每天写五百字可以累积成十八万字"))
+                .andExpect(jsonPath("$.data[0].relations[0].name").value("十八万字"))
+                .andExpect(jsonPath("$.data[0].relations[0].evidence[0].chunkIndex").value(0));
     }
 }

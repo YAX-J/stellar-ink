@@ -223,6 +223,20 @@ function go(target) {
  */
 const locateMissId = ref(null)
 
+/** 实体类型的展示名：界面上说人话，别把 kind 原样丢给读者 */
+const KIND_LABELS = {
+  person: '人物',
+  concept: '概念',
+  tool: '工具',
+  org: '组织',
+  place: '地点',
+  other: '其他',
+}
+
+function kindLabel(kind) {
+  return KIND_LABELS[kind] || KIND_LABELS.other
+}
+
 function locate(claim) {
   locateMissId.value = null
   const result = locateEvidence(readBody.value, claim.quote)
@@ -240,8 +254,9 @@ async function loadPost(id) {
   } catch {
     /* 会话/网络错误由全局兜底提示，页面显示重试入口 */
   }
-  // 知识条目**不参与上面的成败**：它取不到也要把正文读出来
+  // 知识条目与实体**各取各的**：任一边失败都不影响另一边，也都不参与正文的成败
   wikiStore.load(id)
+  wikiStore.loadEntities(id)
 }
 
 watch(
@@ -496,29 +511,61 @@ onUnmounted(() => {
           </template>
         </section>
 
-        <!-- 知识条目：**没有条目时整块不出现**（不留空壳，也不显示加载占位） -->
-        <section v-if="wikiStore.hasClaims" class="wiki-panel reveal" style="--d:.36s" aria-label="本文的知识条目">
-          <div class="title-row">
-            <h3>知识条目</h3>
-            <span class="kicker">WIKI · 每条都附原文片段</span>
-          </div>
-          <p class="wiki-hint">
-            这些条目由模型从本文抽取，且**必须能在原文里找到依据**才会留下；
-            下面是它们的原文片段，可自行核对。
-          </p>
-          <ol class="wiki-list">
-            <li v-for="claim in wikiStore.claims" :key="claim.id">
-              <p class="wiki-text">{{ claim.text }}</p>
-              <blockquote class="wiki-quote">{{ claim.quote }}</blockquote>
-              <div class="wiki-meta">
-                <span v-if="claim.headingPath" class="wiki-path">{{ claim.headingPath }}</span>
-                <button class="wiki-locate" type="button" @click="locate(claim)">在正文中定位</button>
-                <span v-if="locateMissId === claim.id" class="wiki-miss">
-                  正文里找不到这段文字 —— 文章可能在抽取之后改过。
-                </span>
-              </div>
-            </li>
-          </ol>
+        <!-- 知识条目：**没有条目也没有实体时整块不出现**（不留空壳，也不显示加载占位） -->
+        <section
+          v-if="wikiStore.hasClaims || wikiStore.hasEntities"
+          class="wiki-panel reveal" style="--d:.36s" aria-label="本文的知识条目"
+        >
+          <template v-if="wikiStore.hasClaims">
+            <div class="title-row">
+              <h3>知识条目</h3>
+              <span class="kicker">WIKI · 每条都附原文片段</span>
+            </div>
+            <p class="wiki-hint">
+              这些条目由模型从本文抽取，且**必须能在原文里找到依据**才会留下；
+              下面是它们的原文片段，可自行核对。
+            </p>
+            <ol class="wiki-list">
+              <li v-for="claim in wikiStore.claims" :key="claim.id">
+                <p class="wiki-text">{{ claim.text }}</p>
+                <blockquote class="wiki-quote">{{ claim.quote }}</blockquote>
+                <div class="wiki-meta">
+                  <span v-if="claim.headingPath" class="wiki-path">{{ claim.headingPath }}</span>
+                  <button class="wiki-locate" type="button" @click="locate(claim)">在正文中定位</button>
+                  <span v-if="locateMissId === claim.id" class="wiki-miss">
+                    正文里找不到这段文字 —— 文章可能在抽取之后改过。
+                  </span>
+                </div>
+              </li>
+            </ol>
+          </template>
+
+          <!-- 实体（E4-7）：它们同样有证据 —— 每条都能回到一句具体主张。
+               这里如实写「共现」：两个实体被一起谈论，不等于它们之间有什么关系。 -->
+          <template v-if="wikiStore.hasEntities">
+            <div class="title-row" :class="{ 'wiki-sub-gap': wikiStore.hasClaims }">
+              <h3>本文提到的实体</h3>
+              <span class="kicker">CONCEPTS · 共现，不是因果</span>
+            </div>
+            <ul class="wiki-entities">
+              <li v-for="entity in wikiStore.entities" :key="entity.id">
+                <div class="wiki-entity-head">
+                  <span class="wiki-entity-name">{{ entity.name }}</span>
+                  <span class="wiki-entity-kind">{{ kindLabel(entity.kind) }}</span>
+                  <span class="wiki-entity-count">
+                    全站 {{ entity.mentionCount }} 次 · {{ entity.postCount }} 篇
+                  </span>
+                </div>
+                <p class="wiki-entity-claim">{{ entity.mentions[0] && entity.mentions[0].claimText }}</p>
+                <div v-if="entity.relations && entity.relations.length" class="wiki-entity-rel">
+                  <span class="wiki-rel-label">与谁一起被谈论：</span>
+                  <span v-for="rel in entity.relations" :key="rel.entityId" class="wiki-rel-chip">
+                    {{ rel.name }}（{{ rel.weight }} 次）
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </template>
         </section>
 
         <div class="read-nav reveal" style="--d:.3s">
@@ -714,6 +761,23 @@ onUnmounted(() => {
   transition:all .25s}
 .wiki-locate:hover{color:var(--ink-dim); border-color:var(--primary)}
 .wiki-miss{font-size:11px; color:var(--amber)}
+/* 实体：与主张同一个面板，但**明显是另一类东西** —— 主张是「文章说了什么」，
+   实体是「文章提到了什么」，混在一起会让人把「提到」读成「主张」 */
+.wiki-sub-gap{margin-top:26px}
+.wiki-entities{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:14px}
+.wiki-entities li{border-top:1px solid var(--line); padding-top:12px}
+.wiki-entities li:first-child{border-top:0; padding-top:0}
+.wiki-entity-head{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.wiki-entity-name{font-size:14px; color:var(--ink)}
+.wiki-entity-kind{font-size:10px; letter-spacing:.1em; color:var(--ink-faint);
+  border:1px solid var(--line); border-radius:999px; padding:2px 8px}
+.wiki-entity-count{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint)}
+.wiki-entity-claim{margin:8px 0 0; padding-left:12px; border-left:2px solid var(--line);
+  font-size:12.5px; line-height:1.9; color:var(--ink-faint)}
+.wiki-entity-rel{margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.wiki-rel-label{font-size:11px; color:var(--ink-faint)}
+.wiki-rel-chip{font-size:11px; color:var(--ink-dim); background:var(--surface-2);
+  border-radius:999px; padding:3px 9px}
 
 /* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
 .read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;

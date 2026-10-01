@@ -24,9 +24,13 @@ export const useWikiStore = defineStore('wiki', {
     failed: false,
     /** 当前对应的文章 id：用来丢弃「切换文章后才回来的旧响应」 */
     postId: null,
+    /** 实体与共现关系（E4-7）：**与 claims 分开**，因为它们可以独立失败 */
+    entities: [],
+    entitiesFailed: false,
   }),
   getters: {
     hasClaims: (s) => s.claims.length > 0,
+    hasEntities: (s) => s.entities.length > 0,
   },
   actions: {
     /**
@@ -65,6 +69,38 @@ export const useWikiStore = defineStore('wiki', {
       this.loading = false
       this.failed = false
       this.postId = null
+      this.entities = []
+      this.entitiesFailed = false
+    },
+
+    /**
+     * 取某篇文章的实体与共现关系（E4-7）。
+     *
+     * 与 `load` 分开而不是并成一个请求：两件东西**可以独立失败**，展示上也是分开的
+     * （有主张没实体、有实体没主张都可能）。合成一个的话，任一边抖一下就会让另一边的内容
+     * 也不显示 —— 那是「辅助信息损伤主流程」的另一种形态。
+     *
+     * @returns 实体数组（失败或没有时返回空数组，**不抛错**）
+     */
+    async loadEntities(rawPostId) {
+      const postId = Number(rawPostId)
+      if (!postId) {
+        this.entities = []
+        return []
+      }
+      // 与条目用同一个 postId 做「陈旧响应」判据：切换文章后回来的旧响应一律丢弃
+      if (!this.postId) this.postId = postId
+      this.entities = []
+      this.entitiesFailed = false
+      try {
+        const data = await request(`/ai/wiki/posts/${postId}/entities`, { silent: true })
+        if (this.postId !== postId) return []
+        this.entities = Array.isArray(data) ? data : []
+        return this.entities
+      } catch {
+        if (this.postId === postId) this.entitiesFailed = true
+        return []
+      }
     },
   },
 })
