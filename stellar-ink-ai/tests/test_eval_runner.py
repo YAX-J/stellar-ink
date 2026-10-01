@@ -172,7 +172,13 @@ async def test_run_dataset_marks_unanswerable_cases() -> None:
 
 
 async def test_single_case_failure_does_not_abort_the_run() -> None:
-    """一道题炸了不该让整轮对比作废 —— 否则网络抖一下评测结果就没了。"""
+    """一道题炸了不该让整轮对比作废 —— 否则网络抖一下评测结果就没了。
+
+    但「降级成拒答」必须**带上原因**：接真实模型时，一次免费档 429 会把 30 道题
+    全变成「拒答」，于是对比表上那一行是 `recall 0 / 拒答率 1.0`，
+    看起来像「开了重排之后检索彻底失效」。只记 refused 的话，
+    脚本、面板、日志三处都没有任何线索能把人引到「限流」上去。
+    """
     good = ListRetriever({"星笺为什么把文章比作星辰？": outcome([12])})
 
     result = await run_dataset(
@@ -187,6 +193,9 @@ async def test_single_case_failure_does_not_abort_the_run() -> None:
     assert all(case.refused for case in boom_cases), (
         "失败应显式表现为拒答/空结果，而不是静默当 0 分"
     )
+    assert all(case.error and "上游炸了" in case.error for case in boom_cases)
+    assert result.per_strategy["boom"]["errorCount"] == 3
+    assert result.per_strategy["good"]["errorCount"] == 0, "正常那一路不该被算进错误计数"
     # 另一路仍然完整
     assert len([case for case in result.cases if case.strategy == "good"]) == 3
 

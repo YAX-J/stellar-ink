@@ -31,13 +31,32 @@ def load_script(name: str):
     """按文件路径加载脚本模块（scripts/ 不是包，不能用 import 语句直接引）。"""
     sys.path.insert(0, str(SCRIPTS))
     try:
-        spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return load_module_from_path(SCRIPTS / f"{name}.py", name=name)
     finally:
         sys.path.remove(str(SCRIPTS))
+
+
+def load_module_from_path(path: Path, *, name: str | None = None):
+    """按文件路径执行一个模块，**并把它注册进 `sys.modules`**（这一步不能省）。
+
+    为什么必须注册（踩过一次，报错完全指错方向）：`@dataclass(slots=True)` 在生成
+    新类时要拿 `sys.modules[cls.__module__].__dict__`，而 `exec_module` 之前若没注册，
+    取到的是 `None` → `AttributeError: 'NoneType' object has no attribute '__dict__'`，
+    栈底落在 `dataclasses.py` 里，看起来像**脚本自己写坏了**。
+    真实 `import` 一定有注册这一步，所以这是加载器的保真度问题；不修的话，
+    任何脚本只要用了 `slots=True`（或 pickle、`get_type_hints` 之类）就会以这种形态红。
+    """
+    module_name = name or path.stem
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 def test_every_script_configures_the_console() -> None:
@@ -57,6 +76,33 @@ def test_scripts_are_importable(path: Path) -> None:
     module = load_script(path.stem)
 
     assert module is not None
+
+
+def test_loader_registers_the_module_so_slots_dataclasses_work(tmp_path: Path) -> None:
+    """加载器必须像真实 import 那样把模块注册进 `sys.modules`。
+
+    `@dataclass(slots=True)` 生成新类时要读 `sys.modules[cls.__module__].__dict__`；
+    没注册就取到 `None`，报 `AttributeError: 'NoneType' object has no attribute '__dict__'`，
+    栈底落在 `dataclasses.py` —— 看起来像**脚本写错了**，实际是加载器少了这一步。
+    这条用一个临时模块把判据钉住，别等到某个脚本哪天加了 `slots=True` 才发现。
+    """
+    path = tmp_path / "slots_probe.py"
+    path.write_text(
+        "from dataclasses import dataclass, field\n"
+        "\n"
+        "@dataclass(slots=True)\n"
+        "class Probe:\n"
+        "    name: str\n"
+        "    notes: list = field(default_factory=list)\n"
+        "\n"
+        "CREATED = Probe('ok')\n",
+        encoding="utf-8",
+    )
+
+    module = load_module_from_path(path)
+
+    assert module.CREATED.name == "ok"
+    assert module.CREATED.notes == []
 
 
 def test_console_helper_degrades_instead_of_raising() -> None:

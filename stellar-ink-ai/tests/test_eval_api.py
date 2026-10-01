@@ -17,6 +17,8 @@ import pytest
 from fastapi import FastAPI
 
 from app.main import create_app
+from app.rag.eval_service import EvalModels, _notes
+from app.schemas.eval import EvalModelSource
 from tests.fake_providers import install_fake_providers, install_no_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
 
@@ -103,6 +105,22 @@ async def test_notes_explain_what_fake_models_cannot_prove(app: FastAPI, secret:
     joined = "".join(payload["notes"])
     assert "FakeProvider" in joined
     assert "不代表真实语义质量" in joined
+
+
+def test_notes_flag_upstream_failures_before_the_model_source_note() -> None:
+    """有题因上游失败被降级成「拒答」时，第一条提示必须先说这件事。
+
+    为什么值得单独一条：那一行指标（recall 0 / 拒答率 1.0）长得跟「策略彻底失效」一模一样。
+    实测踩过 —— 标准五组跑到第 4 组时免费嵌入模型 429，`hybrid+rerank` 整行归零，
+    而它和重排质量毫无关系。没有这条提示，面板上的假结论会被当成真结论。
+    """
+    models = EvalModels(source=EvalModelSource.PANEL, names=("some-embed",))
+
+    flagged = _notes(models, error_count=30)
+
+    assert "30" in flagged[0]
+    assert "不可用" in flagged[0]
+    assert _notes(models, error_count=0)[0].startswith("本次向量与重排")
 
 
 async def test_sparse_only_run_reports_that_no_model_was_used(app: FastAPI, secret: str) -> None:

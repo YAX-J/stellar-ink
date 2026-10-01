@@ -182,6 +182,11 @@ class CaseResult:
     cited_chunks: list[str] = field(default_factory=list)
     refused: bool = False
     latency_ms: float = 0.0
+    #: 单题**基础设施失败**的可读原因（限流/超时/上游 5xx）。
+    #: 为什么必须单独记：这类失败在 `run_dataset` 里被降级成「拒答」，若不记下来，
+    #: 一次 429 会让整行指标变成 0 并显示成「这个策略全错」——
+    #: 用户会去怀疑检索与提示词，而真因是模型服务限流（实测踩过）。
+    error: str | None = None
     #: 每题可带自定义增益（分级相关），缺省用二值
     graded_relevance: dict[int, float] | None = None
 
@@ -266,6 +271,10 @@ def evaluate_strategy(
     latencies = [case.latency_ms for case in all_cases if case.latency_ms > 0]
     metrics["latencyP50"] = round(percentile(latencies, 0.5), 1)
     metrics["latencyP95"] = round(percentile(latencies, 0.95), 1)
+
+    #: 因上游故障被降级成「拒答」的题数。**这一位非 0 时整行指标不可用**：
+    #: 拒答率、误拒率都会被这些「假拒答」抬起来，而它们不代表模型或检索的质量。
+    metrics["errorCount"] = sum(1 for case in results if case.error)
 
     return metrics
 

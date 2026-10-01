@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from app.rag.metrics import DEFAULT_KS, CaseResult, compare_strategies
+
+logger = logging.getLogger(__name__)
 
 
 class Retriever(Protocol):
@@ -244,7 +247,7 @@ async def run_dataset(
 
     for strategy in strategies:
         for case in dataset.cases:
-            outcome = await _retrieve_safely(strategy, case)
+            outcome, error = await _retrieve_safely(strategy, case)
             results.append(
                 CaseResult(
                     case_id=case.case_id,
@@ -258,6 +261,7 @@ async def run_dataset(
                     cited_chunks=list(outcome.cited_chunks) or list(outcome.chunks),
                     refused=outcome.refused,
                     latency_ms=outcome.latency_ms,
+                    error=error,
                     graded_relevance=case.graded_relevance,
                 )
             )
@@ -273,12 +277,28 @@ async def run_dataset(
     )
 
 
-async def _retrieve_safely(strategy: StrategySpec, case: EvalCase) -> RetrievalOutcome:
-    """单题失败降级为「拒答 + 空结果」，并保留可读原因（不中断整轮评测）。"""
+async def _retrieve_safely(
+    strategy: StrategySpec, case: EvalCase
+) -> tuple[RetrievalOutcome, str | None]:
+    """单题失败降级为「拒答 + 空结果」，并**把原因带回去**（返回 `(结果, 原因)`）。
+
+    为什么必须带回原因（实测踩过）：接真实模型跑标准五组时，免费嵌入模型在第 4 组
+    触发了 429，30 道题全部被降级成「拒答」—— 于是对比表上 `hybrid+rerank` 一整行
+    是 `recall 0 / 拒答率 1.0`，看起来像「开了重排之后检索彻底失效」。
+    真因是限流，与重排毫无关系。当时只有一个 `logger`都没打的静默 except，
+    所以脚本、面板、日志三处都没有任何线索。
+    """
     try:
-        return await strategy.retriever.retrieve(case.question, top_k=strategy.top_k)
-    except Exception:  # noqa: BLE001 - 评测是批量任务：单题异常不该让整轮作废
-        return RetrievalOutcome(posts=[], chunks=[], refused=True, latency_ms=0.0)
+        return await strategy.retriever.retrieve(case.question, top_k=strategy.top_k), None
+    except Exception as error:  # noqa: BLE001 - 评测是批量任务：单题异常不该让整轮作废
+        reason = f"{type(error).__name__}: {error}"
+        logger.warning(
+            "评测单题失败（记为拒答，不计入策略质量）：strategy=%s case=%s：%s",
+            strategy.key,
+            case.case_id,
+            reason,
+        )
+        return RetrievalOutcome(posts=[], chunks=[], refused=True, latency_ms=0.0), reason
 
 
 class ListRetriever:

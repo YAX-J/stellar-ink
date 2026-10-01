@@ -248,6 +248,7 @@ async def run_evaluation(
         summaries.append((spec.key, description))
 
     result = await run_dataset(dataset, plans, ks=DEFAULT_KS)
+    error_count = sum(1 for case in result.cases if case.error)
     return EvalRunOutcome(
         dataset_name=dataset.name,
         dataset_description=dataset.description,
@@ -260,7 +261,7 @@ async def run_evaluation(
         per_strategy=result.per_strategy,
         cases=result.cases,
         elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
-        notes=_notes(models),
+        notes=_notes(models, error_count=error_count),
     )
 
 
@@ -301,7 +302,7 @@ def to_response(outcome: EvalRunOutcome) -> EvalRunResponse:
     )
 
 
-def _notes(models: EvalModels) -> list[str]:
+def _notes(models: EvalModels, *, error_count: int = 0) -> list[str]:
     """把「这些数字能说明什么、不能说明什么」写进响应，别让面板用户自己猜。
 
     第一条随模型来源变化，这是整个评测台最容易误读的地方：同样是「Dense 列 0.9」，
@@ -326,10 +327,21 @@ def _notes(models: EvalModels) -> list[str]:
         names = "、".join(models.names) or "未记录模型名"
         head = f"本次向量与重排来自面板配置的模型（{names}）：这两列反映的是真实链路质量。"
         tail = "拒答阈值（minScore / minDenseScore）随嵌入模型而变，换模型后必须用本页重新标定。"
-    return [
+
+    notes = [
         head,
         "拒答率的分母是「无答案题」，误拒率的分母是「有答案题」——两者不能相加。",
         "BM25 的 minScoreRatio 只提精度、永远不会让结果为空；"
         "能拒答的只有 minScore 与 minDenseScore。",
         tail,
     ]
+    if error_count:
+        # 这条必须显眼：出错的那一行**看起来**像「这个策略全错」，实际是上游限流/超时。
+        # 不写进 notes 的话，面板上的错误结论会直接被当成检索质量结论。
+        notes.insert(
+            0,
+            f"⚠ 本轮有 {error_count} 道题因上游失败（限流/超时/5xx）被记为「拒答」："
+            "这些行的指标不可用，请降低策略数或稍后重跑；"
+            "逐题原因见服务端日志 `评测单题失败`。",
+        )
+    return notes

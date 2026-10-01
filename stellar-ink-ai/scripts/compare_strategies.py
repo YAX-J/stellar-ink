@@ -1,31 +1,42 @@
 """策略对比：同一份黄金集，跑「单路 Sparse / 单路 Dense / 混合 / 混合+重排」四组配置。
 
-用途有两个：
-1. **证明开关是真的**：四组配置走的是同一条 `RetrievalPipeline`，只有开关不同；
-   如果某两组结果完全一样，说明那个开关没接上（这比指标高低更值得关注）。
-2. **给前端对比表定形状**：`compare_strategies` 的输出就是 `/ai-lab` 评测页签要渲染的
-   结构（`{策略: 指标}`），这个脚本先在命令行把它跑出来。
+两种模型来源，**同一份 `CONFIGS`、同一条 `RetrievalPipeline`**，只有「模型从哪来」不同：
 
-⚠️ 关于 Dense 两列的读数：这里用 `FakeProvider` 的**哈希伪向量**，它没有语义，
-所以 Dense 的表现接近随机，**不代表真实 bge-m3 的质量**。这两列现在的意义是
-「向量通路接对了没有」，真实质量必须等 Qdrant + 真模型接上后重跑。
+- `--provider fake`（默认）：FakeProvider 的哈希伪向量。离线可跑、不需要密钥，
+  存在意义是**证明开关是真的** —— 若某两组结果完全相同，说明那个开关没接上
+  （这比指标高低更值得关注）。但伪向量没有语义，`dense` 一列接近随机，
+  **不代表真实质量**，也不该拿来比较检索策略的优劣。
+- `--provider panel`：走应用自己的那份配置（`app.api.v1.assembly` → `runtime.registry()`），
+  即面板里配的真实模型。这是「高级链路到底有没有用」的答案来源，
+  也是唯一能把 `minDenseScore`（Dense 通路的拒答绝对下限）标定出来的口径 ——
+  门限必须按**真实分数分布**定，离线伪向量的分数（0.03 量级）定出来的门限会静默清空向量通路。
 
-用法：``uv run python scripts/compare_strategies.py``
+⚠️ 不另写一套配置：两边的策略集合、指标列都来自本文件顶部的常量，
+否则「命令行跑出来的数字」与「面板跑出来的数字」会从配置这一步就开始分叉。
+
+用法::
+
+    uv run python scripts/compare_strategies.py                     # 离线（Fake，默认）
+    uv run python scripts/compare_strategies.py --provider panel    # 真实模型（读面板配置）
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 from pathlib import Path
 
+from app.providers import runtime
+from app.providers.config_source import ProviderConfigError, describe_sources
+from app.providers.errors import ProviderError
 from app.providers.fake import FakeProvider
+from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset, StrategySpec, run_dataset
 from app.rag.metrics import DEFAULT_KS
-from app.rag.pipeline import RetrievalConfig, RetrievalPipeline, build_corpus
+from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
 
 # 控制台编码助手与本文件同目录：uv run python scripts/x.py 时该目录就是 sys.path[0]
 from console import use_utf8_console
-from scripts.seed_posts import load_seed_posts
 
 GOLDEN = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval" / "golden_v1.json"
 
@@ -50,13 +61,46 @@ CONFIGS = (
 COLUMNS = ("recall@1", "recall@3", "recall@5", "precision@5", "ndcg@5", "mrr", "refusalRate")
 
 
-async def main() -> None:
-    posts = load_seed_posts()
-    corpus = build_corpus(posts)
-    dataset = EvalDataset.load(GOLDEN)
-    fake = FakeProvider()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="黄金集上的检索策略对比")
+    parser.add_argument(
+        "--provider",
+        choices=("fake", "panel"),
+        default="fake",
+        help="fake=离线伪向量（默认）；panel=面板里配的真实模型",
+    )
+    return parser.parse_args()
 
-    strategies = [
+
+def build_strategies(provider: str) -> list[StrategySpec]:
+    """按来源装配策略集合。
+
+    `panel` 分支刻意**复用 `assembly.pipeline_for`** 而不是自己 `runtime.registry()`：
+    那条路带着「按语料版本 + 开关 + 配置指纹缓存管道」的语义，
+    自己装配会让「整库嵌入」在一次运行里发生好几遍 —— 那是费用，不是慢一点。
+    """
+    corpus = corpus_module.cached_corpus()
+    if provider == "panel":
+        # 延迟导入：离线跑（默认）不该因为这条路径去读库
+        from app.api.v1 import assembly  # noqa: PLC0415 - 见上
+
+        roles = sorted(
+            {role for config in CONFIGS for role in assembly.roles_for(config, chat=False)}
+        )
+        # 预检：缺角色时一次说清缺哪些、去哪儿填，而不是跑到第三组策略才报错
+        runtime.require_roles(*roles)
+        return [
+            StrategySpec(
+                config.label,
+                assembly.pipeline_for(config),
+                top_k=10,
+                description=str(config.describe()),
+            )
+            for config in CONFIGS
+        ]
+
+    fake = FakeProvider()
+    return [
         StrategySpec(
             config.label,
             RetrievalPipeline(
@@ -70,6 +114,26 @@ async def main() -> None:
         )
         for config in CONFIGS
     ]
+
+
+async def main() -> int:
+    args = parse_args()
+    dataset = EvalDataset.load(GOLDEN)
+    posts = corpus_module.cached_posts()
+    corpus = corpus_module.cached_corpus()
+
+    if args.provider == "panel":
+        print(f"模型来源：面板配置（真实模型）｜{describe_sources()}")
+    else:
+        print("模型来源：FakeProvider（离线哈希伪向量，无语义）")
+
+    try:
+        strategies = build_strategies(args.provider)
+    except (ProviderError, ProviderConfigError) as error:
+        # 装配失败要给出可读原因与「配置是从哪读的」，而不是一个栈
+        print(f"✗ 装配失败：{error}")
+        print(f"  配置来源：{describe_sources()}")
+        return 1
 
     result = await run_dataset(dataset, strategies, ks=DEFAULT_KS)
 
@@ -95,18 +159,42 @@ async def main() -> None:
         if _ranking(result.per_strategy[a.label]) == _ranking(result.per_strategy[b.label])
     )
     print(f"\n排序指标完全相同的配置对：{same or '无（说明每个开关都真的改变了排序）'}")
-    if any({"dense", "hybrid+rerank"} == set(pair) for pair in same):
+
+    # 上游故障必须单独喊出来：被降级成「拒答」的题会让那一行看起来像「这个策略全错」。
+    # 实测踩过：免费嵌入模型在第 4 组触发 429，`hybrid+rerank` 整行 recall 0 / 拒答率 1.0，
+    # 而它跟重排质量一点关系都没有。
+    errored = {
+        label: metrics.get("errorCount")
+        for label, metrics in result.per_strategy.items()
+        if metrics.get("errorCount")
+    }
+    if errored:
         print(
-            "  注：dense 与 hybrid+rerank 相同是 Fake 的必然结果 —— 假重排用的就是这个伪向量函数，"
-            "它不带来新信息；真重排必须换一个模型（bge-reranker 之类）。"
+            f"\n[×] 有题目因上游失败（限流/超时/5xx）被记为「拒答」，这些行不可用：{errored}"
+            "\n    真因见服务端日志的「评测单题失败」；与检索或重排质量无关，请稍后重跑。"
         )
-    print(
-        "\n[!] Dense 用 FakeProvider 的哈希伪向量（无语义），所以 dense 两列接近随机 ——"
-        "\n   这恰好证明向量通路真的在起作用（没有偷偷退回 Sparse）；"
-        "\n   真实 Dense / 混合 / 重排的质量必须等 Qdrant + bge-m3 接上后重跑。"
-        "\n   另外：不加相对门限时 precision@5 偏低，是 post 级去重后前 5 名混进了弱候选，"
-        "\n   对照 `sparse+floor` 一行可见门限对精度的影响（召回几乎不掉）。"
-    )
+
+    if args.provider == "panel":
+        print(
+            "\n[i] 这是**真实模型**上的数字：Dense 两列现在有语义，可以拿它回答"
+            "\n    「混合与重排到底有没有用」。下一步是按这份分数分布标定 minDenseScore"
+            "\n    （`scripts/calibrate_min_score.py`），Dense 通路的拒答只能靠绝对下限。"
+        )
+    else:
+        if any({"dense", "hybrid+rerank"} == set(pair) for pair in same):
+            print(
+                "  注：dense 与 hybrid+rerank 相同是 Fake 的必然结果 ——"
+                " 假重排用的就是这个伪向量函数，它不带来新信息；"
+                "真重排必须换一个模型（bge-reranker 之类）。"
+            )
+        print(
+            "\n[!] Dense 用 FakeProvider 的哈希伪向量（无语义），所以 dense 两列接近随机 ——"
+            "\n   这恰好证明向量通路真的在起作用（没有偷偷退回 Sparse）。"
+            "\n   真实质量用 `--provider panel` 重跑，别拿这两列下结论。"
+            "\n   另外：不加相对门限时 precision@5 偏低，是 post 级去重后前 5 名混进了弱候选，"
+            "\n   对照 `sparse+floor` 一行可见门限对精度的影响（召回几乎不掉）。"
+        )
+    return 0
 
 
 def _ranking(metrics: dict[str, object]) -> dict[str, object]:
@@ -117,4 +205,4 @@ def _ranking(metrics: dict[str, object]) -> dict[str, object]:
 if __name__ == "__main__":
     # 控制台编码：Windows 默认 GBK，脚本里的箭头/勾叉/破折号会让 print 抛异常
     use_utf8_console()
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

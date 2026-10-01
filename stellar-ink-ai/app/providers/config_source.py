@@ -221,24 +221,52 @@ def _fetch_rows() -> list[Mapping[str, object]]:
             "直连库读取配置需要 PyMySQL：请安装它，或改用 AI_PROVIDER_CONFIG_JSON 注入配置"
         ) from error
 
-    connection = pymysql.connect(
-        host=os.environ["MYSQL_HOST"],
-        port=int(os.environ.get("MYSQL_PORT") or 3306),
-        user=os.environ["MYSQL_USER"],
-        password=os.environ.get("MYSQL_PASSWORD") or "",
-        database=os.environ["MYSQL_DB"],
-        charset="utf8mb4",
-        # 只读 + 显式超时：配置读不到应当快速失败，而不是把启动挂住
-        cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=3,
-        read_timeout=5,
-    )
+    try:
+        connection = pymysql.connect(
+            host=os.environ["MYSQL_HOST"],
+            port=int(os.environ.get("MYSQL_PORT") or 3306),
+            user=os.environ["MYSQL_USER"],
+            password=os.environ.get("MYSQL_PASSWORD") or "",
+            database=os.environ["MYSQL_DB"],
+            charset="utf8mb4",
+            # 只读 + 显式超时：配置读不到应当快速失败，而不是把启动挂住
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=3,
+            read_timeout=5,
+        )
+    except Exception as error:  # noqa: BLE001 - 可选依赖的异常类型不该逐个列举（列不全就漏）
+        raise _db_error("连接 MySQL", error) from error
     try:
         with connection.cursor() as cursor:
             cursor.execute(SELECT_ENABLED_CONFIGS)
             return list(cursor.fetchall())
+    except Exception as error:  # noqa: BLE001 - 同上：查询期的异常统一翻成配置错误
+        raise _db_error("查询 ai_provider_config", error) from error
     finally:
         connection.close()
+
+
+def _db_error(stage: str, error: Exception) -> ProviderConfigError:
+    """把 PyMySQL 的异常翻成**可读的配置错误**（不回显密码）。
+
+    为什么必须翻（实测踩到）：`_fetch_rows` 原先不接异常，一个 1044
+    （`Access denied for user 'root'@'%' to database 'stellar_ink'` —— 账号只有 USAGE 权限）
+    会原样冒到端点，而端点的 `ASSEMBLY_ERRORS` 只认 `ProviderConfigError` /
+    `ProviderError` / `CorpusError`，于是用户看到的是 `code=500「系统繁忙，请稍后重试」`：
+    真因写在服务端日志的一句 MySQL 报错里，而界面把「配置读不到」伪装成了「服务坏了」。
+    """
+    host = os.environ.get("MYSQL_HOST")
+    port = os.environ.get("MYSQL_PORT") or 3306
+    target = f"{host}:{port}/{os.environ.get('MYSQL_DB')}"
+    text = str(error).strip()
+    hint = ""
+    if "1044" in text or "1045" in text:
+        hint = "（账号对目标库没有权限或密码不对：核对 MYSQL_USER / MYSQL_PASSWORD 与服务端授权）"
+    elif "2003" in text or "Can't connect" in text:
+        hint = "（连不上：核对 MYSQL_HOST、以及 SSH 隧道是否还开着）"
+    return ProviderConfigError(
+        f"{stage}时读不到模型配置：{target} —— {type(error).__name__}: {text}{hint}"
+    )
 
 
 def _as_int(value: object) -> int | None:

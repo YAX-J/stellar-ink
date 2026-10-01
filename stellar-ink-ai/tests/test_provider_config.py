@@ -17,6 +17,7 @@ import pytest
 from app.api.v1.assembly import ASSEMBLY_ERRORS, CorpusError
 from app.providers.config_source import (
     ProviderConfigError,
+    _fetch_rows,
     configs_from_env,
     configs_from_rows,
 )
@@ -236,3 +237,39 @@ def test_provider_error_is_the_common_base_for_callers() -> None:
         issubclass(error_type, ASSEMBLY_ERRORS)
         for error_type in (ProviderError, ProviderConfigError, CorpusError)
     )
+
+
+def test_database_failure_is_translated_not_leaked_as_a_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """读库失败必须变成 `ProviderConfigError`，否则用户看到的是「服务坏了」。
+
+    实测踩到的那次：测试机的 `root@'%'` 只有 `USAGE` 权限，直连报
+    `1044 Access denied ... to database 'stellar_ink'`。这条异常原先原样冒到端点，
+    而 `ASSEMBLY_ERRORS` 不认它 → `code=500「系统繁忙，请稍后重试」`。
+    真因是一句权限问题，界面却把它说成服务故障 —— 排查方向直接跑偏。
+
+    同时守住「不泄露密码」：错误消息里不能出现 `MYSQL_PASSWORD` 的值。
+    """
+    pymysql = pytest.importorskip("pymysql", reason="直连库读取是可选能力")
+    secret = "s3cr3t-not-in-messages"
+
+    def explode(**_kwargs: object) -> object:
+        raise pymysql.err.OperationalError(
+            1044, "Access denied for user 'root'@'%' to database 'stellar_ink'"
+        )
+
+    monkeypatch.setattr(pymysql, "connect", explode)
+    monkeypatch.setenv("MYSQL_HOST", "124.221.158.32")
+    monkeypatch.setenv("MYSQL_DB", "stellar_ink")
+    monkeypatch.setenv("MYSQL_USER", "root")
+    monkeypatch.setenv("MYSQL_PASSWORD", secret)
+
+    with pytest.raises(ProviderConfigError) as excinfo:
+        _fetch_rows()
+
+    message = str(excinfo.value)
+    assert "1044" in message
+    assert "124.221.158.32:3306/stellar_ink" in message, "要说清读的是哪个库"
+    assert "MYSQL_PASSWORD" in message, "要给出该查什么"
+    assert secret not in message
