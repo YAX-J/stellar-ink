@@ -95,6 +95,11 @@ async function copyCode(code, index) {
 .md-list li::marker{color:var(--primary)}
 .md-empty{color:var(--ink-faint); font-size:14px; line-height:1.9}
 
+/* 知识条目「在正文中定位」的临时高亮。样式放这里而不是深读页：
+ * 类名是加在**本组件渲染的块元素**上的，父组件的 scoped 样式匹配不到它们。 */
+.md-body .wiki-hit{background:var(--primary-soft); box-shadow:0 0 0 6px var(--primary-soft);
+  border-radius:var(--r-sm); transition:background .3s var(--ease-standard)}
+
 .marg-note{background:var(--primary-soft); border:1px dashed var(--primary); border-radius:var(--r-sm);
   padding:14px 18px; font-size:13px; line-height:1.9; color:var(--ink-dim); margin:-8px 0 30px;
   max-width:var(--prose-max,100%)}
