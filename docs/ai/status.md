@@ -37,7 +37,7 @@
 | E3-4 观测出口 | ✅（最小形态；OTel/Langfuse **待拍板**） | Python：进程内事件缓冲（有界、**只存结构不存内容**）+ 三段埋点（检索 / 工具 / 模型含失败状态码）+ `GET /internal/trace/{traceId}`；Java：`GET /ai/admin/trace/{traceId}` 合并调用账与 Python 事件，**Python 不可用时仍回账** | `tests/test_trace.py`（9）+ `test_trace_api.py`（3）+ `test_trace_contract.py`（3，与 Java 共读 fixture）；`AiTraceControllerTest`（6）+ `AiUsageServiceImplTest.traceCalls` + `AiContractTest.traceReplayRoundTrips` |
 | E4-1 带证据的主张抽取 | ✅ | `app/rag/wiki.py`（原子主张 + **引用校验** + 丢弃分类计数）+ `POST /wiki/claims`；主张绑定 `postId`/`chunkIndex`/`postVersion`/`contentHash`/`quote` | `tests/test_wiki_claims.py`（22 条：编造引用被挡、跨段落引用不算、空白差异不算不实、重复计数、长度边界、格式抖动不炸、契约样例可解析）+ `test_wiki_api.py`（4 条） |
 | E4-2 落库与读者侧 | ✅ | `deploy/sql/13_ai_wiki.sql`（`ai_wiki_claim`，**幂等锚点 (postId, contentHash, claimText)**）+ `POST /ai/admin/wiki/build`（ADMIN；落库三种结果分开计数）+ 读者侧**公开**读（`GET /ai/wiki/posts/{id}/claims`、`/ai/wiki/claims/count`）；构建走调用账 `scene=wiki` | `AiWikiServiceImplTest`（5 条：首次全新增、**重复构建未变动**、置信度变了是更新、缺证据不落库、读者侧按段落排序）+ `AiWikiControllerTest`（6 条：两档门槛不同、预算只能收紧、证据一起回）+ `AiContractTest.wikiClaimsRoundTrips` |
-| E4-3 前端入口（读者侧展示） | ⏳ 下一刀 | 文章页的「知识条目」区块（主张 + 原文片段 + 回到原文），或独立 Wiki 页 | — |
+| E4-3 前端入口（读者侧展示） | ✅ | 阅读页「知识条目」区块（`stores/wiki.js` + `utils/wiki.js`）：主张与**原文片段并排**，可「在正文中定位」；**没有条目时整块不出现**，取数失败**静默降级**（`failed` 与 `claims` 是两件事） | `scripts/wiki-selfcheck.mjs`（20 条：成功/无条目/失败三态分开、切文先清空、空 id 不发请求；定位的 located/missing/unavailable、空白差异、过短片段不跳） |
 | E4 其余（消歧/关系/社区/页面/增量） | ⏳ 未开始 | roadmap §14 的后续步骤，建在 E4-1 的「可回到证据」之上 | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
@@ -229,6 +229,10 @@ Agent 比一次问答慢、也更贵（可能多次调用模型），在配额�
 1. 在服务端 `.env` 里设置 `AI_SECRET_MASTER_KEY`（32 字节 base64）与 `AI_INTERNAL_SECRET`（≥32 字符）——
    两者都**没有默认值**，缺失时相关能力直接拒绝，不会静默降级。
 2. 执行 `mysql -u root -p stellar_ink < deploy/sql/10_ai-schema.sql`（`ai_*` 表）。
+   已有升级脚本按需各执行一次：`11_ai_model_library.sql`、`12_ai_call_log.sql`、
+   `13_ai_wiki.sql`（E4 的知识条目表；**读者侧的「知识条目」区块依赖它**，
+   没建表时读取接口会报表不存在 —— 而前端会静默降级成「本文没有知识条目」，
+   现象上就是「功能看起来没上线」，所以别漏这步）。
 3. 在 `/ai-lab` 面板里填 API Key（只写不读，列表只回掩码）并跑一次连通性自检。
    ⚠️ 那个自检是 `scope: tcp_only`：**只证明端点可达，不验证模型名与密钥**（已实测过这个差别）。
    真正的验证是 `uv run python scripts/provider_smoke.py`：它读的就是应用读的那份配置，

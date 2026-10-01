@@ -264,15 +264,16 @@ dense-only 扫真实分数分布，输出「仍答对 / 挡住无答案」并给
 顺带修正两处会骗人的地方：界面不再承诺服务端不会兑现的步数（Java 用 `min(请求值, 4)` 夹住），
 「停止」现在真的中止请求（`api/client.js` 的 `request()` 接受调用方的 `signal`）。
 
-**E4-1 带证据的主张抽取已交付（2026-10-01）**：`app/rag/wiki.py` + `POST /wiki/claims`。
-原子主张绑定 `postId` / `chunkIndex` / `postVersion` / `contentHash` / `quote`，并**逐条校验引用
-真的出现在那一段里**（编造的引用直接丢弃、按原因计数）。契约样例
-`tests/fixtures/wiki_claims_result.json` 由脚本生成（故意含一条被丢弃的主张），留给 Java 侧共读。
+**E4-2 / E4-3 已交付（2026-10-01）**：`ai_wiki_claim` 表（幂等锚点 = 文章 + 段落哈希 + 主张文本）+
+`POST /ai/admin/wiki/build`（ADMIN，落库的「新增/更新/未变动」分开计数，走调用账 `scene=wiki`）+
+读者侧公开读；阅读页「知识条目」区块（主张与**原文片段并排**，「在正文中定位」**按文本找**而不是
+按块下标找；没有条目时整块不出现，取数失败静默降级）。前端自检 `scripts/wiki-selfcheck.mjs`（20 条）。
 
-**下一刀 E4-2：Java 落库与读者侧**（`deploy/sql/13_ai_wiki.sql` 建 `ai_wiki_claim` 表 →
-ai-service 的 ADMIN 构建出口 → 读者侧列表/详情，条目能点回原文）。
-再往后是实体消歧 / 关系 / 社区发现 / 页面生成 / 增量失效，最后才是 GraphRAG。
-两件环境动作仍挂着（`minDenseScore` 标定等嵌入额度、Qdrant 冒烟需要隧道）。
+**下一步（E4 剩下的部分，按 roadmap §14 的顺序）**：实体/别名消歧 → 关系抽取 →
+主题社区发现 → **页面生成**（把主张聚成人读的主题页）→ 增量失效（文章改了只重算受影响的条目）。
+最后才是 GraphRAG（Local/Global Search），且要先在与普通 RAG 的对比里证明收益。
+⚠️ 用户侧三件环境动作仍挂着：建 `13_ai_wiki.sql`、换付费/自建 embedding 与 rerank（解除免费档
+每日 50 次的限制）、开 Qdrant 隧道；前两件做完就能真正跑一次构建并看到条目。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

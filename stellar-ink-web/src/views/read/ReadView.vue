@@ -8,6 +8,8 @@ import { useCommentStore } from '@/stores/comments'
 import { useAuthorStore } from '@/stores/authors'
 import { useQaStore } from '@/stores/qa'
 import { useAgentStore } from '@/stores/agent'
+import { useWikiStore } from '@/stores/wiki'
+import { locateEvidence } from '@/utils/wiki'
 import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
@@ -24,6 +26,7 @@ const commentStore = useCommentStore()
 const authorStore = useAuthorStore()
 const qaStore = useQaStore()
 const agentStore = useAgentStore()
+const wikiStore = useWikiStore()
 
 const post = computed(() => postStore.byId(route.params.id))
 const prevPost = computed(() => post.value?.prev || null)
@@ -214,6 +217,21 @@ function go(target) {
   if (target) router.push(`/read/${target.id ?? target}`)
 }
 
+/* ---- 知识条目（LLM Wiki，E4-3）----
+ * 它们是**文章的增强**，不是文章本身：取不到时整块不出现，阅读不受影响（store 已静默降级）。
+ * 每条都带原文片段 —— 这是 Wiki 与「模型写一段摘要」的区别，也是读者唯一能自行核对的东西。
+ */
+const locateMissId = ref(null)
+
+function locate(claim) {
+  locateMissId.value = null
+  const result = locateEvidence(readBody.value, claim.quote)
+  if (result === 'missing') {
+    // 如实说：条目带的是**抽取时**的版本，文章改过之后片段可能已经不在正文里了
+    locateMissId.value = claim.id
+  }
+}
+
 async function loadPost(id) {
   try {
     await postStore.fetchDetail(id)
@@ -222,6 +240,8 @@ async function loadPost(id) {
   } catch {
     /* 会话/网络错误由全局兜底提示，页面显示重试入口 */
   }
+  // 知识条目**不参与上面的成败**：它取不到也要把正文读出来
+  wikiStore.load(id)
 }
 
 watch(
@@ -476,6 +496,31 @@ onUnmounted(() => {
           </template>
         </section>
 
+        <!-- 知识条目：**没有条目时整块不出现**（不留空壳，也不显示加载占位） -->
+        <section v-if="wikiStore.hasClaims" class="wiki-panel reveal" style="--d:.36s" aria-label="本文的知识条目">
+          <div class="title-row">
+            <h3>知识条目</h3>
+            <span class="kicker">WIKI · 每条都附原文片段</span>
+          </div>
+          <p class="wiki-hint">
+            这些条目由模型从本文抽取，且**必须能在原文里找到依据**才会留下；
+            下面是它们的原文片段，可自行核对。
+          </p>
+          <ol class="wiki-list">
+            <li v-for="claim in wikiStore.claims" :key="claim.id">
+              <p class="wiki-text">{{ claim.text }}</p>
+              <blockquote class="wiki-quote">{{ claim.quote }}</blockquote>
+              <div class="wiki-meta">
+                <span v-if="claim.headingPath" class="wiki-path">{{ claim.headingPath }}</span>
+                <button class="wiki-locate" type="button" @click="locate(claim)">在正文中定位</button>
+                <span v-if="locateMissId === claim.id" class="wiki-miss">
+                  正文里找不到这段文字 —— 文章可能在抽取之后改过。
+                </span>
+              </div>
+            </li>
+          </ol>
+        </section>
+
         <div class="read-nav reveal" style="--d:.3s">
           <div v-if="prevPost" class="read-nav-cell" @click="go(prevPost)">
             <small>← 上一颗星</small>
@@ -650,6 +695,25 @@ onUnmounted(() => {
 .qa-step-tool{font-family:var(--font-mono); color:var(--ink-faint); min-width:88px}
 .qa-step-label{color:var(--ink-dim)}
 .qa-step-label.bad{color:var(--rose)}
+/* 知识条目：主张与证据**并排成对**出现，证据用引用块而不是小字 ——
+   它是读者唯一能自行核对的东西，不该被降级成脚注 */
+.wiki-panel{margin-top:22px; border:1px solid var(--line); border-radius:var(--r-md);
+  background:var(--surface); padding:22px}
+.wiki-hint{font-size:11px; color:var(--ink-faint); line-height:1.9; margin:10px 0 0}
+.wiki-list{list-style:none; margin:16px 0 0; padding:0; display:flex; flex-direction:column; gap:16px}
+.wiki-list li{border-top:1px solid var(--line); padding-top:14px}
+.wiki-list li:first-child{border-top:0; padding-top:0}
+.wiki-text{font-size:14px; line-height:1.9; color:var(--ink-dim)}
+.wiki-quote{margin:8px 0 0; padding:8px 12px; border-left:2px solid var(--primary);
+  background:var(--bg-2); border-radius:0 var(--r-sm) var(--r-sm) 0;
+  font-size:13px; line-height:1.9; color:var(--ink-faint)}
+.wiki-meta{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px}
+.wiki-path{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint)}
+.wiki-locate{border:1px solid var(--line); background:transparent; color:var(--ink-faint);
+  font:inherit; font-size:11px; padding:4px 10px; border-radius:999px; cursor:pointer;
+  transition:all .25s}
+.wiki-locate:hover{color:var(--ink-dim); border-color:var(--primary)}
+.wiki-miss{font-size:11px; color:var(--amber)}
 
 /* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
 .read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;
