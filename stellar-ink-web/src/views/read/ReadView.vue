@@ -223,6 +223,13 @@ function go(target) {
  */
 const locateMissId = ref(null)
 
+/** 展开的主题（一次只展开一条：全展开会把正文压得很远，而这一类是「想看细节再看」的内容） */
+const openTopicId = ref(null)
+
+function toggleTopic(topic) {
+  openTopicId.value = openTopicId.value === topic.id ? null : topic.id
+}
+
 /** 实体类型的展示名：界面上说人话，别把 kind 原样丢给读者 */
 const KIND_LABELS = {
   person: '人物',
@@ -257,6 +264,7 @@ async function loadPost(id) {
   // 知识条目与实体**各取各的**：任一边失败都不影响另一边，也都不参与正文的成败
   wikiStore.load(id)
   wikiStore.loadEntities(id)
+  wikiStore.loadTopics(id)
 }
 
 watch(
@@ -566,6 +574,42 @@ onUnmounted(() => {
               </li>
             </ul>
           </template>
+
+          <!-- 主题（E4-10）：本文参与的主题。名字是**关键词组合**（不是模型拟的标题），
+               所以如实把它当「一组一起被谈论的东西」呈现，不假装它是一句话。 -->
+          <template v-if="wikiStore.hasTopics">
+            <div
+              class="title-row"
+              :class="{ 'wiki-sub-gap': wikiStore.hasClaims || wikiStore.hasEntities }"
+            >
+              <h3>本文参与的主题</h3>
+              <span class="kicker">TOPICS · 一起被谈论的一组东西</span>
+            </div>
+            <ul class="wiki-topics">
+              <li v-for="topic in wikiStore.topics" :key="topic.id">
+                <div class="wiki-topic-head">
+                  <span class="wiki-topic-name">{{ topic.name }}</span>
+                  <span class="wiki-topic-meta">
+                    {{ topic.size }} 个实体 · 一起被谈论 {{ topic.weight }} 次 ·
+                    {{ topic.postIds.length }} 篇文章
+                  </span>
+                  <button class="wiki-locate" type="button" @click="toggleTopic(topic)">
+                    {{ openTopicId === topic.id ? '收起' : '展开成员与原文' }}
+                  </button>
+                </div>
+                <div v-if="openTopicId === topic.id" class="wiki-topic-body">
+                  <div class="wiki-topic-members">
+                    <span v-for="entity in topic.entities" :key="entity.id" class="wiki-rel-chip">
+                      {{ entity.name }}
+                    </span>
+                  </div>
+                  <blockquote v-for="(item, index) in topic.evidence" :key="index" class="wiki-quote">
+                    {{ item.claimText }}
+                  </blockquote>
+                </div>
+              </li>
+            </ul>
+          </template>
         </section>
 
         <div class="read-nav reveal" style="--d:.3s">
@@ -778,6 +822,16 @@ onUnmounted(() => {
 .wiki-rel-label{font-size:11px; color:var(--ink-faint)}
 .wiki-rel-chip{font-size:11px; color:var(--ink-dim); background:var(--surface-2);
   border-radius:999px; padding:3px 9px}
+/* 主题：默认只显示一行「这组东西叫什么、有多大」，成员与原文按需展开 ——
+   主题比条目更"远"（它是跨文章的），一次全铺开会把正文推得很远 */
+.wiki-topics{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:14px}
+.wiki-topics li{border-top:1px solid var(--line); padding-top:12px}
+.wiki-topics li:first-child{border-top:0; padding-top:0}
+.wiki-topic-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.wiki-topic-name{font-size:14px; color:var(--ink)}
+.wiki-topic-meta{font-family:var(--font-mono); font-size:10px; color:var(--ink-faint)}
+.wiki-topic-body{margin-top:10px; display:flex; flex-direction:column; gap:8px}
+.wiki-topic-members{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
 
 /* 操作行/上下条/回声面板与正文同一条右边界；间距收了一档，短文页不再显得空荡 */
 .read-actions{display:flex; align-items:center; gap:12px; margin:46px 0 24px; flex-wrap:wrap;

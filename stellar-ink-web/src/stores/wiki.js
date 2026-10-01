@@ -27,10 +27,14 @@ export const useWikiStore = defineStore('wiki', {
     /** 实体与共现关系（E4-7）：**与 claims 分开**，因为它们可以独立失败 */
     entities: [],
     entitiesFailed: false,
+    /** 本文参与的主题（E4-10）：同样独立 */
+    topics: [],
+    topicsFailed: false,
   }),
   getters: {
     hasClaims: (s) => s.claims.length > 0,
     hasEntities: (s) => s.entities.length > 0,
+    hasTopics: (s) => s.topics.length > 0,
   },
   actions: {
     /**
@@ -71,6 +75,8 @@ export const useWikiStore = defineStore('wiki', {
       this.postId = null
       this.entities = []
       this.entitiesFailed = false
+      this.topics = []
+      this.topicsFailed = false
     },
 
     /**
@@ -99,6 +105,35 @@ export const useWikiStore = defineStore('wiki', {
         return this.entities
       } catch {
         if (this.postId === postId) this.entitiesFailed = true
+        return []
+      }
+    },
+
+    /**
+     * 取某篇文章**参与的主题**（E4-10）。
+     *
+     * 与条目、实体各自独立（三个请求、三套状态）：它们可以分别失败，展示上也分开。
+     * 合成一个大请求的诱惑在于「省两个 HTTP」，代价是任一边抖一下就会让整块内容消失 ——
+     * 而这三块的重要性并不一样（条目最重要），不该绑在一起。
+     *
+     * @returns 主题数组（失败或没有时返回空数组，**不抛错**）
+     */
+    async loadTopics(rawPostId) {
+      const postId = Number(rawPostId)
+      if (!postId) {
+        this.topics = []
+        return []
+      }
+      if (!this.postId) this.postId = postId
+      this.topics = []
+      this.topicsFailed = false
+      try {
+        const data = await request(`/ai/wiki/posts/${postId}/topics`, { silent: true })
+        if (this.postId !== postId) return []
+        this.topics = Array.isArray(data) ? data : []
+        return this.topics
+      } catch {
+        if (this.postId === postId) this.topicsFailed = true
         return []
       }
     },

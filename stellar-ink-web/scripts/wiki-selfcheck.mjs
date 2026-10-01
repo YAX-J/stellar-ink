@@ -54,6 +54,21 @@ let nextEntities = {
   },
 }
 
+/** 主题接口的响应（同样独立） */
+let nextTopics = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: [
+      { id: 21, name: '每天写五百字 · 十八万字', keywords: ['每天写五百字', '十八万字'],
+        size: 2, weight: 3, postIds: [7],
+        entities: [{ id: 11, name: '每天写五百字', kind: 'concept', mentionCount: 3 },
+          { id: 12, name: '十八万字', kind: 'concept', mentionCount: 1 }],
+        evidence: [{ postId: 7, chunkIndex: 0, claimText: '每天写五百字可以累积成十八万字' }] },
+    ],
+  },
+}
+
 globalThis.fetch = async (url, init = {}) => {
   const path = new URL(String(url)).pathname
   calls.push(path)
@@ -67,6 +82,11 @@ globalThis.fetch = async (url, init = {}) => {
     return nextEntities.status === 200
       ? reply(200, nextEntities.payload)
       : reply(nextEntities.status, nextEntities.payload)
+  }
+  if (path.endsWith('/topics')) {
+    return nextTopics.status === 200
+      ? reply(200, nextTopics.payload)
+      : reply(nextTopics.status, nextTopics.payload)
   }
   if (!path.startsWith('/ai/wiki/posts/')) {
     return reply(404, { code: 404, msg: `自检未覆盖的接口：${path}` })
@@ -153,6 +173,38 @@ report(wiki.entities.length === 0, '换文章时实体先清空')
 const beforeEntities = calls.length
 report((await wiki.loadEntities(null)).length === 0, '空 id 返回空数组（实体）')
 report(calls.length === beforeEntities, '空 id 不发实体请求')
+
+// —— 主题（E4-10）：第三套独立状态 ——
+// ⚠️ 与实体那段同样的教训：自检里的桩是**共享状态**，断言前必须把要用到的状态显式设好，
+// 否则测的是上一个用例留下的残局（这次是 entities 被前面的「空列表」用例清成 0）
+nextEntities = { status: 200, payload: { code: 0, data: [
+  { id: 11, name: '每天写五百字', normalized: '每天写五百字', kind: 'concept',
+    mentionCount: 3, postCount: 2,
+    mentions: [{ postId: 7, chunkIndex: 0, claimText: '每天写五百字可以累积成十八万字' }],
+    relations: [] },
+] } }
+await wiki.load(7)
+await wiki.loadEntities(7)
+report((await wiki.loadTopics(7)).length === 1, '拿到一条主题')
+report(wiki.hasTopics === true, 'hasTopics 判据成立')
+report(calls.at(-1) === '/ai/wiki/posts/7/topics', '主题请求打到按文章的主题接口')
+report(wiki.topics[0].entities.length === 2, '成员一起回（展开成员就有东西看）')
+report(wiki.topics[0].evidence.length === 1, '原文一起回（主题页也要能核对）')
+
+nextTopics = { status: 503, payload: { code: 503, msg: 'Python 在跑批' } }
+await wiki.loadTopics(7)
+report(wiki.topics.length === 0 && wiki.topicsFailed === true, '主题失败单独记下来')
+report(wiki.claims.length === 2 && wiki.entities.length === 1, '主题失败不影响条目与实体')
+
+nextTopics = { status: 200, payload: { code: 0, data: [] } }
+await wiki.loadTopics(7)
+report(wiki.topics.length === 0 && wiki.topicsFailed === false, '「没有主题」不是「失败」')
+await wiki.loadTopics(8)
+report(wiki.topics.length === 0, '换文章时主题先清空')
+
+const beforeTopics = calls.length
+report((await wiki.loadTopics(null)).length === 0, '空 id 返回空数组（主题）')
+report(calls.length === beforeTopics, '空 id 不发主题请求')
 
 // —— 定位逻辑 ——
 function node(text) {
