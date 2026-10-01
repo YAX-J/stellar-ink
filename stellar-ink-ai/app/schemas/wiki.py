@@ -12,6 +12,8 @@ from pydantic import Field
 from app.schemas.base import ContractRequest, ContractResponse
 
 MAX_CLAIMS_PER_REQUEST = 200
+#: 失效盘点一次最多带多少条锚点（多了会让请求体变成几 MB，而盘点是同步接口）
+MAX_STALE_CLAIMS_PER_REQUEST = 5000
 
 
 class WikiClaimsRequest(ContractRequest):
@@ -19,6 +21,10 @@ class WikiClaimsRequest(ContractRequest):
 
     `maxPosts` 是**成本闸门**：每篇文章一次模型调用，全量抽取属于离线批处理，
     不该由一次 HTTP 请求决定（与 Agent 的预算同一条口径）。
+
+    `postIds` 给「**定向重建**」用（E4-11）：只抽这几篇。它与 `maxPosts` 是
+    **两个不同的意图**（「按顺序取几篇」vs「就要这几篇」），同时传时以 `postIds` 为准、
+    `maxPosts` 不再截断 —— 否则会出现「报告说 3 篇要重建，实际重建的是头 5 篇里的 1 篇」。
     """
 
     max_posts: Annotated[
@@ -28,6 +34,46 @@ class WikiClaimsRequest(ContractRequest):
     max_claims_per_chunk: Annotated[
         int, Field(default=3, ge=1, le=10, description="每个段落最多接受几条主张")
     ] = 3
+
+    post_ids: Annotated[
+        list[int],
+        Field(
+            default_factory=list,
+            max_length=50,
+            description="定向重建：只抽这几篇（为空则按顺序取 maxPosts 篇）",
+        ),
+    ] = Field(default_factory=list)
+
+
+class WikiStaleClaimView(ContractRequest):
+    """库里存的一条主张锚点（判定失效只需要这三个字段）。"""
+
+    post_id: Annotated[int, Field(ge=1)]
+    chunk_index: Annotated[int, Field(ge=0)]
+    content_hash: Annotated[str, Field(default="", max_length=64, description="抽取时的段落哈希")]
+
+
+class WikiStaleRequest(ContractRequest):
+    """失效盘点的输入：把库里的锚点交给 Python（**只有它知道当前切块结果**）。"""
+
+    claims: Annotated[
+        list[WikiStaleClaimView],
+        Field(default_factory=list, max_length=MAX_STALE_CLAIMS_PER_REQUEST),
+    ]
+
+
+class WikiStaleResult(ContractResponse):
+    """失效盘点（E4-11）：三种状态**分开**报，因为处置不一样（重建 / 清理 / 不用动）。"""
+
+    checked: Annotated[int, Field(ge=0, description="查过多少条主张")]
+    current: Annotated[int, Field(ge=0, description="锚点仍对得上，不用动")]
+    stale: Annotated[int, Field(ge=0, description="段落内容变了（文章改过）")]
+    orphan: Annotated[int, Field(ge=0, description="段落已不存在（文章删了或删短了）")]
+    stale_post_ids: Annotated[list[int], Field(default_factory=list, description="需要重建的文章")]
+    orphan_post_ids: Annotated[
+        list[int], Field(default_factory=list, description="有失效引用的文章（需要清理）")
+    ]
+    notes: Annotated[list[str], Field(default_factory=list, description="给人看的解释")]
 
 
 class WikiClaimView(ContractResponse):

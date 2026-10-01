@@ -8,6 +8,7 @@ import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiStaleVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -71,6 +73,10 @@ public class AiWikiController {
         AiWikiBuildVO result = wikiService.build(AiWikiClaimsRequestDTO.builder()
                 .maxPosts(maxPosts)
                 .maxClaimsPerChunk(maxClaimsPerChunk)
+                // 定向重建（E4-11）：失效报告里的 stalePostIds 可以直接放这里。
+                // 只做「去重 + 上限」，不参与 maxPosts 的 min 夹取 —— 两者是**不同的意图**
+                // （「按顺序取几篇」vs「就要这几篇」），混起来会出现「点了重建却没变化」
+                .postIds(targetedPosts(request == null ? null : request.getPostIds()))
                 .build());
         log.info("Wiki 构建：抽取 {}/{} 条，落库 新增{} 更新{} 未变动{}",
                 result.getKept(), result.getProposed(),
@@ -104,9 +110,46 @@ public class AiWikiController {
         return Response.success(wikiService.topicsOfPost(postId));
     }
 
-    private static int bounded(Integer requested, int ceiling) {        if (requested == null) {
+    private static int bounded(Integer requested, int ceiling) {
+        if (requested == null) {
             return ceiling;
         }
         return Math.min(requested, ceiling);
+    }
+
+    @GetMapping("/admin/wiki/stale")
+    @Operation(
+            summary = "失效盘点（ADMIN）",
+            description = "把库里存的主张锚点交给 Python 比对当前语料：哪些该重建、哪些该清理。"
+                    + "**它不重建**（重建要花钱打模型），报告只是告诉你该点哪些文章")
+    public Response<AiWikiStaleVO> stale() {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(wikiService.inspectStale());
+    }
+
+    /**
+     * 定向重建的文章列表：去重、去空、保序、封顶。
+     *
+     * <p>去重与封顶都在这里做，而不是丢给 Python：Python 侧的上限是契约（422），
+     * 而「客户端点了 80 篇」应当被**服务端夹到上限**、并把这件事说出来，
+     * 而不是让请求直接失败 —— 与 `bounded` 同一条口径。
+     */
+    static List<Long> targetedPosts(List<Long> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return List.of();
+        }
+        List<Long> cleaned = new ArrayList<>();
+        for (Long postId : requested) {
+            if (postId == null || postId < 1 || cleaned.contains(postId)) {
+                continue;
+            }
+            cleaned.add(postId);
+            if (cleaned.size() >= DEFAULT_MAX_POSTS * 2) {
+                // 上限是「默认预算的两倍」：定向重建本来就该是小批量修补，
+                // 一次点几十篇说明该走全量构建，而不是让这个入口变成第二个全量入口
+                break;
+            }
+        }
+        return cleaned;
     }
 }

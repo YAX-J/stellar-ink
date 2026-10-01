@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter
@@ -16,6 +17,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.providers import runtime
 from app.rag.corpus import cached_corpus
+from app.rag.staleness import stale_claims
 from app.rag.wiki import ExtractionResult, extract_claims_async
 from app.schemas.wiki import (
     WikiClaimsRequest,
@@ -25,6 +27,8 @@ from app.schemas.wiki import (
     WikiEntityView,
     WikiExtractionStatsView,
     WikiRelationView,
+    WikiStaleRequest,
+    WikiStaleResult,
     WikiTopicView,
 )
 
@@ -52,6 +56,7 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
         chat,
         max_posts=request.max_posts,
         max_claims_per_chunk=request.max_claims_per_chunk,
+        post_ids=list(request.post_ids),
     )
     logger.info(
         "Wiki 主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；实体 提出 %d、留下 %d、"
@@ -75,6 +80,46 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
         usage_model=result.usage_model,
         latency_ms=result.latency_ms,
     )
+
+
+@router.post("/wiki/stale", summary="盘点失效的主张（E4-11）", response_model=None)
+async def stale(request: WikiStaleRequest) -> WikiStaleResult:
+    """把库里的主张锚点交给 Python 比对当前语料：哪些还对得上、哪些该重建、哪些该清理。
+
+    **为什么不在这里顺手重建**：重建要花钱打模型，而这份报告是免费的。
+    合成「自动重建」看起来更省事，代价是没人知道钱花在哪 ——
+    而且一次误判（比如语料缓存没刷新）会让它在后台反复烧钱。判定与重建分开，
+    由调用方（ADMIN）看着报告决定。
+    """
+    report = stale_claims(
+        cached_corpus(),
+        [
+            _StoredAnchor(
+                post_id=item.post_id,
+                chunk_index=item.chunk_index,
+                content_hash=item.content_hash,
+            )
+            for item in request.claims
+        ],
+    )
+    logger.info(
+        "Wiki 失效盘点：查 %d 条 → 有效 %d、内容变了 %d、段落没了 %d（需重建 %d 篇）",
+        report.checked,
+        report.current,
+        report.stale,
+        report.orphan,
+        len(report.stale_post_ids),
+    )
+    return WikiStaleResult(**report.to_dict())
+
+
+@dataclass(frozen=True, slots=True)
+class _StoredAnchor:
+    """库里存的主张锚点（本端点只需要这三个字段，不引入完整的主张模型）。"""
+
+    post_id: int
+    chunk_index: int
+    content_hash: str
 
 
 def _entity_view(cluster: Any) -> WikiEntityView:

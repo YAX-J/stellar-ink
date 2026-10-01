@@ -195,6 +195,7 @@ def extract_claims(
     *,
     max_posts: int = DEFAULT_MAX_POSTS,
     max_claims_per_chunk: int = DEFAULT_MAX_CLAIMS_PER_CHUNK,
+    post_ids: list[int] | None = None,
 ) -> ExtractionResult:
     """同步入口（测试与离线脚本）。
 
@@ -204,7 +205,11 @@ def extract_claims(
     _assert_no_running_loop()
     return _run_sync(
         extract_claims_async(
-            chunks, chat, max_posts=max_posts, max_claims_per_chunk=max_claims_per_chunk
+            chunks,
+            chat,
+            max_posts=max_posts,
+            max_claims_per_chunk=max_claims_per_chunk,
+            post_ids=post_ids,
         )
     )
 
@@ -215,11 +220,18 @@ async def extract_claims_async(
     *,
     max_posts: int = DEFAULT_MAX_POSTS,
     max_claims_per_chunk: int = DEFAULT_MAX_CLAIMS_PER_CHUNK,
+    post_ids: list[int] | None = None,
 ) -> ExtractionResult:
     """真正打模型的那条路（端点用它），也是**唯一一份**校验实现。
 
     为什么按**文章**而不是按段落问模型：主张的原子性要看整篇（同一件事可能在两段里各说一半），
     按段落问会得到一堆互不相干的碎片；代价是每篇一次调用，所以有 `max_posts` 上限。
+
+    `post_ids` 给「**定向重建**」用（E4-11）：只抽这几篇。缺省仍是「语料里最前面的
+    `max_posts` 篇」。⚠️ 传了 `post_ids` 时 `max_posts` **不再截断** ——
+    那是两个不同的意图（「按顺序取几篇」vs「就要这几篇」），
+    混在一起会出现「报告说 3 篇要重建，实际只重建了头 5 篇里的 1 篇」这种说不清的现象。
+    请求里不存在的文章 id 会被记进 notes，不静默忽略。
     """
     if max_posts < 1:
         raise ValueError("max_posts 必须为正：0 篇就什么都抽不出来")
@@ -227,7 +239,15 @@ async def extract_claims_async(
         raise ValueError("max_claims_per_chunk 必须为正")
 
     started = time.perf_counter()
-    grouped = _group_by_post(chunks)[:max_posts]
+    grouped_all = _group_by_post(chunks)
+    wanted = [int(item) for item in (post_ids or [])]
+    if wanted:
+        wanted_set = set(wanted)
+        grouped = [item for item in grouped_all if item[0] in wanted_set]
+        missing = sorted(wanted_set - {item[0] for item in grouped})
+    else:
+        grouped = grouped_all[:max_posts]
+        missing = []
     dropped: Counter[str] = Counter()
     claims: list[WikiClaim] = []
     proposed = 0
@@ -290,13 +310,21 @@ async def extract_claims_async(
         stats.topics,
         dict(topic_stats(topics)) or "无",
     )
+    target_notes: list[str] = []
+    if wanted:
+        target_notes.append(f"定向重建：请求 {len(wanted)} 篇，实际抽了 {len(grouped)} 篇。")
+        if missing:
+            # 请求里有语料中不存在的文章：**说出来**，否则「明明点了重建却没变化」查不出原因
+            target_notes.append(
+                f"⚠️ 有 {len(missing)} 篇在语料里找不到（可能已被删除或还没进语料）：{missing}。"
+            )
     return ExtractionResult(
         claims=claims,
         entities=clusters,
         relations=relations,
         topics=topics,
         stats=stats,
-        notes=[*_notes(stats), *topic_notes],
+        notes=[*_notes(stats), *topic_notes, *target_notes],
         usage_model=usage_model,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )

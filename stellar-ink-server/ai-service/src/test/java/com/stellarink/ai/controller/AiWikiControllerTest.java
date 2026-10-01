@@ -14,6 +14,7 @@ import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiStaleVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -242,5 +243,78 @@ class AiWikiControllerTest {
                 .andExpect(jsonPath("$.data[0].entities[0].name").value("每天写五百字"))
                 .andExpect(jsonPath("$.data[0].evidence[0].claimText")
                         .value("每天写五百字可以累积成十八万字"));
+    }
+
+    @Test
+    @DisplayName("失效盘点：ADMIN 才能看，读者 403（它会暴露全站哪些引用失效了）")
+    void staleRequiresAdmin() throws Exception {
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            auth.when(AuthHelper::currentRole).thenReturn(Role.READER);
+            auth.when(() -> AuthHelper.requireAtLeast(Role.ADMIN))
+                    .thenThrow(new BusinessException(ErrorCode.FORBIDDEN, "权限不足"));
+
+            mockMvc.perform(get("/ai/admin/wiki/stale"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+        }
+
+        verify(wikiService, never()).inspectStale();
+    }
+
+    @Test
+    @DisplayName("失效盘点：带回计数、要动的文章与人能读的话（ADMIN 靠它决定点哪些重建）")
+    void staleReturnsActionableReport() throws Exception {
+        when(wikiService.inspectStale()).thenReturn(AiWikiStaleVO.builder()
+                .checked(10).current(8).stale(1).orphan(1)
+                .stalePostIds(List.of(7L)).orphanPostIds(List.of(9L))
+                .notes(List.of("1 条主张引用的段落已经不存在（1 篇文章）——它们无法再回到原文，应当清理。"))
+                .truncated(false)
+                .build());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsAdmin(auth);
+
+            mockMvc.perform(get("/ai/admin/wiki/stale"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(0))
+                    .andExpect(jsonPath("$.data.stale").value(1))
+                    .andExpect(jsonPath("$.data.stalePostIds[0]").value(7))
+                    .andExpect(jsonPath("$.data.orphanPostIds[0]").value(9))
+                    .andExpect(jsonPath("$.data.truncated").value(false))
+                    .andExpect(jsonPath("$.data.notes[0]",
+                            org.hamcrest.Matchers.containsString("无法再回到原文")));
+        }
+    }
+
+    @Test
+    @DisplayName("定向重建：只重建点名的文章，且去重、保序")
+    void buildSupportsTargetedRebuild() throws Exception {
+        when(wikiService.build(any())).thenReturn(buildResult());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsAdmin(auth);
+
+            mockMvc.perform(post("/ai/admin/wiki/build")
+                            .contentType("application/json")
+                            .content("{\"postIds\":[7,7,0,null,9]}"))
+                    .andExpect(status().isOk());
+        }
+
+        ArgumentCaptor<com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO> captor =
+                ArgumentCaptor.forClass(com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO.class);
+        verify(wikiService).build(captor.capture());
+        assertEquals(List.of(7L, 9L), captor.getValue().getPostIds(),
+                "去重、丢掉非法值、保持顺序 —— 「点了重建却没变化」多半出在这里");
+    }
+
+    @Test
+    @DisplayName("定向重建：一次点太多会被服务端夹到上限（不是让请求失败）")
+    void targetedRebuildIsCapped() {
+        List<Long> requested = java.util.stream.LongStream.rangeClosed(1, 80).boxed().toList();
+
+        List<Long> cleaned = AiWikiController.targetedPosts(requested);
+
+        assertEquals(AiWikiController.DEFAULT_MAX_POSTS * 2, cleaned.size());
+        assertEquals(1L, cleaned.get(0));
     }
 }

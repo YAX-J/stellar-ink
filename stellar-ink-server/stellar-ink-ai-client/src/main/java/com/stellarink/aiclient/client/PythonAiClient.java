@@ -4,6 +4,8 @@ import com.stellarink.aiclient.constant.AiContractPaths;
 import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleRequestDTO;
+import com.stellarink.aiclient.dto.AiWikiStaleResultDTO;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
@@ -151,4 +153,16 @@ public interface PythonAiClient {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     AiWikiClaimsResultDTO wikiClaims(@RequestBody AiWikiClaimsRequestDTO request);
+
+    /**
+     * 失效盘点（E4-11）：把库里存的主张锚点交给 Python 比对当前语料。
+     *
+     * <p>为什么由 Python 判：段落序号与内容哈希都是**切块的产物**，只有它知道当前是哪一版。
+     * 这也顺带守住了「Python 不碰库」的边界 —— 输入由 Java 从库里读出来。
+     */
+    @PostMapping(
+            value = AiContractPaths.WIKI_STALE,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    AiWikiStaleResultDTO wikiStale(@RequestBody AiWikiStaleRequestDTO request);
 }

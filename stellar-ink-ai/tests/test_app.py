@@ -94,6 +94,8 @@ EXPOSED_PATHS = {
     "/internal/trace/{trace_id}",
     # LLM Wiki 主张抽取（E4-1）：内部签名保护，落库与读者侧页面在 Java 侧
     "/wiki/claims",
+    # LLM Wiki 失效盘点（E4-11）：把库里的锚点交回来比对当前语料；只读、不花钱
+    "/wiki/stale",
 }
 
 

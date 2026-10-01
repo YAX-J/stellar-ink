@@ -45,7 +45,8 @@
 | E4-8 主题社区发现 | ✅ | `app/rag/topics.py`：**连通分量 + 边权阈值**（刻意不用 Louvain：确定性 + 可解释 + 失败方式看得见）。孤立实体**单独报出**、不硬塞归属；阈值是 v1 唯一的收窄手段；主题名是**关键词组合**（不是编出来的标题） | `tests/test_wiki_topics.py`（9 条：两组分开、孤立实体报数、传递链成一组、阈值真的收窄、顺序确定、名字来自本主题、截断不静默、端到端闭环）+ 契约样例 + 两侧契约测试 |
 | E4-9 主题落库与读取 | ✅ | `deploy/sql/15_ai_wiki_topic.sql` 三张表（主题 / 成员 / 证据）+ `storeTopics`：**幂等锚点是成员签名**（成员规范化名字排序后的 SHA-256）而不是主题名 —— 名字由成员算出来，拿它当锚点会凭空多出一行；成员与证据**先清后写**；`GET /ai/wiki/posts/{id}/topics`（**公开**） | `AiWikiServiceImplTest`（+3：签名锚点与读者侧、重复构建不累加、无证据返回空）+ `AiWikiControllerTest.topicsArePublic` |
 | E4-10 主题页前端 | ✅ | 阅读页「本文参与的主题」：一行看「叫什么、多大、涉及几篇」，按需**展开成员与原文**（不新增一级导航 —— 它固定 6 项）；主题与条目/实体是**三套独立状态** | `wiki-selfcheck.mjs`（+9 条：主题独立失败、失败不影响条目与实体、空列表 ≠ 失败、换文章清空、空 id 不发请求） |
-| E4-11 增量失效 | ⏳ 下一刀 | 文章改了只重算受影响的主张/实体/主题（roadmap §14 第 8 步）—— E4 的最后一块 | — |
+| E4-11 增量失效 | ✅ **E4 收口** | `app/rag/staleness.py`：三种状态**分开报**（`current` 不用动 / `stale` 内容变了→重建 / `orphan` 段落没了→清理）；判定**只看段落哈希**、哈希缺失按 current（否则会逼人做全量重建）。定向重建：`POST /wiki/claims` 的 `postIds`（「就要这几篇」，与 `maxPosts` 的「按顺序取几篇」是**两个意图**）；`GET /ai/admin/wiki/stale`（ADMIN）**只报告不重建** | Python `tests/test_wiki_staleness.py`（8 条）+ `tests/test_wiki_api.py`（+5 条：定向只抽点名文章、超长列表 422、盘点三态分开、空列表说「不用重建」）+ Java `AiWikiServiceImplTest`（+2）+ `AiWikiControllerTest`（+3：读者 403、报告可执行、定向去重保序、封顶） |
+| E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果

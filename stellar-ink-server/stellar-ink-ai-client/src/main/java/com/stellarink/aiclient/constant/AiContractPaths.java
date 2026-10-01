@@ -47,6 +47,9 @@ public final class AiContractPaths {
     /** LLM Wiki 主张抽取（E4）：带证据的原子主张，引用必须能在原文里找到 */
     public static final String WIKI_CLAIMS = "/wiki/claims";
 
+    /** 失效盘点（E4-11）：把库里的锚点交回去比对当前语料；只读、不花钱 */
+    public static final String WIKI_STALE = "/wiki/stale";
+
     private AiContractPaths() {
     }
 }
