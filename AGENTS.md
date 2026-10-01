@@ -555,10 +555,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：**E3 四刀已全部落地**（调用账 / 配额与并发 / MCP 工具服务 / 观测出口）；
-  剩下的是 **OTel/Langfuse 出口**（跨副本回放与长期留存需要它，**待用户拍板**）；
-  E4（GraphRAG / LLM Wiki）未开始（**范围也要拍板**）；
-  Qdrant 从未连过真实实例（欠一次 `uv run python scripts/qdrant_smoke.py`，需先开隧道）。
+- **未做的事（别当成已做）**：E1 / E2 / E3 与 B/C 收口都已落地
+  （E3 四刀：调用账、配额与并发、MCP 工具服务、观测出口；E2 只读 Agent 已接前端）——
+  **剩下的只有 E4**。E4 **已定范围：先做 LLM Wiki**（从带证据的主张抽取起步），GraphRAG 排后面。
+  两件环境动作**由用户处理**（换付费/自建 embedding 与 rerank、开 Qdrant 隧道），
+  之后跑 `scripts/calibrate_dense_score.py` 与 `scripts/qdrant_smoke.py` 收口。
+  **观测出口的接受形态就是进程内回放**（已拍板不部署 OTel/Langfuse；
+  跨副本查不到时返回 `found=false` 是**已知且被接受的限制**，不是缺陷，别再当成待办）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
   ⚠️ 这条里的「Redis 限流」指**博客 API 的边缘限流**；**AI 域的调用配额已获用户明确放行**
   （2026-10-01），E3-2 可以放开 ai-service 的 Redis。

@@ -69,7 +69,11 @@ E. 扩展（按需）
         `scripts/agent-selfcheck.mjs` 并入 `npm run check`）
       B/C 收口 ✅ 除两项环境动作：退避重试 + 嵌入缓存 + 额度识别 + minDenseScore 标定工具
         （标定要真实嵌入，等额度；Qdrant 冒烟要先开隧道）
-   E4 GraphRAG / LLM Wiki ⏳ 未开始（**范围待拍板**）
+   E4 GraphRAG / LLM Wiki ⏳ **已定范围（先做 LLM Wiki）**，2026-10-01 用户拍板。
+      按 `implementation-roadmap.md` §14 的顺序切，先做**带证据的主张抽取**（E4-1）：
+      抽取实体/关系/原子主张 → **每条主张绑定 post_id + 段落位置 + 内容版本 + 原文片段** →
+      校验（引用必须真的出现在那篇文章里，否则丢弃）→ 再谈消歧、社区发现与页面生成。
+      验收口径照原文：**Wiki 的事实性文本必须能回到证据**。GraphRAG 排在 LLM Wiki 之后。
 ```
 
 > **做到哪了、还差什么，看 [`status.md`](status.md)**：逐阶段状态表 + 可执行核验命令 +

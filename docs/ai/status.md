@@ -35,7 +35,8 @@
 | E3-2 配额与并发 | ✅ | 额度在配置（`stellar.ink.ai.quota.*`）、计数在 Redis（`stellar-ink:ai:quota:`，自然日窗口）；拦截挂在 `AiUsageService.around`（调用前检查、调用后计数）；触顶 429、Redis 故障 fail-open + warn；ai-service 放开 `RedisUtils` | `AiQuotaPolicyTest`（窗口/上限边界/键名）；`AiUsageQuotaTest`（10 条：用户·角色·并发三维触顶、回滚、fail-open、拒绝时不调用下游） |
 | E3-3 MCP 工具服务 | ✅ | `app/mcp/protocol.py`（JSON-RPC 2.0 信封与错误码）+ `app/mcp/server.py`（`initialize`/`ping`/`tools/list`/`tools/call`）+ `POST /mcp`（内部签名保护）；`ToolSpec` 增加 `input_schema`/`required_role`/`timeout_ms`/`idempotent`；工具集与 Agent **同一份** | `tests/test_mcp_server.py`（21 条：信封、越权 `-32003`、schema 外参数 `-32602`、工具失败 `isError`、超时、通知不回响应）；`tests/test_mcp_api.py`（8 条：签名、身份透传、错误体形状） |
 | E3-4 观测出口 | ✅（最小形态；OTel/Langfuse **待拍板**） | Python：进程内事件缓冲（有界、**只存结构不存内容**）+ 三段埋点（检索 / 工具 / 模型含失败状态码）+ `GET /internal/trace/{traceId}`；Java：`GET /ai/admin/trace/{traceId}` 合并调用账与 Python 事件，**Python 不可用时仍回账** | `tests/test_trace.py`（9）+ `test_trace_api.py`（3）+ `test_trace_contract.py`（3，与 Java 共读 fixture）；`AiTraceControllerTest`（6）+ `AiUsageServiceImplTest.traceCalls` + `AiContractTest.traceReplayRoundTrips` |
-| E4 GraphRAG / LLM Wiki | ❌ **未开始** | — | — |
+| E4 LLM Wiki（**先做**） | ⏳ 已定范围，未开工 | 按 roadmap §14：带证据的主张抽取（E4-1）→ 实体/别名消歧 → 关系 → 社区发现 → 页面生成 → 增量失效。**验收：事实性文本必须能回到证据** | — |
+| E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果
 
@@ -201,8 +202,24 @@ Agent 比一次问答慢、也更贵（可能多次调用模型），在配额�
   DOM 交互仍没有自动化测试（没有引入测试运行器，见 `AGENTS.md` §3）。
   store 那层由 `scripts/ai-store-selfcheck.mjs` 用 Vite 的 `ssrLoadModule` 加载真实 store 来跑
   （写成功 + 刷新 503 的时序就是这么测的）；面板本身的验证仍靠 `npm run check` 的构建 + 人工。
-- **配额与 `retrievalAudit` 未实现**：`/ai/**` 只有网关的全局限流与 Nginx 的 `ai` 档（30r/m），
-  没有按用户/按模型的成本账。
+- ~~**配额与 `retrievalAudit` 未实现**~~ → **配额已在 E3-2 落地**（用户·角色·并发三维，触顶 429）；
+  Nginx 的 `ai` 档（30r/m）仍在，那是边缘限流、与配额是两层。
+  `retrievalAudit`（把每次检索的候选与分数落库）仍未做 —— 目前靠 E3-4 的按 traceId 回放看链路。
+
+## 4.5 已拍板的三件事（2026-10-01，用户决定；不要再当成待办去问）
+
+1. **E4 先做 LLM Wiki，GraphRAG 排后面**。按 `implementation-roadmap.md` §14 的顺序切，
+   第一刀是**带证据的主张抽取**（E4-1）：每条主张绑定 `post_id` + 段落位置 + 内容版本 + 原文片段，
+   并且**校验引用真的出现在那篇文章里**（不通过就丢弃，不写进页面）——
+   验收口径就是原文那句「Wiki 的事实性文本必须能回到证据」。
+2. **暂不部署 OpenTelemetry / Langfuse**：E3-4 的**进程内回放就是接受形态**。
+   跨副本查不到时会如实返回 `found=false`，这是**已知且被接受的限制**，不是缺陷；
+   长期留存同理。将来若要跨副本，再按 §4.1/README 的路线补集中存储。
+3. **两件环境动作由用户处理**：给 embedding / rerank 换付费或自建模型（解除免费档每日 50 次），
+   以及开 Qdrant 隧道（或给出可达地址）。做完之后：
+   跑 `uv run python scripts/calibrate_dense_score.py` 拿 `minDenseScore` 标定值、
+   重跑标准五组补全 dense 三行、跑 `uv run python scripts/qdrant_smoke.py` 收口 B 阶段。
+   ⚠️ 换模型后**必须重新标定**（余弦分布随模型变），且嵌入缓存按模型指纹隔离、不会串味。
 
 ## 5. 需要使用者做的事（代码之外）
 
