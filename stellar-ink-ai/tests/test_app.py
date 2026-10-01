@@ -90,6 +90,8 @@ EXPOSED_PATHS = {
     "/agent/ask",
     # MCP 工具服务（E3-3）：JSON-RPC 2.0，工具集与 Agent 同一份；同样受内部签名保护
     "/mcp",
+    # 按 traceId 回放（E3-4）：运维排障用，只在内网可达
+    "/internal/trace/{trace_id}",
 }
 
 
