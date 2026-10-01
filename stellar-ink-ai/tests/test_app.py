@@ -92,6 +92,8 @@ EXPOSED_PATHS = {
     "/mcp",
     # 按 traceId 回放（E3-4）：运维排障用，只在内网可达
     "/internal/trace/{trace_id}",
+    # LLM Wiki 主张抽取（E4-1）：内部签名保护，落库与读者侧页面在 Java 侧
+    "/wiki/claims",
 }
 
 

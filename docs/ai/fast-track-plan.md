@@ -69,11 +69,13 @@ E. 扩展（按需）
         `scripts/agent-selfcheck.mjs` 并入 `npm run check`）
       B/C 收口 ✅ 除两项环境动作：退避重试 + 嵌入缓存 + 额度识别 + minDenseScore 标定工具
         （标定要真实嵌入，等额度；Qdrant 冒烟要先开隧道）
-   E4 GraphRAG / LLM Wiki ⏳ **已定范围（先做 LLM Wiki）**，2026-10-01 用户拍板。
-      按 `implementation-roadmap.md` §14 的顺序切，先做**带证据的主张抽取**（E4-1）：
-      抽取实体/关系/原子主张 → **每条主张绑定 post_id + 段落位置 + 内容版本 + 原文片段** →
-      校验（引用必须真的出现在那篇文章里，否则丢弃）→ 再谈消歧、社区发现与页面生成。
-      验收口径照原文：**Wiki 的事实性文本必须能回到证据**。GraphRAG 排在 LLM Wiki 之后。
+   E4 GraphRAG / LLM Wiki ⏳ **进行中（先做 LLM Wiki）**，2026-10-01 用户拍板。
+      E4-1 带证据的主张抽取 ✅（`app/rag/wiki.py` + `POST /wiki/claims`：原子主张绑定
+        postId / 段落序号 / 文章版本 / 段落哈希 / 原文片段，**引用必须真的出现在那一段里**，
+        编造的引用直接丢弃并按原因计数 —— 这就是验收口径「事实性文本必须能回到证据」的落地）
+      E4-2 落库与读者侧 ⏳ 下一刀（Java `ai_wiki_*` 表 + ADMIN 构建出口 + 读者侧列表/详情）
+      E4 其余（实体消歧 / 关系 / 社区发现 / 页面生成 / 增量失效）⏳ 未开始
+      GraphRAG 排在整个 LLM Wiki 之后。
 ```
 
 > **做到哪了、还差什么，看 [`status.md`](status.md)**：逐阶段状态表 + 可执行核验命令 +

@@ -1,0 +1,47 @@
+{
+  "claims": [
+    {
+      "text": "每天写五百字，一年可以累积十八万字",
+      "postId": 7,
+      "chunkIndex": 0,
+      "postVersion": "2026-10-01T00:00:00",
+      "contentHash": "hash0",
+      "quote": "每天写五百字，一年就是十八万字",
+      "headingPath": "写作方法",
+      "confidence": 0.9
+    },
+    {
+      "text": "写作的关键是把目标切到小得不可能失败",
+      "postId": 7,
+      "chunkIndex": 0,
+      "postVersion": "2026-10-01T00:00:00",
+      "contentHash": "hash0",
+      "quote": "把目标切到小得不可能失败",
+      "headingPath": "写作方法",
+      "confidence": 0.75
+    },
+    {
+      "text": "深夜写作要先清掉手机干扰",
+      "postId": 7,
+      "chunkIndex": 1,
+      "postVersion": "2026-10-01T00:00:00",
+      "contentHash": "hash1",
+      "quote": "先把手机放到另一个房间",
+      "headingPath": "写作方法",
+      "confidence": 0.6
+    }
+  ],
+  "stats": {
+    "proposed": 4,
+    "kept": 3,
+    "dropped": {
+      "quoteNotFound": 1
+    },
+    "posts": 1
+  },
+  "notes": [
+    "1 条主张因**引用找不到原文依据**被丢弃 —— 这是校验在起作用，不是抽取失败。"
+  ],
+  "usageModel": "fixture-chat",
+  "latencyMs": 0
+}

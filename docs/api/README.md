@@ -713,6 +713,39 @@ curl -s -X POST http://127.0.0.1:8200/mcp -H "Content-Type: application/json" \
 - ⚠️ **目前只在编排网络内暴露**：对外（站外 MCP 客户端）需要 Java 侧再开一条带鉴权的出口，
   否则拿不到签署过的身份头 —— 没有身份就没有权限判定，等于把只读工具变成匿名可查。
 
+**LLM Wiki 主张抽取（E4-1：带证据的知识条目）**
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | **`/wiki/claims`（直连 Python :8200，不经网关）** | 抽取原子主张并**逐条校验引用**：请求 `{maxPosts?, maxClaimsPerChunk?}`，响应 `{claims, stats, notes, usageModel, latencyMs}` | **内部签名** |
+
+```bash
+curl -s -X POST http://127.0.0.1:8200/wiki/claims -H "Content-Type: application/json" \
+  -H "X-AI-Signature: …" -H "X-AI-Timestamp: …" -H "X-AI-Nonce: …" \
+  -H "X-AI-User-Id: 1" -H "X-AI-Role: ADMIN" -d '{"maxPosts":5}'
+# => {"claims":[{"text":"每天写五百字，一年可以累积十八万字","postId":7,"chunkIndex":0,
+#      "postVersion":"2026-10-01T00:00:00","contentHash":"hash0",
+#      "quote":"每天写五百字，一年就是十八万字","headingPath":"写作方法","confidence":0.9}],
+#     "stats":{"proposed":4,"kept":3,"dropped":{"quoteNotFound":1},"posts":1},
+#     "notes":["1 条主张因**引用找不到原文依据**被丢弃 —— 这是校验在起作用，不是抽取失败。"],
+#     "usageModel":"deepseek-flash","latencyMs":3120}
+```
+
+- **每条主张都要能回到原文**（E4 的验收口径，也是它与「让模型写一段摘要」的根本区别）：
+  绑定 `postId` + `chunkIndex` + **`postVersion`** + **`contentHash`** + `quote`。
+  后两个字段是「文章改了之后只失效受影响的那几条」的依据 —— 增量这块现在不做，但字段先留着。
+- **引用必须被观察到**：模型给的 `quote` 必须真的出现在它标注的那个段落里（规范化空白后比对），
+  否则**丢弃**。与 Agent 的引用核实是同一条纪律：引用为真，主张才算成立。
+- **丢弃分类计数**（`stats.dropped`：`quoteNotFound` / `unknownChunk` / `textTooShort` /
+  `textTooLong` / `duplicate`）。只回一个主张列表的话，调用方看不到「提了 4 条、挡了 1 条」，
+  而那个比例正是判断「这套抽取能不能用」的关键。
+- **`maxPosts` 是成本闸门**（每篇一次模型调用，默认 5、上限 50）：全量抽取是离线批处理，
+  不该由一次 HTTP 请求决定（与 Agent 的预算同一条口径）。越界由契约层直接 422。
+- ⚠️ **只回结果、不落库**：持久化归 Java（`ai_wiki_*` 表），Python 不碰库 ——
+  与其它 AI 能力的边界一致。落库、页面生成与读者侧入口是 E4 的后续切片。
+- 契约样例由 `scripts/gen_wiki_fixture.py` 生成（真跑一遍抽取，只把模型换成桩），
+  里面**故意含一条被丢弃的主张**：`tests/fixtures/wiki_claims_result.json`，Java 侧下一刀共读它。
+
 **按 traceId 回放链路（E3-4）**
 
 | 方法 | 路径 | 说明 | 鉴权 |

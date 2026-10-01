@@ -9,6 +9,7 @@ from app.api.v1 import mcp as mcp_routes
 from app.api.v1 import qa as qa_routes
 from app.api.v1 import style as style_routes
 from app.api.v1 import trace as trace_routes
+from app.api.v1 import wiki as wiki_routes
 from app.api.v1 import writing as writing_routes
 
 api_router = APIRouter()
@@ -23,3 +24,5 @@ api_router.include_router(agent_routes.router)
 api_router.include_router(mcp_routes.router)
 # 按 traceId 回放（E3-4）：运维排障用，同样只在编排网络内可达
 api_router.include_router(trace_routes.router)
+# LLM Wiki（E4）：从带证据的主张抽取起步；落库与读者侧页面在 Java
+api_router.include_router(wiki_routes.router)
