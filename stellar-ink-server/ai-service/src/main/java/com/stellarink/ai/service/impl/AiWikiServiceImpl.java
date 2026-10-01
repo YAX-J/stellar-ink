@@ -22,6 +22,7 @@ import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,10 +30,16 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Wiki 主张的落库与读取（E4-2）。
@@ -150,6 +157,141 @@ public class AiWikiServiceImpl implements AiWikiService {
         }
         return claimMapper.selectCount(
                 new LambdaQueryWrapper<AiWikiClaim>().eq(AiWikiClaim::getPostId, postId));
+    }
+
+    @Override
+    public List<AiWikiEntityVO> entitiesOfPost(Long postId) {
+        if (postId == null || postId < 1) {
+            return List.of();
+        }
+        // 本文的提及 → 涉及哪些实体
+        List<AiWikiEntityMention> mentions = mentionMapper.selectList(
+                new LambdaQueryWrapper<AiWikiEntityMention>()
+                        .eq(AiWikiEntityMention::getPostId, postId)
+                        .orderByAsc(AiWikiEntityMention::getChunkIndex)
+                        .orderByAsc(AiWikiEntityMention::getId));
+        if (mentions.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, List<AiWikiEntityMention>> byEntity = mentions.stream()
+                .collect(Collectors.groupingBy(AiWikiEntityMention::getEntityId));
+
+        List<AiWikiEntity> entities = entityMapper.selectBatchIds(byEntity.keySet());
+        if (entities.isEmpty()) {
+            // 提及在、实体却没了：只可能是直接删库造成的孤儿数据。如实记一条 warn，
+            // 别静默返回空列表（那会让人以为这篇文章没有实体）
+            log.warn("Wiki 提及指向了不存在的实体，已忽略：postId={} entityIds={}",
+                    postId, byEntity.keySet());
+            return List.of();
+        }
+
+        Map<Long, AiWikiRelation> pairs = relationsOf(byEntity.keySet());
+        // 关系另一端的名字要一起给出来：读者看的是名字，不是 id。
+        // ⚠️ 先把**本文已有**的实体填进去 —— 另一端常常也在这篇文章里（两个概念在同一句里出现），
+        // 只查「不在本文里的另一端」会让这种情况的名字是 null（踩过）
+        Map<Long, String> nameOf = new HashMap<>();
+        entities.forEach(entity -> nameOf.put(entity.getId(), entity.getName()));
+        Set<Long> otherIds = new HashSet<>();
+        for (AiWikiRelation relation : pairs.values()) {
+            otherIds.add(relation.getSourceEntityId());
+            otherIds.add(relation.getTargetEntityId());
+        }
+        otherIds.removeAll(nameOf.keySet());
+        if (!otherIds.isEmpty()) {
+            entityMapper.selectBatchIds(otherIds)
+                    .forEach(other -> nameOf.put(other.getId(), other.getName()));
+        }
+
+        Map<Long, List<AiWikiRelationEvidence>> evidenceOf = evidenceOf(pairs.keySet());
+
+        List<AiWikiEntityVO> result = new ArrayList<>();
+        for (AiWikiEntity entity : entities) {
+            List<AiWikiEntityVO.MentionVO> own = byEntity.getOrDefault(entity.getId(), List.of())
+                    .stream()
+                    .map(mention -> AiWikiEntityVO.MentionVO.builder()
+                            .postId(mention.getPostId())
+                            .chunkIndex(mention.getChunkIndex())
+                            .claimText(mention.getClaimText())
+                            .build())
+                    .toList();
+
+            List<AiWikiEntityVO.RelationVO> relations = new ArrayList<>();
+            for (AiWikiRelation relation : pairs.values()) {
+                Long other = null;
+                if (entity.getId().equals(relation.getSourceEntityId())) {
+                    other = relation.getTargetEntityId();
+                } else if (entity.getId().equals(relation.getTargetEntityId())) {
+                    other = relation.getSourceEntityId();
+                }
+                if (other == null) {
+                    continue;
+                }
+                relations.add(AiWikiEntityVO.RelationVO.builder()
+                        .entityId(other)
+                        .name(nameOf.get(other))
+                        .weight(relation.getWeight())
+                        .evidence(evidenceOf.getOrDefault(relation.getId(), List.of()).stream()
+                                .map(evidence -> AiWikiEntityVO.MentionVO.builder()
+                                        .postId(evidence.getPostId())
+                                        .chunkIndex(evidence.getChunkIndex())
+                                        .claimText(evidence.getClaimText())
+                                        .build())
+                                .toList())
+                        .build());
+            }
+            // 权重高的在前；并列按名字，保证顺序确定
+            relations.sort(Comparator
+                    .comparingInt((AiWikiEntityVO.RelationVO rel) -> orZero(rel.getWeight()))
+                    .reversed()
+                    .thenComparing(rel -> rel.getName() == null ? "" : rel.getName()));
+
+            result.add(AiWikiEntityVO.builder()
+                    .id(entity.getId())
+                    .name(entity.getName())
+                    .normalized(entity.getNormalized())
+                    .kind(entity.getKind())
+                    .mentionCount(entity.getMentionCount())
+                    .postCount(entity.getPostCount())
+                    .mentions(own)
+                    .relations(relations)
+                    .build());
+        }
+        result.sort(Comparator
+                .comparingInt((AiWikiEntityVO vo) -> vo.getMentions() == null
+                        ? 0 : vo.getMentions().size())
+                .reversed()
+                .thenComparing(vo -> vo.getName() == null ? "" : vo.getName()));
+        return result;
+    }
+
+    /** 与这批实体相关的（无向）关系，按 id 索引。 */
+    private Map<Long, AiWikiRelation> relationsOf(Collection<Long> entityIds) {
+        if (entityIds.isEmpty()) {
+            return Map.of();
+        }
+        // ⚠️ 用 `and(...)` 把「任一端命中」括起来：不加括号时 OR 会与其它条件串成
+        // 「A 命中 且 B 命中 或 C」这种优先级错误，症状是查出一堆无关的边
+        LambdaQueryWrapper<AiWikiRelation> wrapper = new LambdaQueryWrapper<>();
+        wrapper.and(inner -> inner.in(AiWikiRelation::getSourceEntityId, entityIds)
+                .or()
+                .in(AiWikiRelation::getTargetEntityId, entityIds));
+        Map<Long, AiWikiRelation> pairs = new LinkedHashMap<>();
+        relationMapper.selectList(wrapper)
+                .forEach(relation -> pairs.put(relation.getId(), relation));
+        return pairs;
+    }
+
+    private Map<Long, List<AiWikiRelationEvidence>> evidenceOf(Collection<Long> relationIds) {
+        if (relationIds.isEmpty()) {
+            return Map.of();
+        }
+        return relationEvidenceMapper
+                .selectList(new LambdaQueryWrapper<AiWikiRelationEvidence>()
+                        .in(AiWikiRelationEvidence::getRelationId, relationIds)
+                        .orderByAsc(AiWikiRelationEvidence::getPostId)
+                        .orderByAsc(AiWikiRelationEvidence::getChunkIndex))
+                .stream()
+                .collect(Collectors.groupingBy(AiWikiRelationEvidence::getRelationId));
     }
 
     /**

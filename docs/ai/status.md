@@ -41,7 +41,8 @@
 | E4-4 实体抽取与别名合并 | ✅ | `app/rag/entities.py`：实体必须能在**留下来的主张**或它的原文片段里逐字找到（否则丢弃计数）；合并只做确定性归一化（全角/半角/大小写/空白/首尾标点）；**不加模型调用**（与主张同一次请求） | `tests/test_wiki_entities.py`（11 条：实体必须有证据、被丢弃主张里的实体跟着消失、归一化合并、长度边界、顺序确定）+ 契约样例（含 `entityNotInText`）+ `AiContractTest` |
 | E4-5 实体共现关系 | ✅ 前半（Python） | `relation_edges`：同一句主张里同时出现的实体连边，`weight` = 被一起谈论的主张条数，**每条边都带证据**（哪几句主张）；无向边只有一种表示。⚠️ 如实叫「共现」而不是语义关系（因果/属于/依赖要模型抽取 + 人工审核） | `tests/test_wiki_entities.py`（+5 条：同句才连边、边带证据、重复共现加权、顺序确定）+ 契约样例 + `AiContractTest` |
 | E4-6 实体/关系落库 | ✅ | `deploy/sql/14_ai_wiki_entity.sql` 四张表（实体按 `normalized` 幂等 / 提及含 `claimText` / **无向**关系 / 关系证据）+ `AiWikiServiceImpl.storeGraph`；端点在库中不存在时**这条边不落库**；关系证据**先清后写** | `AiWikiServiceImplTest`（+3：写法差异只占一行、重复构建权重更新且证据不累加、端点缺失跳过）+ 构建报告口径分清（落库数 vs 模型侧账） |
-| E4-7 读者侧实体页 | ⏳ 下一刀 | `GET /ai/wiki/entities`（实体 + 它出现在哪几句主张 + 与谁被一起谈论）+ 前端页面 | — |
+| E4-7 读者侧实体 | ✅ | `GET /ai/wiki/posts/{id}/entities`（**公开**）：实体 + **本文**的提及 + 共现关系（另一端带名字、边带证据）+ 全站计数；前端「知识条目」区块下多一段「本文提到的实体」（如实标「共现，不是因果」） | `AiWikiServiceImplTest`（+2：只带本文提及与关系、无提及返回空）+ `AiWikiControllerTest.entitiesArePublic` + `wiki-selfcheck.mjs`（+10 条：两条路径独立失败、切换文章清空、空 id 不发请求） |
+| E4-8 主题社区发现与页面生成 | ⏳ 下一刀 | 把实体与主张聚成人读的主题页（roadmap §14 第 4-5 步） | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果

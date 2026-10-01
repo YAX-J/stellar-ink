@@ -781,7 +781,12 @@ curl -s -X POST http://127.0.0.1:8200/wiki/claims -H "Content-Type: application/
   roadmap §14 第 2 步要求的 ADMIN 审核流还没做，**那条线是后续切片**。
   实体不额外花模型调用：与主张在**同一次**请求里抽取。
 - ⚠️ **只回结果、不落库**：持久化归 Java（`ai_wiki_*` 表），Python 不碰库 ——
-  与其它 AI 能力的边界一致。实体落库、关系、页面生成是 E4 的后续切片。
+  与其它 AI 能力的边界一致。页面生成与增量失效是 E4 的后续切片。
+- **实体与关系读取（E4-7）**：`GET /ai/wiki/posts/{postId}/entities`（**公开**，与主张同级）
+  返回该文章的实体：`mentions` 是**本文**里它出现的那几句主张（读者在这里核对），
+  `mentionCount` / `postCount` 是**全站**计数（两个数字含义不同，别混着显示），
+  `relations` 是它与谁被一起谈论（**共现**：`weight` = 被一起谈论的主张条数，且带证据）。
+  实体取不到**不影响**知识条目：前端两条路径分别请求、分别降级。
 - 契约样例由 `scripts/gen_wiki_fixture.py` 生成（真跑一遍抽取，只把模型换成桩），
   里面**故意含两类被丢弃**（一条编造引用的主张、一个只出现在那条主张里的实体）：
   `tests/fixtures/wiki_claims_result.json`，两侧共读。

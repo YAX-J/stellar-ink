@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -128,8 +130,9 @@ class AiWikiServiceImplTest {
                         AiWikiEntityDTO.builder().name("每天写五百字").normalized("每天写五百字")
                                 .kind("concept").count(1).postIds(List.of(7L))
                                 .mentions(List.of(mention)).build(),
-                        // 写法不同但归一化相同 → 必须合并到**同一行**
-                        AiWikiEntityDTO.builder().name("　每天写五百字").normalized("每天写五百字")
+                        // 同一 normalized 出现两次：真实情况下 Python 每个实体簇只送一条，
+                        // 这里是**压力用例**（证明「写法的差异不是不同实体」这条锚点真的在库上生效）
+                        AiWikiEntityDTO.builder().name("每天写五百字").normalized("每天写五百字")
                                 .kind("concept").count(1).postIds(List.of(7L))
                                 .mentions(List.of(mention)).build(),
                         AiWikiEntityDTO.builder().name("十八万字").normalized("十八万字")
@@ -284,5 +287,36 @@ class AiWikiServiceImplTest {
 
         assertEquals(0, result.getRelations());
         assertEquals(0, relationMapper.selectCount(null).intValue());
+    }
+
+    @Test
+    @DisplayName("读者侧实体：只带本文的提及与共现关系，另一端的名字要一起回")
+    void entitiesOfPostReturnsMentionsAndRelations() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any())).thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"));
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        var entities = service.entitiesOfPost(7L);
+
+        assertEquals(2, entities.size());
+        // 按名字取，而不是按下标：并列时是按名字排的，写死下标会让用例对排序细节过敏
+        var top = entities.stream()
+                .filter(entity -> "每天写五百字".equals(entity.getName()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(1, top.getMentions().size(), "本文的提及：读者在这里核对");
+        assertEquals(0, top.getMentions().get(0).getChunkIndex());
+        assertNotNull(top.getMentionCount(), "全站计数也带上（与本文提及数是两回事）");
+        assertEquals(1, top.getRelations().size());
+        assertEquals("十八万字", top.getRelations().get(0).getName(), "读者看的是名字，不是 id");
+        assertEquals(1, top.getRelations().get(0).getWeight());
+        assertFalse(top.getRelations().get(0).getEvidence().isEmpty(), "边也要回到原文");
+    }
+
+    @Test
+    @DisplayName("读者侧实体：没有提及的文章返回空列表（不报错、也不去查实体表）")
+    void entitiesOfPostIsEmptyForUnknownPost() {
+        assertTrue(service.entitiesOfPost(999L).isEmpty());
+        assertTrue(service.entitiesOfPost(null).isEmpty(), "空 postId 直接返回空");
     }
 }
