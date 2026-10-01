@@ -95,3 +95,51 @@ CREATE TABLE IF NOT EXISTS `ai_wiki_claim` (
     PRIMARY KEY (`id`),
     CONSTRAINT `uk_claim` UNIQUE (`post_id`, `content_hash`, `claim_text`)
 );
+
+-- LLM Wiki 知识图（E4-6）。与 deploy/sql/14_ai_wiki_entity.sql 一致（含幂等锚点：
+-- 实体按 normalized 唯一、提及含 claimText、无向关系按 (source,target) 唯一）。
+CREATE TABLE IF NOT EXISTS `ai_wiki_entity` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `normalized` VARCHAR(64) NOT NULL,
+    `name` VARCHAR(64) NOT NULL,
+    `kind` VARCHAR(16) NOT NULL DEFAULT 'other',
+    `mention_count` INT NOT NULL DEFAULT 0,
+    `post_count` INT NOT NULL DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_entity` UNIQUE (`normalized`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_wiki_entity_mention` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `entity_id` BIGINT NOT NULL,
+    `post_id` BIGINT NOT NULL,
+    `chunk_index` INT NOT NULL,
+    `claim_text` VARCHAR(200) NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_mention` UNIQUE (`entity_id`, `post_id`, `chunk_index`, `claim_text`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_wiki_relation` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `source_entity_id` BIGINT NOT NULL,
+    `target_entity_id` BIGINT NOT NULL,
+    `weight` INT NOT NULL DEFAULT 1,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_relation` UNIQUE (`source_entity_id`, `target_entity_id`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_wiki_relation_evidence` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `relation_id` BIGINT NOT NULL,
+    `post_id` BIGINT NOT NULL,
+    `chunk_index` INT NOT NULL,
+    `claim_text` VARCHAR(200) NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_relation_evidence` UNIQUE (`relation_id`, `post_id`, `chunk_index`, `claim_text`)
+);
