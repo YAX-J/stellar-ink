@@ -63,6 +63,8 @@ STUB_OUTPUT = {
         {"name": "每天写五百字", "kind": "concept"},
         # 书写差异（空白/全角）应当合并成同一个实体
         {"name": "　每天写五百字 ", "kind": "concept"},
+        # 与「每天写五百字」同处一句 → 产生一条**共现关系**
+        {"name": "十八万字", "kind": "concept"},
         {"name": "手机干扰", "kind": "concept"},
         # 只出现在**被丢弃**的那条主张里 → 必须一起被丢掉
         {"name": "完全断网", "kind": "concept"},
@@ -111,10 +113,16 @@ def main() -> None:
             "样例里没有「依附在被丢弃主张上的实体」："
             "那正是实体校验的关键路径（实体必须站在留下来的主张上）"
         )
+    if not result.relations:
+        raise SystemExit(
+            "样例里没有共现关系：契约测试就守不住「边也带证据」那部分字段"
+            "（把两个能站住的实体放进同一句主张即可）"
+        )
 
     payload = {
         "claims": [claim.to_dict() for claim in result.claims],
         "entities": [cluster.to_dict() for cluster in result.entities],
+        "relations": [relation.to_dict() for relation in result.relations],
         "stats": result.stats.to_dict(),
         "notes": list(result.notes),
         "usageModel": result.usage_model,

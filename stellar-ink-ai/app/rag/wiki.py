@@ -32,8 +32,10 @@ from app.rag.entities import (
     ENTITY_KINDS,
     EntityCluster,
     EntityMention,
+    EntityRelation,
     collect_entities,
     merge_entities,
+    relation_edges,
 )
 from app.rag.pipeline import IndexedChunk
 
@@ -125,6 +127,8 @@ class ExtractionStats:
     entity_proposed: int = 0
     entity_kept: int = 0
     entities: int = 0
+    #: 共现关系条数（见 entities.relation_edges）
+    relations: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +139,7 @@ class ExtractionStats:
             "entityProposed": self.entity_proposed,
             "entityKept": self.entity_kept,
             "entities": self.entities,
+            "relations": self.relations,
         }
 
 
@@ -144,6 +149,8 @@ class ExtractionResult:
     stats: ExtractionStats
     #: 合并后的实体（按出现次数排序）；实体必须依附在留下来的主张上
     entities: list[EntityCluster] = field(default_factory=list)
+    #: 实体之间的**共现**关系（每条边都带着它来自哪几句主张）
+    relations: list[EntityRelation] = field(default_factory=list)
     #: 给人看的提示（例如「有 N 条因引用找不到被丢弃」）
     notes: list[str] = field(default_factory=list)
     usage_model: str = ""
@@ -250,6 +257,7 @@ async def extract_claims_async(
         )
 
     clusters = merge_entities(mentions)
+    relations = relation_edges(mentions)
     stats = ExtractionStats(
         proposed=proposed,
         kept=len(claims),
@@ -258,9 +266,11 @@ async def extract_claims_async(
         entity_proposed=entity_proposed,
         entity_kept=len(mentions),
         entities=len(clusters),
+        relations=len(relations),
     )
     logger.info(
-        "主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；实体 提出 %d、留下 %d、合并成 %d",
+        "主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；"
+        "实体 提出 %d、留下 %d、合并成 %d；共现关系 %d",
         stats.posts,
         stats.proposed,
         stats.kept,
@@ -268,10 +278,12 @@ async def extract_claims_async(
         stats.entity_proposed,
         stats.entity_kept,
         stats.entities,
+        stats.relations,
     )
     return ExtractionResult(
         claims=claims,
         entities=clusters,
+        relations=relations,
         stats=stats,
         notes=_notes(stats),
         usage_model=usage_model,

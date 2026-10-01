@@ -356,12 +356,21 @@ def test_contract_fixture_matches_the_schema() -> None:
     assert all(claim.quote in CHUNK_A or claim.quote in CHUNK_B for claim in parsed.claims)
 
     # 实体：写法差异合并成一个，且每个提及都挂在一句具体主张上
-    assert parsed.stats.entity_proposed == 4
-    assert parsed.stats.entity_kept == 3, "两条写法重复的实体都留下了（合并前）"
-    assert parsed.stats.entities == 2, "合并后是两个实体"
-    assert [entity.name for entity in parsed.entities] == ["每天写五百字", "手机干扰"]
+    assert parsed.stats.entity_proposed == 5
+    assert parsed.stats.entity_kept == 4, "两条写法重复的实体都留下了（合并前）"
+    assert parsed.stats.entities == 3, "合并后是三个实体"
+    assert [entity.name for entity in parsed.entities] == ["每天写五百字", "十八万字", "手机干扰"]
     assert parsed.entities[0].count == 2, "写法差异（空白/全角）应当合并"
     assert all(mention.claim_text for entity in parsed.entities for mention in entity.mentions), (
         "每个实体提及都要挂在一条具体主张上 —— 那是它回到证据的那条线"
     )
     assert "完全断网" not in raw, "只出现在被丢弃主张里的实体必须一起被丢掉"
+
+    # 共现关系：边也带证据（来自哪几句主张），且无向边只有一种表示
+    assert parsed.stats.relations == 1
+    assert len(parsed.relations) == 1
+    relation = parsed.relations[0]
+    assert relation.source < relation.target, "无向边按字典序存，否则 (A,B)/(B,A) 会各存一行"
+    assert {relation.source, relation.target} == {"十八万字", "每天写五百字"}
+    assert relation.weight == 1
+    assert relation.evidence[0].claim_text == "每天写五百字，一年可以累积十八万字"

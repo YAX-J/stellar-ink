@@ -63,6 +63,9 @@ public class AiWikiBuildVO implements Serializable {
 
     private Integer entityKept;
 
+    /** 实体之间的共现关系条数（E4-5）—— 如实叫「共现」，不说成「因果关系」 */
+    private Integer relations;
+
     private String usageModel;
 
     private Long latencyMs;

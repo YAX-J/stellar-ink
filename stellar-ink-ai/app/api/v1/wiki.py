@@ -24,6 +24,7 @@ from app.schemas.wiki import (
     WikiEntityMentionView,
     WikiEntityView,
     WikiExtractionStatsView,
+    WikiRelationView,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
     return WikiClaimsResult(
         claims=[WikiClaimView(**claim.to_dict()) for claim in result.claims],
         entities=[_entity_view(cluster) for cluster in result.entities],
+        relations=[WikiRelationView(**relation.to_dict()) for relation in result.relations],
         stats=WikiExtractionStatsView(**result.stats.to_dict()),
         notes=list(result.notes),
         usage_model=result.usage_model,
