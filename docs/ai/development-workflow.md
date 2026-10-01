@@ -243,12 +243,14 @@ E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它�
 ⚠️ 这一刀放开了 ai-service 的 `RedisUtils`：**每个 `@WebMvcTest` 切片都要 `@MockBean` 它**，
 否则切片上下文起不来（新增需要 Redis 的组件时同样如此）。
 
-**E3-4 观测出口做了一半（2026-10-01）**：Python 侧进程内 trace 缓冲 + `GET /internal/trace/{id}` 回放
-（检索 / 工具 / 模型三段；**只存结构不存内容**，内容字段名直接抛错；有界）。
-**下一步**：Java 侧聚合出口（把 `ai_call_log` 与 Python 事件按 traceId 合成一份「全链路」）+ 面板。
-⚠️ **需要你拍板**：是否部署 Langfuse / OTel —— 不部署的话回放只覆盖单副本，跨副本要集中存储；
-拍板前先按最小形态推进（Python 缓冲 + Java 聚合）。
-之后是 B/C 收口（嵌入缓存 + 429 退避、`minDenseScore` 标定）、E2 前端入口、E4 GraphRAG / LLM Wiki。
+**E3-4 观测出口已交付（最小形态，2026-10-01）**：一个 traceId 看完整条链路 ——
+Python 侧进程内事件缓冲（检索 / 工具 / 模型，**只存结构不存内容**、有界）+
+Java 侧 `GET /ai/admin/trace/{traceId}` 合并调用账与事件，**Python 不可用时仍回账**。
+契约由两侧共读的 `trace_replay_response.json` 守住（`AiContractTest` + `test_trace_contract.py`）。
+
+**E3 四刀到这里全部收口。** 下一步按顺序是 **B/C 收口**（嵌入缓存 + 429 退避、`minDenseScore` 标定、
+Qdrant 冒烟若可达）→ **E2 前端入口** → **E4 GraphRAG / LLM Wiki**。
+⚠️ **待你拍板**：是否部署 OpenTelemetry / Langfuse（决定跨副本回放与长期留存怎么做）；E4 的范围。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

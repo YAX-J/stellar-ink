@@ -16,6 +16,7 @@ import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import com.stellarink.sharedmodel.vo.ai.AiTraceCallVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageBreakdownVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
 import lombok.RequiredArgsConstructor;
@@ -260,6 +261,36 @@ public class AiUsageServiceImpl implements AiUsageService {
         List<AiCallLog> rows = callLogMapper.selectList(
                 new LambdaQueryWrapper<AiCallLog>().ge(AiCallLog::getCreatedAt, since));
         return summarize(rows, days, since);
+    }
+
+    @Override
+    public List<AiTraceCallVO> traceCalls(String traceId) {
+        if (traceId == null || traceId.isBlank()) {
+            return List.of();
+        }
+        List<AiCallLog> rows = callLogMapper.selectList(
+                new LambdaQueryWrapper<AiCallLog>()
+                        .eq(AiCallLog::getTraceId, traceId)
+                        .orderByAsc(AiCallLog::getId));
+        return rows.stream().map(AiUsageServiceImpl::toCallVo).toList();
+    }
+
+    private static AiTraceCallVO toCallVo(AiCallLog row) {
+        return AiTraceCallVO.builder()
+                .id(row.getId())
+                .scene(row.getScene())
+                .providerRole(row.getProviderRole())
+                .model(row.getModel())
+                .userId(row.getUserId())
+                .role(row.getRole())
+                .promptTokens(row.getPromptTokens())
+                .completionTokens(row.getCompletionTokens())
+                .totalTokens(row.getTotalTokens())
+                .latencyMs(row.getLatencyMs())
+                .success(row.getSuccess())
+                .errorCode(row.getErrorCode())
+                .createdAt(row.getCreatedAt())
+                .build();
     }
 
     // ------------------------------------------------------------------ 记账

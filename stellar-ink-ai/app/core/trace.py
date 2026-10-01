@@ -25,7 +25,8 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -79,6 +80,21 @@ def current_trace_id() -> str | None:
 def new_trace_id() -> str:
     """生成 traceId（32 位十六进制，与 Java 侧 UUID 去横线写法一致）。"""
     return uuid.uuid4().hex
+
+
+@contextmanager
+def bind_trace(trace_id: str) -> Iterator[None]:
+    """在**没有 HTTP 请求**的场景里摆出 trace 上下文（脚本、契约测试、探索性排查）。
+
+    公开它而不是让调用方去摸 `_trace_id` 那个私有 ContextVar：脚本里 import 私有名
+    一旦被重命名就会静默失效（`record_event` 在没有 traceId 时是**跳过**而不是报错），
+    于是「生成 fixture 的脚本只写出一个空文件」这种错很难看出来。
+    """
+    token = _trace_id.set(trace_id)
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
 
 
 def record_event(kind: str, **fields: Any) -> None:

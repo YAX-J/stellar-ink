@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
@@ -32,6 +33,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -338,6 +340,29 @@ class AiContractTest {
     }
 
     @Test
+    @DisplayName("链路回放：事件字段由 Python 定义，Java 只搬运（形状靠这份 fixture 守住）")
+    void traceReplayRoundTrips() throws IOException {
+        AiTraceDTO trace = roundTrip("trace_replay_response.json", AiTraceDTO.class);
+
+        assertEquals("0123456789abcdef0123456789abcdef", trace.getTraceId());
+        assertTrue(trace.getFound(), "样例是「这一台记到了这条链路」的形态");
+        assertEquals(2, trace.getEvents().size());
+
+        Set<String> kinds = trace.getEvents().stream()
+                .map(event -> String.valueOf(event.get("kind")))
+                .collect(Collectors.toSet());
+        assertEquals(Set.of("retrieval", "model"), kinds, "样例必须覆盖两条链路");
+
+        // Java 不为事件建 DTO 树，但**不代表读不到**：键名就是这份 fixture 守的
+        Map<String, Object> retrieval = trace.getEvents().get(0);
+        assertEquals(3L, retrieval.get("topK"));
+        assertEquals(Boolean.FALSE, retrieval.get("refused"));
+        Map<String, Object> model = trace.getEvents().get(1);
+        assertEquals("fixture-chat", model.get("model"));
+        assertEquals(49L, model.get("promptTokens"));
+    }
+
+    @Test
     @DisplayName("fixture 里的键名不得出现蛇形（出现即说明某侧私自换了命名）")
     void fixtureKeysAreCamelCase() throws IOException {
         Set<String> files = Set.of(
@@ -353,6 +378,7 @@ class AiContractTest {
                 "index_job.json",
                 "eval_run_request.json",
                 "eval_run_response.json",
+                "trace_replay_response.json",
                 "error_body.json");
 
         for (String fileName : files) {

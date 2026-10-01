@@ -2,9 +2,12 @@ package com.stellarink.ai.service;
 
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.sharedmodel.vo.ai.AiTraceCallVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -86,4 +89,13 @@ public interface AiUsageService {
 
     /** 汇总窗口内的账（看板用）。缺单价 / 缺 token 的调用数会如实返回，不会当 0 混进金额。 */
     AiUsageSummaryVO summary(int days);
+
+    /**
+     * 按 traceId 取这次链路的全部调用记录（E3-4 回放用），按发生顺序。
+     *
+     * <p>放在调用账服务里而不是新建一个「回放服务」：读的是同一张表，
+     * 而新建一个注入 Mapper 的 {@code @Service} 会让 ai-service 的**每个** {@code @WebMvcTest}
+     * 切片都得多一个 {@code @MockBean}（这个坑已经踩过两次）。
+     */
+    List<AiTraceCallVO> traceCalls(String traceId);
 }

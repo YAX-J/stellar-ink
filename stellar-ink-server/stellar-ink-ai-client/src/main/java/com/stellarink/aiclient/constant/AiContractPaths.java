@@ -41,6 +41,9 @@ public final class AiContractPaths {
     /** 跑一轮检索评测 */
     public static final String EVAL_RUN = "/eval/run";
 
+    /** 按 traceId 回放 Python 侧的链路事件（E3-4）：检索 / 工具 / 模型三段 */
+    public static final String TRACE_REPLAY = "/internal/trace/{traceId}";
+
     private AiContractPaths() {
     }
 }

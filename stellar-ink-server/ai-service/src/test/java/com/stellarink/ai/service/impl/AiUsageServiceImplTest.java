@@ -208,6 +208,35 @@ class AiUsageServiceImplTest {
     }
 
     @Test
+    @DisplayName("按 traceId 查账：只回这一条链路的记录，且按发生顺序")
+    void traceCallsFilterByTraceId() {
+        givenChatRoleWithPrice(PRICE_IN, PRICE_OUT);
+
+        // traceId 来自 MDC（网关的 TraceIdFilter 写进去的），测试里自己摆一个
+        String traceId = "a".repeat(32);
+        org.slf4j.MDC.put("traceId", traceId);
+        try {
+            usageService.recordSuccess(
+                    AiCallScene.QA, usage(10, 5, 15, "test-chat"), System.currentTimeMillis());
+        } finally {
+            org.slf4j.MDC.remove("traceId");
+        }
+        AiCallLog other = new AiCallLog();
+        other.setScene("qa");
+        other.setTraceId("b".repeat(32));
+        other.setSuccess(1);
+        callLogMapper.insert(other);
+
+        var calls = usageService.traceCalls(traceId);
+
+        assertEquals(1, calls.size(), "别人的链路不该混进来");
+        assertEquals("qa", calls.get(0).getScene());
+        assertEquals(15, calls.get(0).getTotalTokens());
+        assertTrue(usageService.traceCalls("c".repeat(32)).isEmpty());
+        assertTrue(usageService.traceCalls("").isEmpty(), "空 traceId 直接返回空，不去查库");
+    }
+
+    @Test
     @DisplayName("窗口越界：报可读的参数错误，而不是查一个荒唐的范围")
     void rejectsUnreasonableWindows() {
         assertThrows(BusinessException.class, () -> usageService.summary(0));

@@ -727,8 +727,35 @@ curl -s http://127.0.0.1:8200/internal/trace/<traceId> -H "X-AI-Signature: …" 
 - 三段链路各自记在**执行它的那一层**：检索在 `RetrievalPipeline.retrieve`、工具在 Agent 的工具循环、
   模型调用在 `OpenAICompatibleProvider`（含失败状态码 —— 「一次 429 让整行指标归零」那类事故
   正是靠它才能在回放里看见）。
-- ⏳ **Java 侧的聚合出口（把调用账 + Python 事件合成一份「全链路」）与面板尚未做**，属 E3-4 的后半；
-  现在排障靠「网关响应头 `X-Trace-Id` → 本接口 + `/ai/admin/usage/summary`」两处对照。
+- ⏳ **Java 侧的聚合出口见下一节**（把调用账 + Python 事件合成一份「全链路」）；面板暂未做。
+
+**链路回放（E3-4，Java 聚合出口）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/admin/trace/{traceId}` | 按 traceId 回放：Java 侧调用账（`calls`）+ Python 侧链路事件（`events`）+ 说明（`notes`） | ADMIN |
+
+```bash
+# traceId 就是网关响应头 X-Trace-Id（32 位十六进制）
+curl -s http://127.0.0.1:8080/ai/admin/trace/<traceId> -H "Authorization: <ADMIN token>"
+# => {"code":0,"data":{"traceId":"…","pythonAvailable":true,"pythonFound":true,
+#     "calls":[{"scene":"qa","providerRole":"chat","model":"deepseek-flash","userId":7,
+#               "totalTokens":120,"latencyMs":702,"success":1,"errorCode":null}],
+#     "events":[{"atMs":…,"kind":"retrieval","topK":4,"posts":3,"refused":false}, …],
+#     "notes":[]}}
+```
+
+- **两份数据互补**：`calls` 说「**谁**在什么时候调了、花了多少、成功失败」（身份只有 Java 有）；
+  `events` 说「链路**内部**发生了什么」（检索命中几段、调了哪个模型、上游返回什么状态码）。
+- **Python 取不到时不藏账**：`pythonAvailable=false` + `notes` 说明原因，`calls` 照常返回 ——
+  一次下游故障不该把「本来就有的账」也藏起来，那会让人以为「这次调用根本没发生」。
+- **`pythonFound=false` 不是「伪造的 traceId」**：Python 侧的链路缓冲有界且是进程内的，
+  可能是被淘汰、也可能这条调用落在别的实例上。要跨副本回放需要 OTel/Langfuse（**待拍板**）。
+- **traceId 形状校验**：8–64 位字母数字（不合法返回 `1001`）。它会进 SQL 的 where 与 Feign 的 URL 路径，
+  放任任意字符串等于把路径拼接的口子留在最外层。
+- 事件字段**由 Python 定义**（不同 `kind` 键不同），`AiTraceDTO.events` 用 `List<Map<String,Object>>`
+  搬运而不是建一棵 Java DTO 树：那等于把 Python 的事件契约定死两处。键名与形状由两侧共读的
+  `trace_replay_response.json` 守住（`AiContractTest` + `tests/test_trace_contract.py`）。
 
 ### 各服务通用
 
