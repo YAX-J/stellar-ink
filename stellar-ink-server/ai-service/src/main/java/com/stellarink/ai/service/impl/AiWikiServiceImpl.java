@@ -122,6 +122,7 @@ public class AiWikiServiceImpl implements AiWikiService {
                 .entityProposed(orZero(stats == null ? null : stats.getEntityProposed()))
                 .entityKept(orZero(stats == null ? null : stats.getEntityKept()))
                 .relations(counters.relations)
+                .topics(orZero(stats == null ? null : stats.getTopics()))
                 .usageModel(result.getUsageModel())
                 .latencyMs(result.getLatencyMs())
                 .notes(notes)

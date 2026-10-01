@@ -13,6 +13,7 @@ import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiRelationDTO;
+import com.stellarink.aiclient.dto.AiWikiTopicDTO;
 import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
@@ -416,6 +417,18 @@ class AiContractTest {
         assertEquals(
                 "每天写五百字，一年可以累积十八万字",
                 relation.getEvidence().get(0).getClaimText());
+
+        // 主题（E4-8）：连通分量；名字是关键词组合，且主题页带**可核对的原文**
+        assertEquals(1, result.getStats().getTopics());
+        assertEquals(1, result.getTopics().size());
+        AiWikiTopicDTO topic = result.getTopics().get(0);
+        assertEquals(2, topic.getSize());
+        assertEquals(1, topic.getWeight());
+        assertEquals(Set.of("每天写五百字", "十八万字"), Set.copyOf(topic.getEntities()));
+        assertTrue(topic.getKeywords().size() <= topic.getEntities().size(), "关键词必须来自本主题的实体");
+        assertEquals(List.of(7L), topic.getPostIds());
+        assertEquals(
+                "每天写五百字，一年可以累积十八万字", topic.getEvidence().get(0).getClaimText());
     }
 
     @Test

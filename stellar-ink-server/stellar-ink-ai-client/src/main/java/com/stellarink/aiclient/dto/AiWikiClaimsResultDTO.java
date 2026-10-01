@@ -37,6 +37,9 @@ public class AiWikiClaimsResultDTO implements Serializable {
     /** 实体之间的共现关系（E4-5）：每条边都带证据 */
     private List<AiWikiRelationDTO> relations;
 
+    /** 主题（E4-8）：共现图上的连通分量，主题页的原料 */
+    private List<AiWikiTopicDTO> topics;
+
     private AiWikiStatsDTO stats;
 
     /** 给人看的提示（例如「N 条因引用找不到原文依据被丢弃」） */
@@ -73,5 +76,8 @@ public class AiWikiClaimsResultDTO implements Serializable {
 
         /** 共现关系条数（E4-5） */
         private Integer relations;
+
+        /** 主题个数（E4-8） */
+        private Integer topics;
     }
 }

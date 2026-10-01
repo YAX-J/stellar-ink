@@ -38,6 +38,7 @@ from app.rag.entities import (
     relation_edges,
 )
 from app.rag.pipeline import IndexedChunk
+from app.rag.topics import Topic, build_topics, topic_stats
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,8 @@ class ExtractionStats:
     entities: int = 0
     #: 共现关系条数（见 entities.relation_edges）
     relations: int = 0
+    #: 主题个数（见 topics.build_topics：连通分量 + 边权阈值）
+    topics: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,6 +143,7 @@ class ExtractionStats:
             "entityKept": self.entity_kept,
             "entities": self.entities,
             "relations": self.relations,
+            "topics": self.topics,
         }
 
 
@@ -151,6 +155,8 @@ class ExtractionResult:
     entities: list[EntityCluster] = field(default_factory=list)
     #: 实体之间的**共现**关系（每条边都带着它来自哪几句主张）
     relations: list[EntityRelation] = field(default_factory=list)
+    #: 主题（共现图上的连通分量）—— 主题页的原料
+    topics: list[Topic] = field(default_factory=list)
     #: 给人看的提示（例如「有 N 条因引用找不到被丢弃」）
     notes: list[str] = field(default_factory=list)
     usage_model: str = ""
@@ -258,6 +264,7 @@ async def extract_claims_async(
 
     clusters = merge_entities(mentions)
     relations = relation_edges(mentions)
+    topics, topic_notes = build_topics(clusters, relations)
     stats = ExtractionStats(
         proposed=proposed,
         kept=len(claims),
@@ -267,10 +274,11 @@ async def extract_claims_async(
         entity_kept=len(mentions),
         entities=len(clusters),
         relations=len(relations),
+        topics=len(topics),
     )
     logger.info(
         "主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；"
-        "实体 提出 %d、留下 %d、合并成 %d；共现关系 %d",
+        "实体 提出 %d、留下 %d、合并成 %d；共现关系 %d；主题 %d（规模分布 %s）",
         stats.posts,
         stats.proposed,
         stats.kept,
@@ -279,13 +287,16 @@ async def extract_claims_async(
         stats.entity_kept,
         stats.entities,
         stats.relations,
+        stats.topics,
+        dict(topic_stats(topics)) or "无",
     )
     return ExtractionResult(
         claims=claims,
         entities=clusters,
         relations=relations,
+        topics=topics,
         stats=stats,
-        notes=_notes(stats),
+        notes=[*_notes(stats), *topic_notes],
         usage_model=usage_model,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )

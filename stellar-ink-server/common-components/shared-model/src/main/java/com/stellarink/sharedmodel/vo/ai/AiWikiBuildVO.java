@@ -66,6 +66,9 @@ public class AiWikiBuildVO implements Serializable {
     /** 实体之间的共现关系条数（E4-5）—— 如实叫「共现」，不说成「因果关系」 */
     private Integer relations;
 
+    /** 主题个数（E4-8）：共现图上的连通分量，主题页的原料 */
+    private Integer topics;
+
     private String usageModel;
 
     private Long latencyMs;
