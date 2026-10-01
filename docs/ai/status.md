@@ -79,6 +79,19 @@ npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 
 `Recall@1 0.8333 / Recall@3 0.9417 / Precision@5 0.800 / NDCG@5 0.9485 / MRR 0.975 /
 拒答率 0.4 / 误拒率 0.0 / 引用准确率 1.0`。
 
+**最近一次全量核验（2026-10-02，第 20 刀之后）**：
+
+| 套件 | 结果 |
+|---|---|
+| Python | `ruff` / `ruff format --check` / `mypy`（68 个源文件）全通过；`pytest` **644 passed** |
+| 后端 | `mvn test` 9 模块 BUILD SUCCESS；有测试的 6 个模块：`common-core` 59、`ai-client` 42、`user-service` 6、`content-service` 33、`gateway` 42、`ai-service` 166 —— **合计 348 passed** |
+| 前端 | `npm run check`：4 个自检（含 Wiki 45 条）+ `vite build` 通过 |
+
+⚠️ **数用例时按「本次运行」的报告数**：`target/surefire-reports/` 里可能留着**早已删除**的测试类
+的旧报告（实测遇到过一次：2026-09-15 的 `WordCountDiag*Test` 报告显示 4 个失败，
+但那两个类早就删了、本次运行根本没跑它们 —— 差点被当成真失败去查）。
+`target/` 不入库，所以这只是本地计数陷阱，不是仓库问题。
+
 **第一次真实模型端到端**（2026-09-25，面板配 `chat = deepseek-flash @ api.deepseek.com`，
 语料仍是种子内容包、检索只开 Sparse —— 因为 `embedding` 角色还没配）：
 
