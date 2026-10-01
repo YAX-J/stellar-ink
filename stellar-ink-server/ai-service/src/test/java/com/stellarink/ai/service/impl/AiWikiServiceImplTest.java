@@ -3,6 +3,8 @@ package com.stellarink.ai.service.impl;
 import com.stellarink.aiclient.dto.AiWikiClaimDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
+import com.stellarink.aiclient.dto.AiWikiEntityDTO;
+import com.stellarink.aiclient.dto.AiWikiRelationDTO;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
 import com.stellarink.ai.pojo.AiWikiClaim;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
@@ -38,6 +40,18 @@ class AiWikiServiceImplTest {
     @Autowired
     private AiWikiClaimMapper claimMapper;
 
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiEntityMapper entityMapper;
+
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiEntityMentionMapper mentionMapper;
+
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiRelationMapper relationMapper;
+
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiRelationEvidenceMapper relationEvidenceMapper;
+
     /** Python 客户端与调用账都换成替身：这里验的是落库逻辑，不是 HTTP 与配额 */
     @MockBean
     private com.stellarink.aiclient.client.PythonAiClient pythonAiClient;
@@ -54,6 +68,11 @@ class AiWikiServiceImplTest {
      */
     @org.junit.jupiter.api.BeforeEach
     void clearClaims() {
+        // 先删子表再删主表：证据引用关系、提及引用实体
+        relationEvidenceMapper.delete(null);
+        relationMapper.delete(null);
+        mentionMapper.delete(null);
+        entityMapper.delete(null);
         claimMapper.delete(null);
     }
 
@@ -94,6 +113,37 @@ class AiWikiServiceImplTest {
             java.util.function.Supplier<?> supplier = invocation.getArgument(1);
             return supplier.get();
         });
+    }
+
+    /** 造一个带实体与关系的 Python 结果（E4-6 的落库对象） */
+    private AiWikiClaimsResultDTO graphResult(int weight, String evidenceText) {
+        var claimText = "每天写五百字可以累积成十八万字";
+        var mention = AiWikiEntityDTO.AiWikiEntityMentionDTO.builder()
+                .name("每天写五百字").postId(7L).chunkIndex(0).claimText(claimText).build();
+        var mentionOther = AiWikiEntityDTO.AiWikiEntityMentionDTO.builder()
+                .name("十八万字").postId(7L).chunkIndex(0).claimText(claimText).build();
+        return AiWikiClaimsResultDTO.builder()
+                .claims(List.of(claim(claimText, 0.9, "写作方法")))
+                .entities(List.of(
+                        AiWikiEntityDTO.builder().name("每天写五百字").normalized("每天写五百字")
+                                .kind("concept").count(1).postIds(List.of(7L))
+                                .mentions(List.of(mention)).build(),
+                        // 写法不同但归一化相同 → 必须合并到**同一行**
+                        AiWikiEntityDTO.builder().name("　每天写五百字").normalized("每天写五百字")
+                                .kind("concept").count(1).postIds(List.of(7L))
+                                .mentions(List.of(mention)).build(),
+                        AiWikiEntityDTO.builder().name("十八万字").normalized("十八万字")
+                                .kind("concept").count(1).postIds(List.of(7L))
+                                .mentions(List.of(mentionOther)).build()))
+                .relations(List.of(AiWikiRelationDTO.builder()
+                        .source("十八万字").target("每天写五百字").weight(weight)
+                        .evidence(List.of(AiWikiRelationDTO.EvidenceDTO.builder()
+                                .postId(7L).chunkIndex(0).claimText(evidenceText).build()))
+                        .build()))
+                .stats(AiWikiClaimsResultDTO.AiWikiStatsDTO.builder()
+                        .proposed(1).kept(1).dropped(Map.of()).posts(1)
+                        .entityProposed(3).entityKept(3).entities(2).relations(1).build())
+                .usageModel("stub-chat").latencyMs(5L).build();
     }
 
     @Test
@@ -183,5 +233,56 @@ class AiWikiServiceImplTest {
         assertEquals(2L, service.countOfPost(7L));
         assertEquals(0L, service.countOfPost(999L));
         assertTrue(service.claimsOfPost(null).isEmpty(), "空 postId 直接返回空，不查库");
+    }
+
+    @Test
+    @DisplayName("知识图落库：写法不同的同一实体只占一行，提及按唯一键去重")
+    void graphPersistenceIsIdempotentByNormalized() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any())).thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"));
+
+        AiWikiBuildVO result = service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        assertEquals(2, result.getEntities(), "「每天写五百字」与「　每天写五百字」是同一个实体");
+        assertEquals(1, result.getRelations());
+        assertEquals(2, entityMapper.selectCount(null).intValue());
+        // 三条提及里有两条完全相同（同一实体同一主张）→ 只写一条
+        assertEquals(2, mentionMapper.selectCount(null).intValue());
+    }
+
+    @Test
+    @DisplayName("重复构建：实体不重复、关系权重更新，且**证据先清后写**")
+    void graphRebuildDoesNotDuplicate() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any()))
+                .thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"))
+                .thenReturn(graphResult(2, "十八万字来自每天写五百字的复利"));
+
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        assertEquals(2, entityMapper.selectCount(null).intValue(), "实体不重复");
+        assertEquals(1, relationMapper.selectCount(null).intValue(), "无向边只有一行");
+        assertEquals(2, relationMapper.selectList(null).get(0).getWeight(), "权重跟着重建更新");
+        // 证据只增不删的话，旧证据会永远留着，而 weight 与证据条数一旦对不上，
+        // 这条边就没法用来核对了
+        var evidences = relationEvidenceMapper.selectList(null);
+        assertEquals(1, evidences.size(), "证据先清后写，不是累加");
+        assertEquals("十八万字来自每天写五百字的复利", evidences.get(0).getClaimText());
+    }
+
+    @Test
+    @DisplayName("关系端点实体缺失：这条边不落库（不画指向不存在实体的线）")
+    void relationWithoutEndpointIsSkipped() {
+        stubUsagePassthrough();
+        AiWikiClaimsResultDTO payload = graphResult(1, "每天写五百字可以累积成十八万字");
+        // 把 target 改成一个不在这批实体里的名字
+        payload.getRelations().get(0).setTarget("某个没被写进去的实体");
+        when(pythonAiClient.wikiClaims(any())).thenReturn(payload);
+
+        AiWikiBuildVO result = service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        assertEquals(0, result.getRelations());
+        assertEquals(0, relationMapper.selectCount(null).intValue());
     }
 }

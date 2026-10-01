@@ -5,9 +5,19 @@ import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.AiWikiClaimDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
+import com.stellarink.aiclient.dto.AiWikiEntityDTO;
+import com.stellarink.aiclient.dto.AiWikiRelationDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
+import com.stellarink.ai.mapper.AiWikiEntityMapper;
+import com.stellarink.ai.mapper.AiWikiEntityMentionMapper;
+import com.stellarink.ai.mapper.AiWikiRelationEvidenceMapper;
+import com.stellarink.ai.mapper.AiWikiRelationMapper;
 import com.stellarink.ai.pojo.AiWikiClaim;
+import com.stellarink.ai.pojo.AiWikiEntity;
+import com.stellarink.ai.pojo.AiWikiEntityMention;
+import com.stellarink.ai.pojo.AiWikiRelation;
+import com.stellarink.ai.pojo.AiWikiRelationEvidence;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
@@ -19,6 +29,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,6 +54,14 @@ public class AiWikiServiceImpl implements AiWikiService {
 
     private final AiWikiClaimMapper claimMapper;
 
+    private final AiWikiEntityMapper entityMapper;
+
+    private final AiWikiEntityMentionMapper mentionMapper;
+
+    private final AiWikiRelationMapper relationMapper;
+
+    private final AiWikiRelationEvidenceMapper relationEvidenceMapper;
+
     private final AiUsageService usageService;
 
     @Override
@@ -58,6 +77,11 @@ public class AiWikiServiceImpl implements AiWikiService {
         for (AiWikiClaimDTO claim : nullSafe(result.getClaims())) {
             store(claim, counters);
         }
+        // 实体与关系（E4-6）：它们依附在刚写下的主张上，所以必须在主张之后处理
+        GraphCounters graph = storeGraph(result);
+        counters.entities = graph.entities;
+        counters.mentions = graph.mentions;
+        counters.relations = graph.relations;
 
         List<String> notes = new ArrayList<>(nullSafe(result.getNotes()));
         notes.add("落库：新增 " + counters.inserted + " 条、更新 " + counters.updated
@@ -67,6 +91,8 @@ public class AiWikiServiceImpl implements AiWikiService {
             notes.add("⚠️ " + counters.rejected + " 条主张缺证据字段（postId/contentHash/text），"
                     + "已拒绝落库 —— 它们无法回到原文。");
         }
+        notes.add("知识图：实体 " + counters.entities + " 个、提及 " + counters.mentions
+                + " 条、共现关系 " + counters.relations + " 条。");
         AiWikiClaimsResultDTO.AiWikiStatsDTO stats = result.getStats();
         log.info("Wiki 构建完成：抽取 kept={} 落库 inserted={} updated={} skipped={} model={}",
                 stats == null ? null : stats.getKept(),
@@ -82,10 +108,13 @@ public class AiWikiServiceImpl implements AiWikiService {
                 .updated(counters.updated)
                 .skipped(counters.skipped)
                 .dropped(stats == null ? Map.of() : orEmpty(stats.getDropped()))
-                .entities(orZero(stats == null ? null : stats.getEntities()))
+                // ⚠️ 口径要分清：`entities` / `relations` 是**落库侧**的数（真的写进了几个），
+                // `entityProposed` / `entityKept` 才是**模型侧**的账（提出多少、通过校验多少）。
+                // 混用会让「关系端点实体缺失、一条都没写」显示成「写了 1 条」
+                .entities(counters.entities)
                 .entityProposed(orZero(stats == null ? null : stats.getEntityProposed()))
                 .entityKept(orZero(stats == null ? null : stats.getEntityKept()))
-                .relations(orZero(stats == null ? null : stats.getRelations()))
+                .relations(counters.relations)
                 .usageModel(result.getUsageModel())
                 .latencyMs(result.getLatencyMs())
                 .notes(notes)
@@ -205,11 +234,173 @@ public class AiWikiServiceImpl implements AiWikiService {
         return items == null ? List.of() : items;
     }
 
-    /** 一轮落库的三种结果：新增 / 更新 / 未变动（外加「缺证据被拒」）。 */
+    /**
+     * 落库实体、提及与共现关系（E4-6）。
+     *
+     * <p>三条必须保持的口径：
+     * ① **实体按 `normalized` 幂等**（写法的差异不是不同实体）；
+     * ② **提及的唯一键含 claimText** —— 每个提及回到一句具体主张，而不是「大概在这篇里」；
+     * ③ **关系是无向的**：两端按 normalized 排序后再写，否则 (A,B) 与 (B,A) 会各存一行、
+     *    权重看起来只有实际的一半。
+     *
+     * <p>关系的证据**先清后写**（按 relationId 删掉再插）：每次重建都可能多出/少掉一两句证据，
+     * 「只增不删」会让旧证据永远留着，而 weight 与证据条数一旦对不上，
+     * 这条边就没法用来核对了。
+     */
+    private GraphCounters storeGraph(AiWikiClaimsResultDTO result) {
+        GraphCounters counters = new GraphCounters();
+        Map<String, Long> entityIds = new LinkedHashMap<>();
+
+        for (AiWikiEntityDTO entity : nullSafe(result.getEntities())) {
+            if (entity.getNormalized() == null || entity.getNormalized().isBlank()) {
+                continue;
+            }
+            Long entityId = upsertEntity(entity);
+            entityIds.put(entity.getNormalized(), entityId);
+            for (AiWikiEntityDTO.AiWikiEntityMentionDTO mention : nullSafe(entity.getMentions())) {
+                if (storeMention(entityId, mention)) {
+                    counters.mentions++;
+                }
+            }
+        }
+        // 计数按**去重后的实体数**（同一 normalized 写两次是命中，不是两个实体）
+        counters.entities = entityIds.size();
+
+        for (AiWikiRelationDTO relation : nullSafe(result.getRelations())) {
+            Long sourceId = entityIds.get(relation.getSource());
+            Long targetId = entityIds.get(relation.getTarget());
+            if (sourceId == null || targetId == null) {
+                // 端点实体不在这一批里（被校验丢掉或没写成功）：这条边**不落库**，
+                // 否则图上会出现指向不存在实体的连线
+                log.warn("Wiki 关系缺少端点实体，已跳过：{} → {}",
+                        relation.getSource(), relation.getTarget());
+                continue;
+            }
+            counters.relations += upsertRelation(sourceId, targetId, relation) ? 1 : 0;
+        }
+        return counters;
+    }
+
+    private Long upsertEntity(AiWikiEntityDTO dto) {
+        AiWikiEntity existing = entityMapper.selectOne(
+                new LambdaQueryWrapper<AiWikiEntity>()
+                        .eq(AiWikiEntity::getNormalized, dto.getNormalized()));
+        int mentions = dto.getCount() == null ? 0 : dto.getCount();
+        int posts = dto.getPostIds() == null ? 0 : dto.getPostIds().size();
+        String kind = dto.getKind() == null || dto.getKind().isBlank() ? "other" : dto.getKind();
+
+        if (existing == null) {
+            AiWikiEntity row = new AiWikiEntity();
+            row.setNormalized(dto.getNormalized());
+            row.setName(dto.getName());
+            row.setKind(kind);
+            row.setMentionCount(mentions);
+            row.setPostCount(posts);
+            entityMapper.insert(row);
+            return row.getId();
+        }
+        // 计数字段每次都覆盖（它们是冗余计数，必须跟着明细走）；名字与类型只在变了时更新
+        AiWikiEntity update = new AiWikiEntity();
+        update.setId(existing.getId());
+        update.setMentionCount(mentions);
+        update.setPostCount(posts);
+        if (dto.getName() != null && !dto.getName().equals(existing.getName())) {
+            update.setName(dto.getName());
+        }
+        if (!kind.equals(existing.getKind())) {
+            update.setKind(kind);
+        }
+        entityMapper.updateById(update);
+        return existing.getId();
+    }
+
+    /** @return 是否新写了一条提及（命中唯一键即跳过，用于计数） */
+    private boolean storeMention(Long entityId, AiWikiEntityDTO.AiWikiEntityMentionDTO mention) {
+        if (mention.getPostId() == null || mention.getClaimText() == null) {
+            return false;
+        }
+        int chunkIndex = mention.getChunkIndex() == null ? 0 : mention.getChunkIndex();
+        Long exists = mentionMapper.selectCount(new LambdaQueryWrapper<AiWikiEntityMention>()
+                .eq(AiWikiEntityMention::getEntityId, entityId)
+                .eq(AiWikiEntityMention::getPostId, mention.getPostId())
+                .eq(AiWikiEntityMention::getChunkIndex, chunkIndex)
+                .eq(AiWikiEntityMention::getClaimText, mention.getClaimText()));
+        if (exists != null && exists > 0) {
+            return false;
+        }
+        AiWikiEntityMention row = new AiWikiEntityMention();
+        row.setEntityId(entityId);
+        row.setPostId(mention.getPostId());
+        row.setChunkIndex(chunkIndex);
+        row.setClaimText(mention.getClaimText());
+        mentionMapper.insert(row);
+        return true;
+    }
+
+    /** @return 是否写入了这条关系（端点实体缺失时返回 false，由调用方跳过计数） */
+    private boolean upsertRelation(Long sourceId, Long targetId, AiWikiRelationDTO dto) {
+        // 无向边只有一种表示：先按 id 排序，避免 (A,B)/(B,A) 各存一行
+        Long low = Math.min(sourceId, targetId);
+        Long high = Math.max(sourceId, targetId);
+        if (low.equals(high)) {
+            return false;
+        }
+        int weight = dto.getWeight() == null ? 1 : dto.getWeight();
+
+        AiWikiRelation existing = relationMapper.selectOne(new LambdaQueryWrapper<AiWikiRelation>()
+                .eq(AiWikiRelation::getSourceEntityId, low)
+                .eq(AiWikiRelation::getTargetEntityId, high));
+        Long relationId;
+        if (existing == null) {
+            AiWikiRelation row = new AiWikiRelation();
+            row.setSourceEntityId(low);
+            row.setTargetEntityId(high);
+            row.setWeight(weight);
+            relationMapper.insert(row);
+            relationId = row.getId();
+        } else {
+            relationId = existing.getId();
+            if (existing.getWeight() == null || existing.getWeight() != weight) {
+                AiWikiRelation update = new AiWikiRelation();
+                update.setId(relationId);
+                update.setWeight(weight);
+                relationMapper.updateById(update);
+            }
+        }
+
+        // 证据先清后写：只增不删会让旧证据永远留着，而 weight 与证据条数一旦对不上，
+        // 这条边就没法用来核对了
+        relationEvidenceMapper.delete(new LambdaQueryWrapper<AiWikiRelationEvidence>()
+                .eq(AiWikiRelationEvidence::getRelationId, relationId));
+        for (AiWikiRelationDTO.EvidenceDTO evidence : nullSafe(dto.getEvidence())) {
+            if (evidence.getPostId() == null || evidence.getClaimText() == null) {
+                continue;
+            }
+            AiWikiRelationEvidence row = new AiWikiRelationEvidence();
+            row.setRelationId(relationId);
+            row.setPostId(evidence.getPostId());
+            row.setChunkIndex(evidence.getChunkIndex() == null ? 0 : evidence.getChunkIndex());
+            row.setClaimText(evidence.getClaimText());
+            relationEvidenceMapper.insert(row);
+        }
+        return true;
+    }
+
+    /** 一轮知识图落库的计数：实体 / 提及 / 关系。 */
+    private static final class GraphCounters {
+        private int entities;
+        private int mentions;
+        private int relations;
+    }
+
+    /** 一轮落库的三种结果：新增 / 更新 / 未变动（外加「缺证据被拒」与知识图三计数）。 */
     private static final class Counters {
         private int inserted;
         private int updated;
         private int skipped;
         private int rejected;
+        private int entities;
+        private int mentions;
+        private int relations;
     }
 }
