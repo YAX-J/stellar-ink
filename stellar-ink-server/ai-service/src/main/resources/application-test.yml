@@ -16,8 +16,9 @@
 #
 # 与 dev 的其余差异：
 #   · 数据源只用于 ai_* 表（模型配置、评测数据）；AI 不读写 user / post 等业务表。
-#   · Redis 仍然排除（配额与 nonce 到 M1 才用），因此这里没有 spring.data.redis 段，
-#     stellar.ink.redis.keepalive 也保持 false —— 本服务当前不连 Redis。
+#   · Redis 段**显式写在这里**（E3-2 起本服务用 Redis 存配额计数与并发闸门）：
+#     Spring Boot 不认 `REDIS_HOST` 这种自定义变量名，配置里没有占位符时会静默退回
+#     localhost:6379 —— 同机部署碰巧是对的，容器或跨机时就是「配额静默失效」。
 #   · actuator 保留 metrics/loggers（测试环境需要能改运行期日志级别），高危端点与 dev 一样显式关闭。
 #
 # ⚠️ Nacos 命名空间**暂与 dev 共用** `f0350c82-…`（2026-09 口径：测试机独立命名空间待建）。
@@ -46,6 +47,25 @@ spring:
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
         group: DEFAULT_GROUP
+
+  # AI 配额与并发闸门的计数（E3-2）。测试机上应用与 Redis 同机，故默认 127.0.0.1。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 500ms              # 计数是旁路：超时到点即放行（fail-open）
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 1
+          min-idle: 0
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
 
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
@@ -134,12 +154,20 @@ logging:
 
 stellar:
   ink:
-    # 本服务当前不连 Redis（配额与 nonce 到 M1 才用），故保持关闭 —— 与 dev 档一致
+    # E3-2 起本服务真的用 Redis（配额计数与并发闸门），保活必须开
     redis:
       keepalive:
-        enabled: false
+        enabled: true
         interval: 30s
     ai:
       # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）。
       # 测试环境与 Python 同机，故走 127.0.0.1。
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+      # 配额（E3-2）：0 = 不限。测试机上应用与 Redis 同机，额度可以给宽一些便于联调。
+      quota:
+        enabled: ${AI_QUOTA_ENABLED:true}
+        daily-calls-per-user: ${AI_QUOTA_DAILY_CALLS_PER_USER:500}
+        daily-tokens-per-user: ${AI_QUOTA_DAILY_TOKENS_PER_USER:2000000}
+        daily-calls-per-role: ${AI_QUOTA_DAILY_CALLS_PER_ROLE:1000}
+        max-concurrent-per-user: ${AI_QUOTA_MAX_CONCURRENT_PER_USER:4}
+        inflight-ttl-seconds: 300

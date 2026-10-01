@@ -7,7 +7,9 @@
 #   · Nacos 上的键会覆盖本地 application-dev.yml 的同名键 → 本地那份是「Nacos 不可用时的兜底」，
 #     改这里请同时改本地文件。
 #   · 绝不放：sa-token.jwt-secret-key、AI_API_KEY、AI_INTERNAL_SECRET、actuator 高危端点开关。
-#   · ai-service 没有数据源与 Redis（不拥有业务表），所以这里没有 datasource / redis 段。
+#   · ai-service 没有业务数据源（不拥有 user/post），**但 E3-2 起连 Redis**（AI 配额计数与
+#     并发闸门）。Redis 的连接参数写在本地 application-{profile}.yml 里：连接地址属于部署事实，
+#     不放在这里，免得「本地文件看着是 127.0.0.1、实际被 Nacos 指到别处」。
 # =============================================================
 
 stellar:
@@ -15,6 +17,14 @@ stellar:
     ai:
       # Python 编排服务：仅内网可达，不注册 Nacos（Python 不参与 Java 服务发现）
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+      # 配额（E3-2）：可调项放这里，改完不用重启。0 = 不限。
+      # 计数存在 Redis，本文件只定义「额度是多少」。
+      quota:
+        enabled: true
+        daily-calls-per-user: 500        # 一轮评测（五组策略 × 30 题）就是上百次调用，开发期给宽些
+        daily-tokens-per-user: 2000000
+        daily-calls-per-role: 1000
+        max-concurrent-per-user: 4
 
 springdoc:
   api-docs:

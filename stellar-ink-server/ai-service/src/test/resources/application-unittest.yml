@@ -52,6 +52,11 @@ stellar:
   ink:
     ai:
       python-base-url: http://127.0.0.1:8200
+      # 配额关闭：测试进程里没有 Redis，开着它会让每条记账路径都去打一次 Redis
+      # 再走 fail-open 的 warn 分支 —— 测试仍然绿，但日志会被几十条「跳过配额检查」淹没，
+      # 真正的信号反而看不见。配额本身由 AiQuotaPolicyTest / AiUsageQuotaTest 单独覆盖。
+      quota:
+        enabled: false
 
 logging:
   level:

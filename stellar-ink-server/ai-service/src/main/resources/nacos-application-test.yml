@@ -22,6 +22,13 @@ stellar:
     ai:
       # Python 编排服务：仅内网可达，不注册 Nacos（Python 不参与 Java 服务发现）
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+      # 配额（E3-2）：可调项放这里，改完不用重启；计数在 Redis
+      quota:
+        enabled: true
+        daily-calls-per-user: 500
+        daily-tokens-per-user: 2000000
+        daily-calls-per-role: 1000
+        max-concurrent-per-user: 4
 
 springdoc:
   api-docs:

@@ -237,13 +237,16 @@ M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:
 E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它们说成「已完成」。
 另外欠一次 Qdrant 真实冒烟（方式见下），做完才能说 B 阶段「实测通过」。
 
-**E3 的第四刀已交付（2026-10-01 下午）**：E3-1 **AI 调用账**（审计 + 成本）——
-`ai_call_log` 表 + 五条路径埋点 + `GET /ai/admin/usage/summary`（ADMIN）。
-**接着做 E3-2 配额**（用户/角色/模型三维 + 并发，Redis；**边界已获用户放行**：
-AGENTS §6 里的「Redis 限流」只指博客 API 的边缘限流）。
-配额要用的数据底座已经就位 —— 先有账，才谈得上限额；E2 的前端入口也在等它。
-之后是 E3-3 MCP 工具服务、E3-4 观测出口（traceId 已全链路，缺 OTel/Langfuse 出口，
-「是否部署 Langfuse」是用户输入）。
+**E3 的第二刀已交付（2026-10-01 下午）**：E3-2 **配额与并发**——
+用户（每日调用数 + token）、角色（每日调用数）、并发三维**调用前**拦截，触顶 429；
+额度在配置（`stellar.ink.ai.quota.*`）、计数在 Redis（自然日窗口）；Redis 故障 fail-open 并告警。
+⚠️ 这一刀放开了 ai-service 的 `RedisUtils`：**每个 `@WebMvcTest` 切片都要 `@MockBean` 它**，
+否则切片上下文起不来（新增需要 Redis 的组件时同样如此）。
+
+**接着做 E3-3 MCP 工具服务**（把 E2 那批只读工具封成 MCP Server：Schema、权限标签、超时、
+幂等性与审计字段；MCP 只是协议层，**不能替代 Java 权限与工具白名单**）。
+之后是 E3-4 观测出口（traceId 已全链路，缺 OTel/Langfuse 出口；「是否部署 Langfuse」是用户输入，
+可以用调用账 + traceId 先做一个「按 traceId 回放」的最小出口）。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）

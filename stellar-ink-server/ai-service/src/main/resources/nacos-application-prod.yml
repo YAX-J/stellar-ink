@@ -19,6 +19,14 @@ stellar:
     ai:
       # 编排网络内的服务名；改这里可热切换 Python 实例（不重启 ai-service）
       python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
+      # 配额（E3-2）：可调项放这里，改完不用重启；计数在 Redis。
+      # 生产默认收紧；要临时放开某个额度，改这里比改镜像快得多。
+      quota:
+        enabled: true
+        daily-calls-per-user: 200
+        daily-tokens-per-user: 1000000
+        daily-calls-per-role: 500
+        max-concurrent-per-user: 2
 
 logging:
   level:

@@ -436,8 +436,16 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **ai-service 只拥有 `ai_*` 表**：M0 时它以「排除数据源」表明「碰不到业务库」；A1 起需要
   `ai_provider_config`（模型配置）等 AI 域自己的表，因此恢复数据源与 MyBatis-Plus，但
   **Mapper 只允许 `com.stellarink.ai.**.mapper`、只访问 `ai_*` 表**，绝不读写 `user`/`post`。
-  Redis 仍被排除（配额与 nonce 到 M1 才用），届时随对应切片放开并同步本文。
+  **E3-2 起 Redis 也放开了**（只放开 `RedisUtils`，`RedisCache` 仍排除）——配额计数与并发闸门要用；
+  连接参数显式写在 `application-{dev,test,prod}.yml`（不靠 Nacos 下发：Spring 不认 `REDIS_HOST`，
+  配置里没有占位符时会静默退回 localhost）。⚠️ 代价：`RedisUtils` 是**独立装配的 @Component**，
+  ai-service 的每个 `@WebMvcTest` 切片都要 `@MockBean` 它，否则整个切片上下文起不来。
   不要用 `@MapperScan`（它会污染 `@WebMvcTest` 切片测试）；在 Mapper 接口上标 `@Mapper`。
+- **AI 配额口径（E3-2）**：额度定义在配置（`stellar.ink.ai.quota.*`，可调项放 Nacos），
+  计数在 Redis（键前缀 `stellar-ink:ai:quota:`，窗口是自然日）。三条必须保持：
+  ① `0`/负数 = **不限**（默认不拦任何人，否则升级会让功能突然不可用）；
+  ② 触顶返回 **429**（前端 `isRateLimited()` 认 status/code 双 429）；
+  ③ Redis 不可用时 **fail-open + warn**（配额不是安全边界，安全边界才 fail-closed）。
 - **模型配置口径（重要）**：**面板是模型的唯一来源，代码里没有任何默认模型或厂商预设**。
   前端 `AiLabView` 不预置厂商、不带默认端点与模型名（端点与模型名照服务方文档填），
   Python 侧按角色（`chat` / `fast` / `reasoning` / `embedding` / `rerank`）从
@@ -513,8 +521,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：E3 的**配额、MCP 工具服务、观测出口**未开始（E3-1 调用账已落地：
-  `ai_call_log` + `/ai/admin/usage/summary` + 五条路径埋点）；E4（GraphRAG / LLM Wiki）未开始；
+- **未做的事（别当成已做）**：E3 的**MCP 工具服务、观测出口**未开始（E3-1 调用账、E3-2 配额与并发
+  已落地）；E4（GraphRAG / LLM Wiki）未开始；
   E2 只读 Agent 没有前端入口；Qdrant 从未连过真实实例（欠一次 `uv run python scripts/qdrant_smoke.py`）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
   ⚠️ 这条里的「Redis 限流」指**博客 API 的边缘限流**；**AI 域的调用配额已获用户明确放行**

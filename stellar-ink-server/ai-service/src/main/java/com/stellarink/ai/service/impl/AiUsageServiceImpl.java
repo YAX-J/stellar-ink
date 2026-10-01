@@ -2,13 +2,17 @@ package com.stellarink.ai.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.stellarink.aiclient.dto.UsageDTO;
+import com.stellarink.ai.config.AiQuotaProperties;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiCallLogMapper;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
 import com.stellarink.ai.pojo.AiCallLog;
 import com.stellarink.ai.pojo.AiProviderConfig;
+import com.stellarink.ai.service.AiQuotaTicket;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.support.AiQuotaPolicy;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
@@ -21,6 +25,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -44,6 +49,10 @@ import java.util.function.Function;
  *   <li><b>单价快照进账</b>：记账时读角色配置里的单价写进这一行。事后改单价不改写历史账目；
  *       取不到单价就留 NULL，成本按「未知」计，由 {@code unpricedCalls} 如实暴露。</li>
  * </ol>
+ *
+ * <p>E3-2 起这里还负责**配额**（额度定义在 {@code stellar.ink.ai.quota}，计数在 Redis）：
+ * 检查放在调用之前、计数放在调用之后，两者都挂在 {@code AiUsageService.around} 的唯一收口上。
+ * Redis 不可用时**放行**（fail-open）并打 warn —— 见 {@code acquireQuota} 的注释。
  */
 @Slf4j
 @Service
@@ -65,6 +74,11 @@ public class AiUsageServiceImpl implements AiUsageService {
 
     private final AiProviderConfigMapper providerConfigMapper;
 
+    /** 配额的计数与并发闸门（E3-2）；`enabled=false` 时完全不碰它 */
+    private final RedisUtils redisUtils;
+
+    private final AiQuotaProperties quotaProperties;
+
     @Override
     public void recordSuccess(AiCallScene scene, UsageDTO usage, long startedAtMillis) {
         AiCallLog row = baseRow(scene, startedAtMillis);
@@ -76,6 +90,156 @@ public class AiUsageServiceImpl implements AiUsageService {
             row.setTotalTokens(usage.getTotalTokens());
         }
         persist(row);
+        countUsage(usage);
+    }
+
+    // ------------------------------------------------------------------ 配额
+
+    @Override
+    public AiQuotaTicket acquireQuota(AiCallScene scene) {
+        if (!quotaProperties.isEnabled()) {
+            return AiQuotaTicket.NONE;
+        }
+        try {
+            return reserve(scene);
+        } catch (BusinessException refused) {
+            throw refused;
+        } catch (RuntimeException unavailable) {
+            // fail-open：配额防的是「把自己的钱烧光」，不是攻击边界。Redis 一抖就拒绝所有 AI
+            // 请求，会把一次缓存故障升级成整站 AI 不可用 —— 比少拦几次贵得多。
+            // 但放行必须留痕，否则「配额为什么没生效」会变成一个查不出来的问题。
+            log.warn("AI 配额检查跳过（Redis 不可用，本次放行）：scene={} error={}",
+                    scene.code(), unavailable.toString());
+            return AiQuotaTicket.NONE;
+        }
+    }
+
+    @Override
+    public void releaseQuota(AiQuotaTicket ticket) {
+        if (ticket == null || !ticket.holdsInflight()) {
+            return;
+        }
+        rollbackInflight(ticket.inflightKey());
+    }
+
+    /**
+     * 判定并占用额度。**先读齐再累加**，不做「加了一半又回滚」：
+     * 半状态一旦漏掉一处回滚，计数就永久偏大，而现象只是「额度偶尔不够用」。
+     *
+     * <p>代价是「检查」与「累加」之间有一瞬间不是原子的：并发下最多多放行
+     * 「同时在飞」的那几个请求。对「防止自己烧钱」这个目的足够；
+     * 换成 Lua 脚本或 CAS 会让这段逻辑难以单测，收益不值。
+     */
+    private AiQuotaTicket reserve(AiCallScene scene) {
+        LocalDateTime now = LocalDateTime.now();
+        String day = AiQuotaPolicy.dayOf(now.toLocalDate());
+        Duration window = AiQuotaPolicy.windowUntilEndOfDay(now);
+        Long userId = safeLoginId();
+
+        String inflightKey = null;
+        if (userId != null && quotaProperties.getMaxConcurrentPerUser() > 0) {
+            inflightKey = AiQuotaPolicy.inflightKeyOfUser(userId);
+            long inflight = redisUtils.increment(inflightKey, 1, inflightTtl());
+            if (inflight > quotaProperties.getMaxConcurrentPerUser()) {
+                rollbackInflight(inflightKey);
+                throw quotaExceeded("同时进行的 AI 请求过多（上限 "
+                        + quotaProperties.getMaxConcurrentPerUser() + " 个），请等上一个完成再试。");
+            }
+        }
+
+        try {
+            String callsKey = null;
+            if (userId != null) {
+                callsKey = AiQuotaPolicy.callsKeyOfUser(userId, day);
+                if (AiQuotaPolicy.exhausted(readCounter(callsKey), quotaProperties.getDailyCallsPerUser())) {
+                    throw quotaExceeded("今天的 AI 调用次数已用完（上限 "
+                            + quotaProperties.getDailyCallsPerUser() + " 次）。");
+                }
+                if (AiQuotaPolicy.exhausted(
+                        readCounter(AiQuotaPolicy.tokensKeyOfUser(userId, day)),
+                        quotaProperties.getDailyTokensPerUser())) {
+                    throw quotaExceeded("今天的 AI token 额度已用完（上限 "
+                            + quotaProperties.getDailyTokensPerUser() + " token）。");
+                }
+            }
+            String roleKey = null;
+            String providerRole = scene.providerRole();
+            if (providerRole != null && quotaProperties.getDailyCallsPerRole() > 0) {
+                roleKey = AiQuotaPolicy.callsKeyOfRole(providerRole, day);
+                if (AiQuotaPolicy.exhausted(readCounter(roleKey), quotaProperties.getDailyCallsPerRole())) {
+                    throw quotaExceeded("今天的「" + providerRole + "」模型调用次数已用完（上限 "
+                            + quotaProperties.getDailyCallsPerRole() + " 次）。");
+                }
+            }
+
+            // 全部检查通过之后才累加
+            if (callsKey != null) {
+                redisUtils.increment(callsKey, 1, window);
+            }
+            if (roleKey != null) {
+                redisUtils.increment(roleKey, 1, window);
+            }
+            return new AiQuotaTicket(userId, inflightKey);
+        } catch (RuntimeException error) {
+            if (inflightKey != null) {
+                rollbackInflight(inflightKey);
+            }
+            throw error;
+        }
+    }
+
+    /** 调用之后按**实际用量**累加 token 与模型维度计数（模型名只有这时才知道） */
+    private void countUsage(UsageDTO usage) {
+        if (!quotaProperties.isEnabled() || usage == null) {
+            return;
+        }
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            Duration window = AiQuotaPolicy.windowUntilEndOfDay(now);
+            String day = AiQuotaPolicy.dayOf(now.toLocalDate());
+            Long userId = safeLoginId();
+            int tokens = usage.getTotalTokens() == null ? 0 : Math.max(0, usage.getTotalTokens());
+            if (userId != null && tokens > 0) {
+                redisUtils.increment(AiQuotaPolicy.tokensKeyOfUser(userId, day), tokens, window);
+            }
+            if (usage.getModel() != null && !usage.getModel().isBlank()) {
+                redisUtils.increment(AiQuotaPolicy.callsKeyOfModel(usage.getModel(), day), 1, window);
+            }
+        } catch (RuntimeException error) {
+            // 记账已经落库了，这里只是计数：失败就少算一次，不影响本次调用
+            log.warn("AI 用量计数失败（配额可能偏松）：error={}", error.toString());
+        }
+    }
+
+    private long readCounter(String key) {
+        Long value = redisUtils.get(key, Long.class);
+        return value == null ? 0L : value;
+    }
+
+    /**
+     * 归还并发闸门。
+     *
+     * <p>先减再判：键可能已经因为 TTL 过期而不存在，此时 {@code increment(-1)} 会**新建**一个
+     * 值为 -1 的键 —— 不抹掉它，下一个请求就会从 -1 开始数（等于凭空多出一次并发额度）。
+     */
+    private void rollbackInflight(String inflightKey) {
+        try {
+            long left = redisUtils.increment(inflightKey, -1, inflightTtl());
+            if (left <= 0) {
+                redisUtils.delete(inflightKey);
+            }
+        } catch (RuntimeException error) {
+            log.warn("AI 并发闸门释放失败（等 TTL 自然过期）：key={} error={}",
+                    inflightKey, error.toString());
+        }
+    }
+
+    private Duration inflightTtl() {
+        return Duration.ofSeconds(Math.max(1, quotaProperties.getInflightTtlSeconds()));
+    }
+
+    private static BusinessException quotaExceeded(String message) {
+        return new BusinessException(ErrorCode.TOO_MANY_REQUESTS, message);
     }
 
     @Override

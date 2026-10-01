@@ -57,7 +57,9 @@ E. 扩展（按需）
    E3 MCP 工具服务与观测（配额、审计、成本看板）⏳ 进行中
       E3-1 调用账 ✅（`ai_call_log` + 五条路径埋点 + `/ai/admin/usage/summary`；
         身份只在 Java、表归 ai-service，成本按角色单价快照，缺口计数如实暴露）
-      E3-2 配额 / E3-3 MCP / E3-4 观测出口 ⏳ 未开始（Redis 边界已获用户放行）
+      E3-2 配额与并发 ✅（用户·角色·并发三维；额度在配置、计数在 Redis；触顶 429；
+        Redis 故障 fail-open 并告警）
+      E3-3 MCP 工具服务 / E3-4 观测出口 ⏳ 未开始
    E4 GraphRAG / LLM Wiki ⏳ 未开始
 ```
 

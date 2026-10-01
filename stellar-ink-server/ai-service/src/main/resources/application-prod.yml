@@ -28,6 +28,25 @@ spring:
         group: DEFAULT_GROUP
         namespace: ${NACOS_NAMESPACE:public}
 
+  # AI 配额与并发闸门的计数（E3-2）。生产里 Redis 由 compose 拉起，服务名就是 redis。
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 1s                 # 命令超时；计数是旁路，到点即放行（fail-open）
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 1
+          min-idle: 0
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+
   # 只用于 ai_* 表（模型配置、评测数据）；AI 不读写业务表
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
@@ -53,16 +72,23 @@ spring:
       test-on-return: false
 stellar:
   ink:
-    # Redis 连接保活心跳：远端 Redis 与本机之间的空闲连接会被 NAT/防火墙**静默**丢弃
-    # （实测：重启 11 分钟后第一批请求全部 503/500，而 Redis 那边早就没这条连接了），
-    # 30s 一次真 PING 让链路永不空闲；失败就把整池丢掉重建（见 RedisKeepAliveHeartbeat）。
+    # E3-2 起本服务真的用 Redis（配额计数与并发闸门）。生产里 Redis 与应用同机同网，
+    # 心跳用不上但留着 —— 一旦部署形态变化它就是现成的保护，代价只是每 30s 几条命令。
     redis:
       keepalive:
-        enabled: false
+        enabled: true
         interval: 30s
     ai:
       # Docker 编排内的服务名；部署时由 compose 注入
       python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
+      # 配额（E3-2）：0 = 不限。生产默认收紧，且全部可用环境变量覆盖（改完不用重新打包）。
+      quota:
+        enabled: ${AI_QUOTA_ENABLED:true}
+        daily-calls-per-user: ${AI_QUOTA_DAILY_CALLS_PER_USER:200}
+        daily-tokens-per-user: ${AI_QUOTA_DAILY_TOKENS_PER_USER:1000000}
+        daily-calls-per-role: ${AI_QUOTA_DAILY_CALLS_PER_ROLE:500}
+        max-concurrent-per-user: ${AI_QUOTA_MAX_CONCURRENT_PER_USER:2}
+        inflight-ttl-seconds: 300
 sa-token:
   token-name: Authorization
   token-style: uuid

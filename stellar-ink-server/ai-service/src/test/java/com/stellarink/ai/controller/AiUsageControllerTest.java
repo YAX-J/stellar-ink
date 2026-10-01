@@ -9,6 +9,7 @@ import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.vo.ai.AiUsageBreakdownVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
+import com.stellarink.common.redis.RedisUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
@@ -49,6 +50,14 @@ class AiUsageControllerTest {
     /** 看板本身就是要测的对象，这里必须是真的 stub，不能用透传替身 */
     @MockBean
     private AiUsageService usageService;
+
+    /**
+     * 配额用的 Redis 工具（E3-2）：切片里没有 spring-data-redis 的自动配置，
+     * 而它是个独立装配的 @Component —— 不 mock 掉，整个切片上下文都起不来。
+     * 这些用例不碰配额（AiUsageService 本身就是替身），所以它只是个占位。
+     */
+    @MockBean
+    private RedisUtils redisUtils;
 
     /** 启动类显式声明了 @ComponentScan，切片会把别的控制器一起装配，它们的依赖要 mock 掉 */
     @MockBean

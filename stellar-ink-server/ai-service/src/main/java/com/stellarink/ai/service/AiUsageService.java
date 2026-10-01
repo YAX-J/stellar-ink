@@ -5,7 +5,6 @@ import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -40,12 +39,17 @@ public interface AiUsageService {
      */
     default <T> T around(AiCallScene scene, Supplier<T> call, Function<T, UsageDTO> usageOf) {
         long started = System.currentTimeMillis();
+        AiQuotaTicket ticket = acquireQuota(scene);
         T result;
         try {
             result = call.get();
         } catch (RuntimeException error) {
             recordFailure(scene, error, started);
             throw error;
+        } finally {
+            // 无论成功、失败还是被配额拒绝之后的中断，都要放掉并发闸门；
+            // 漏掉的后果是「这一天的请求全都被自己的并发上限挡住」，而日志里只有 429
+            releaseQuota(ticket);
         }
         // 取用量本身失败也不该把成功的调用报成失败：用量是「账」的信息，不是这次调用的结果
         UsageDTO usage = null;
@@ -60,6 +64,19 @@ public interface AiUsageService {
         recordSuccess(scene, usage, started);
         return result;
     }
+
+    /**
+     * 调用前的配额检查（E3-2）：超限抛 429，Redis 不可用时**放行**（fail-open，见下）。
+     *
+     * <p>为什么 fail-open：配额防的是「把自己的钱烧光」，不是攻击边界。
+     * 反过来的口径（Redis 一抖就拒绝所有 AI 请求）会把一次缓存故障升级成整站 AI 不可用 ——
+     * 那比暂时少拦几次贵得多。安全边界（如 JWT 撤销）才用 fail-closed，两者的取舍不同。
+     * 放行时**必须留下 warn 日志**，否则「配额为什么没生效」会变成一个查不出来的问题。
+     */
+    AiQuotaTicket acquireQuota(AiCallScene scene);
+
+    /** 放掉并发闸门；{@code ticket} 为空时什么都不做（配额关闭或 Redis 不可用时就是空票） */
+    void releaseQuota(AiQuotaTicket ticket);
 
     /** 记一次成功调用；{@code usage} 为 {@code null} 表示上游没回报用量（**不是 0**）。 */
     void recordSuccess(AiCallScene scene, UsageDTO usage, long startedAtMillis);

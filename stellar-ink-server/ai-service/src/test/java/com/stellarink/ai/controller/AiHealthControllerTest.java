@@ -7,6 +7,7 @@ import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.common.redis.RedisUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +62,14 @@ class AiHealthControllerTest {
      */
     @MockBean(answer = Answers.CALLS_REAL_METHODS)
     private AiUsageService usageService;
+
+    /**
+     * 配额用的 Redis 工具（E3-2）：切片里没有 spring-data-redis 的自动配置，
+     * 而它是个独立装配的 @Component —— 不 mock 掉，整个切片上下文都起不来。
+     * 这些用例不碰配额（AiUsageService 本身就是替身），所以它只是个占位。
+     */
+    @MockBean
+    private RedisUtils redisUtils;
 
     /**
      * 评测控制器也在这个切片里被装配（启动类显式声明了 {@code @ComponentScan}，

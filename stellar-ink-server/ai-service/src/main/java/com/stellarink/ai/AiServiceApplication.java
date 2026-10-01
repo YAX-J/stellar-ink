@@ -1,7 +1,6 @@
 package com.stellarink.ai;
 
 import com.stellarink.common.redis.RedisCache;
-import com.stellarink.common.redis.RedisUtils;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
@@ -23,11 +22,10 @@ import org.springframework.context.annotation.FilterType;
  * 的内部契约提供（M3），草稿只随当前作者请求临时传输。它拥有的是 {@code ai_*} 表
  * （{@code ai_provider_config} 等），且**只**访问这些表。
  *
- * <p>为什么还排除公共模块的两个 Redis Bean：{@code RedisUtils}/{@code RedisCache} 会要求
- * 注入 {@code StringRedisTemplate}，而配额与 nonce 防重放要到 M1 才用。
- * 这些类随 common-core 传递到 classpath，排除扫描可以避免服务启动时就去初始化 Redis 连接池；
- * 等 M1 真正需要时再放开（并在 fast-track-plan 里同步说明）。
- * 数据源与 MyBatis-Plus 则**是需要的**（模型配置要落库）。
+ * <p>为什么仍然排除 {@code RedisCache}：它是「读缓存」工具，本服务不做业务数据缓存。
+ * {@code RedisUtils} 自 E3-2（AI 配额与并发闸门）起**不再排除** —— 配额需要一个原子计数器，
+ * 而 {@code StringRedisTemplate} 由 spring-data-redis 的自动配置提供；不用就不建连接。
+ * 数据源与 MyBatis-Plus 则需要（模型配置与调用账都要落库）。
  *
  * <p>这里刻意**不用** {@code @MapperScan}：那会在应用类上留下一个全局 Mapper 扫描器，
  * 连 {@code @WebMvcTest} 这种只加载 Web 层的切片测试也会去建 Mapper、进而要求 {@code SqlSessionFactory}，
@@ -38,7 +36,6 @@ import org.springframework.context.annotation.FilterType;
 @ComponentScan(
         basePackages = {"com.stellarink.ai", "com.stellarink.common", "com.stellarink.aiclient"},
         excludeFilters = {
-            @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = RedisUtils.class),
             @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = RedisCache.class),
         })
 @EnableDiscoveryClient
