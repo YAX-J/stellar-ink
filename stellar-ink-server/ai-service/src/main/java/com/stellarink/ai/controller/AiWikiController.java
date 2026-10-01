@@ -8,6 +8,7 @@ import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -96,8 +97,14 @@ public class AiWikiController {
         return Response.success(wikiService.entitiesOfPost(postId));
     }
 
-    private static int bounded(Integer requested, int ceiling) {
-        if (requested == null) {
+    @GetMapping("/wiki/posts/{postId}/topics")
+    @Operation(summary = "按文章读相关主题（公开）",
+            description = "主题 = 共现图上的连通分量；只回涉及本文的主题，且每段文字都能回到某句主张")
+    public Response<List<AiWikiTopicVO>> topicsOfPost(@PathVariable("postId") Long postId) {
+        return Response.success(wikiService.topicsOfPost(postId));
+    }
+
+    private static int bounded(Integer requested, int ceiling) {        if (requested == null) {
             return ceiling;
         }
         return Math.min(requested, ceiling);

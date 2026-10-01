@@ -5,6 +5,7 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiEntityDTO;
 import com.stellarink.aiclient.dto.AiWikiRelationDTO;
+import com.stellarink.aiclient.dto.AiWikiTopicDTO;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
 import com.stellarink.ai.pojo.AiWikiClaim;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
@@ -54,6 +55,15 @@ class AiWikiServiceImplTest {
     @Autowired
     private com.stellarink.ai.mapper.AiWikiRelationEvidenceMapper relationEvidenceMapper;
 
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiTopicMapper topicMapper;
+
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiTopicEntityMapper topicEntityMapper;
+
+    @Autowired
+    private com.stellarink.ai.mapper.AiWikiTopicEvidenceMapper topicEvidenceMapper;
+
     /** Python 客户端与调用账都换成替身：这里验的是落库逻辑，不是 HTTP 与配额 */
     @MockBean
     private com.stellarink.aiclient.client.PythonAiClient pythonAiClient;
@@ -70,11 +80,14 @@ class AiWikiServiceImplTest {
      */
     @org.junit.jupiter.api.BeforeEach
     void clearClaims() {
-        // 先删子表再删主表：证据引用关系、提及引用实体
+        // 先删子表再删主表：证据引用关系、提及引用实体、主题成员/证据引用主题
         relationEvidenceMapper.delete(null);
         relationMapper.delete(null);
         mentionMapper.delete(null);
         entityMapper.delete(null);
+        topicEvidenceMapper.delete(null);
+        topicEntityMapper.delete(null);
+        topicMapper.delete(null);
         claimMapper.delete(null);
     }
 
@@ -141,6 +154,15 @@ class AiWikiServiceImplTest {
                 .relations(List.of(AiWikiRelationDTO.builder()
                         .source("十八万字").target("每天写五百字").weight(weight)
                         .evidence(List.of(AiWikiRelationDTO.EvidenceDTO.builder()
+                                .postId(7L).chunkIndex(0).claimText(evidenceText).build()))
+                        .build()))
+                // 主题（E4-9）：成员就是这两个实体 —— 主题页要带可核对的原文
+                .topics(List.of(AiWikiTopicDTO.builder()
+                        .name("每天写五百字 · 十八万字")
+                        .keywords(List.of("每天写五百字", "十八万字"))
+                        .entities(List.of("每天写五百字", "十八万字"))
+                        .size(2).weight(weight).postIds(List.of(7L))
+                        .evidence(List.of(AiWikiTopicDTO.EvidenceDTO.builder()
                                 .postId(7L).chunkIndex(0).claimText(evidenceText).build()))
                         .build()))
                 .stats(AiWikiClaimsResultDTO.AiWikiStatsDTO.builder()
@@ -311,6 +333,58 @@ class AiWikiServiceImplTest {
         assertEquals("十八万字", top.getRelations().get(0).getName(), "读者看的是名字，不是 id");
         assertEquals(1, top.getRelations().get(0).getWeight());
         assertFalse(top.getRelations().get(0).getEvidence().isEmpty(), "边也要回到原文");
+    }
+
+    @Test
+    @DisplayName("主题落库：成员签名当锚点，读者侧带成员与可核对的原文")
+    void topicIsStoredWithSignatureAnchor() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any())).thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"));
+
+        AiWikiBuildVO result = service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        assertEquals(1, result.getTopics());
+        assertEquals(1, topicMapper.selectCount(null).intValue());
+        assertEquals(2, topicEntityMapper.selectCount(null).intValue(), "两个成员");
+        assertEquals(1, topicEvidenceMapper.selectCount(null).intValue());
+        // 锚点是**成员签名**，不是主题名 —— 名字由成员算出来，拿它当锚点会凭空多出一行
+        String signature = topicMapper.selectList(null).get(0).getSignature();
+        assertNotNull(signature);
+        assertEquals(64, signature.length(), "SHA-256 十六进制");
+
+        var topics = service.topicsOfPost(7L);
+
+        assertEquals(1, topics.size());
+        var topic = topics.get(0);
+        assertEquals(2, topic.getEntities().size());
+        assertEquals(2, topic.getSize());
+        assertTrue(topic.getKeywords().contains("每天写五百字"));
+        assertEquals(List.of(7L), topic.getPostIds());
+        assertEquals("每天写五百字可以累积成十八万字", topic.getEvidence().get(0).getClaimText());
+    }
+
+    @Test
+    @DisplayName("主题重复构建：成员与证据**先清后写**，不累加")
+    void topicRebuildDoesNotAccumulate() {
+        stubUsagePassthrough();
+        when(pythonAiClient.wikiClaims(any()))
+                .thenReturn(graphResult(1, "每天写五百字可以累积成十八万字"))
+                .thenReturn(graphResult(2, "十八万字来自每天写五百字的复利"));
+
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+        service.build(AiWikiClaimsRequestDTO.builder().build());
+
+        assertEquals(1, topicMapper.selectCount(null).intValue(), "成员没变 → 命中同一行");
+        assertEquals(2, topicMapper.selectList(null).get(0).getWeight(), "权重跟着重建更新");
+        assertEquals(2, topicEntityMapper.selectCount(null).intValue(), "成员先清后写，不是累加");
+        assertEquals(1, topicEvidenceMapper.selectCount(null).intValue(), "证据也不累加");
+    }
+
+    @Test
+    @DisplayName("读者侧主题：没有证据的文章返回空列表（不报错）")
+    void topicsOfPostIsEmptyForUnknownPost() {
+        assertTrue(service.topicsOfPost(999L).isEmpty());
+        assertTrue(service.topicsOfPost(null).isEmpty(), "空 postId 直接返回空");
     }
 
     @Test

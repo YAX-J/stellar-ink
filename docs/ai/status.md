@@ -43,7 +43,8 @@
 | E4-6 实体/关系落库 | ✅ | `deploy/sql/14_ai_wiki_entity.sql` 四张表（实体按 `normalized` 幂等 / 提及含 `claimText` / **无向**关系 / 关系证据）+ `AiWikiServiceImpl.storeGraph`；端点在库中不存在时**这条边不落库**；关系证据**先清后写** | `AiWikiServiceImplTest`（+3：写法差异只占一行、重复构建权重更新且证据不累加、端点缺失跳过）+ 构建报告口径分清（落库数 vs 模型侧账） |
 | E4-7 读者侧实体 | ✅ | `GET /ai/wiki/posts/{id}/entities`（**公开**）：实体 + **本文**的提及 + 共现关系（另一端带名字、边带证据）+ 全站计数；前端「知识条目」区块下多一段「本文提到的实体」（如实标「共现，不是因果」） | `AiWikiServiceImplTest`（+2：只带本文提及与关系、无提及返回空）+ `AiWikiControllerTest.entitiesArePublic` + `wiki-selfcheck.mjs`（+10 条：两条路径独立失败、切换文章清空、空 id 不发请求） |
 | E4-8 主题社区发现 | ✅ | `app/rag/topics.py`：**连通分量 + 边权阈值**（刻意不用 Louvain：确定性 + 可解释 + 失败方式看得见）。孤立实体**单独报出**、不硬塞归属；阈值是 v1 唯一的收窄手段；主题名是**关键词组合**（不是编出来的标题） | `tests/test_wiki_topics.py`（9 条：两组分开、孤立实体报数、传递链成一组、阈值真的收窄、顺序确定、名字来自本主题、截断不静默、端到端闭环）+ 契约样例 + 两侧契约测试 |
-| E4-9 主题落库与主题页 | ⏳ 下一刀 | 主题表 + 人读的主题页（roadmap §14 第 5 步：页面生成） | — |
+| E4-9 主题落库与读取 | ✅ | `deploy/sql/15_ai_wiki_topic.sql` 三张表（主题 / 成员 / 证据）+ `storeTopics`：**幂等锚点是成员签名**（成员规范化名字排序后的 SHA-256）而不是主题名 —— 名字由成员算出来，拿它当锚点会凭空多出一行；成员与证据**先清后写**；`GET /ai/wiki/posts/{id}/topics`（**公开**） | `AiWikiServiceImplTest`（+3：签名锚点与读者侧、重复构建不累加、无证据返回空）+ `AiWikiControllerTest.topicsArePublic` |
+| E4-10 主题页前端 | ⏳ 下一刀 | 独立的主题页（把这条主题的成员、原文与相关文章排成人读的一页） | — |
 | E4 GraphRAG（后做） | ⏳ 未开始 | 图检索增强（Local/Global Search）；需在与普通 RAG 的跨文章问题集上证明收益再保留 | — |
 
 ## 3. 一次完整核验的命令与结果

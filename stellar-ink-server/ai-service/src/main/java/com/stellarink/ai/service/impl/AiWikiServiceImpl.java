@@ -7,34 +7,49 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiEntityDTO;
 import com.stellarink.aiclient.dto.AiWikiRelationDTO;
+import com.stellarink.aiclient.dto.AiWikiTopicDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiWikiClaimMapper;
 import com.stellarink.ai.mapper.AiWikiEntityMapper;
 import com.stellarink.ai.mapper.AiWikiEntityMentionMapper;
 import com.stellarink.ai.mapper.AiWikiRelationEvidenceMapper;
 import com.stellarink.ai.mapper.AiWikiRelationMapper;
+import com.stellarink.ai.mapper.AiWikiTopicEntityMapper;
+import com.stellarink.ai.mapper.AiWikiTopicEvidenceMapper;
+import com.stellarink.ai.mapper.AiWikiTopicMapper;
 import com.stellarink.ai.pojo.AiWikiClaim;
 import com.stellarink.ai.pojo.AiWikiEntity;
 import com.stellarink.ai.pojo.AiWikiEntityMention;
 import com.stellarink.ai.pojo.AiWikiRelation;
 import com.stellarink.ai.pojo.AiWikiRelationEvidence;
+import com.stellarink.ai.pojo.AiWikiTopic;
+import com.stellarink.ai.pojo.AiWikiTopicEntity;
+import com.stellarink.ai.pojo.AiWikiTopicEvidence;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.sharedmodel.vo.ai.AiWikiBuildVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiClaimVO;
 import com.stellarink.sharedmodel.vo.ai.AiWikiEntityVO;
+import com.stellarink.sharedmodel.vo.ai.AiWikiTopicVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -69,6 +84,12 @@ public class AiWikiServiceImpl implements AiWikiService {
 
     private final AiWikiRelationEvidenceMapper relationEvidenceMapper;
 
+    private final AiWikiTopicMapper topicMapper;
+
+    private final AiWikiTopicEntityMapper topicEntityMapper;
+
+    private final AiWikiTopicEvidenceMapper topicEvidenceMapper;
+
     private final AiUsageService usageService;
 
     @Override
@@ -89,6 +110,8 @@ public class AiWikiServiceImpl implements AiWikiService {
         counters.entities = graph.entities;
         counters.mentions = graph.mentions;
         counters.relations = graph.relations;
+        // 主题（E4-9）：它引用**已落库的实体 id**，所以必须在实体之后
+        counters.topics = storeTopics(result, graph.entityIds);
 
         List<String> notes = new ArrayList<>(nullSafe(result.getNotes()));
         notes.add("落库：新增 " + counters.inserted + " 条、更新 " + counters.updated
@@ -122,7 +145,7 @@ public class AiWikiServiceImpl implements AiWikiService {
                 .entityProposed(orZero(stats == null ? null : stats.getEntityProposed()))
                 .entityKept(orZero(stats == null ? null : stats.getEntityKept()))
                 .relations(counters.relations)
-                .topics(orZero(stats == null ? null : stats.getTopics()))
+                .topics(counters.topics)
                 .usageModel(result.getUsageModel())
                 .latencyMs(result.getLatencyMs())
                 .notes(notes)
@@ -265,8 +288,104 @@ public class AiWikiServiceImpl implements AiWikiService {
         return result;
     }
 
-    /** 与这批实体相关的（无向）关系，按 id 索引。 */
-    private Map<Long, AiWikiRelation> relationsOf(Collection<Long> entityIds) {
+    @Override
+    public List<AiWikiTopicVO> topicsOfPost(Long postId) {
+        if (postId == null || postId < 1) {
+            return List.of();
+        }
+        // 用**证据**筛主题：主题页上的每段原文都带 post_id，
+        // 所以「这篇文章参与了哪些主题」是直接可查的（不必绕成员实体的提及）
+        List<AiWikiTopicEvidence> evidenceRows = topicEvidenceMapper.selectList(
+                new LambdaQueryWrapper<AiWikiTopicEvidence>()
+                        .eq(AiWikiTopicEvidence::getPostId, postId)
+                        .orderByAsc(AiWikiTopicEvidence::getChunkIndex));
+        if (evidenceRows.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> topicIds = evidenceRows.stream()
+                .map(AiWikiTopicEvidence::getTopicId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<AiWikiTopic> topics = topicMapper.selectBatchIds(topicIds);
+        Map<Long, List<Long>> memberIds = new LinkedHashMap<>();
+        topicEntityMapper.selectList(new LambdaQueryWrapper<AiWikiTopicEntity>()
+                        .in(AiWikiTopicEntity::getTopicId, topicIds))
+                .forEach(link -> memberIds
+                        .computeIfAbsent(link.getTopicId(), key -> new ArrayList<>())
+                        .add(link.getEntityId()));
+
+        Set<Long> allEntityIds = memberIds.values().stream()
+                .flatMap(List::stream)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, AiWikiEntity> entities = allEntityIds.isEmpty()
+                ? Map.of()
+                : entityMapper.selectBatchIds(allEntityIds).stream()
+                        .collect(Collectors.toMap(AiWikiEntity::getId, entity -> entity));
+        Map<Long, List<AiWikiTopicEvidence>> evidenceOf = evidenceRows.stream()
+                .collect(Collectors.groupingBy(AiWikiTopicEvidence::getTopicId));
+
+        List<AiWikiTopicVO> result = new ArrayList<>();
+        for (AiWikiTopic topic : topics) {
+            List<AiWikiTopicVO.EntityBriefVO> members = new ArrayList<>();
+            for (Long entityId : memberIds.getOrDefault(topic.getId(), List.of())) {
+                AiWikiEntity entity = entities.get(entityId);
+                if (entity == null) {
+                    // 成员实体被删了（孤儿关联）：跳过它，但**不静默** —— 否则页面会少一块而没人知道
+                    log.warn("主题 {} 的成员实体 {} 不存在，已跳过", topic.getId(), entityId);
+                    continue;
+                }
+                members.add(AiWikiTopicVO.EntityBriefVO.builder()
+                        .id(entity.getId())
+                        .name(entity.getName())
+                        .kind(entity.getKind())
+                        .mentionCount(entity.getMentionCount())
+                        .build());
+            }
+            // 顺序确定：提及多的在前，其次按名字
+            members.sort(Comparator
+                    .comparingInt((AiWikiTopicVO.EntityBriefVO brief) -> orZero(brief.getMentionCount()))
+                    .reversed()
+                    .thenComparing(brief -> brief.getName() == null ? "" : brief.getName()));
+
+            result.add(AiWikiTopicVO.builder()
+                    .id(topic.getId())
+                    .name(topic.getName())
+                    .keywords(splitKeywords(topic.getKeywords()))
+                    .size(topic.getSize())
+                    .weight(topic.getWeight())
+                    .postIds(evidenceOf.getOrDefault(topic.getId(), List.of()).stream()
+                            .map(AiWikiTopicEvidence::getPostId)
+                            .distinct()
+                            .sorted()
+                            .toList())
+                    .entities(members)
+                    .evidence(evidenceOf.getOrDefault(topic.getId(), List.of()).stream()
+                            .map(row -> AiWikiTopicVO.EvidenceVO.builder()
+                                    .postId(row.getPostId())
+                                    .chunkIndex(row.getChunkIndex())
+                                    .claimText(row.getClaimText())
+                                    .build())
+                            .toList())
+                    .build());
+        }
+        result.sort(Comparator
+                .comparingInt((AiWikiTopicVO vo) -> orZero(vo.getWeight()))
+                .reversed()
+                .thenComparing(vo -> vo.getName() == null ? "" : vo.getName()));
+        return result;
+    }
+
+    private static List<String> splitKeywords(String keywords) {
+        if (keywords == null || keywords.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(keywords.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .toList();
+    }
+
+    /** 与这批实体相关的（无向）关系，按 id 索引。 */    private Map<Long, AiWikiRelation> relationsOf(Collection<Long> entityIds) {
         if (entityIds.isEmpty()) {
             return Map.of();
         }
@@ -408,6 +527,7 @@ public class AiWikiServiceImpl implements AiWikiService {
         }
         // 计数按**去重后的实体数**（同一 normalized 写两次是命中，不是两个实体）
         counters.entities = entityIds.size();
+        counters.entityIds = entityIds;
 
         for (AiWikiRelationDTO relation : nullSafe(result.getRelations())) {
             Long sourceId = entityIds.get(relation.getSource());
@@ -534,9 +654,121 @@ public class AiWikiServiceImpl implements AiWikiService {
         private int entities;
         private int mentions;
         private int relations;
+        /** 规范化名字 → 实体 id（主题落库要用它把成员翻译成 id） */
+        private Map<String, Long> entityIds = Map.of();
     }
 
-    /** 一轮落库的三种结果：新增 / 更新 / 未变动（外加「缺证据被拒」与知识图三计数）。 */
+    /**
+     * 主题落库（E4-9）。
+     *
+     * <p>幂等锚点是 **signature**（成员规范化名字排序后拼接的 SHA-256），**不是主题名**：
+     * 名字由成员算出来，成员一变名字就变 —— 拿名字当锚点会凭空多出一行、
+     * 看起来像「发现了新主题」。成员变了本来就该是新主题，旧行留着（记录当时的知识状态）。
+     *
+     * <p>成员与证据都**先清后写**：只增不删会让旧成员/旧证据永远留着，
+     * 而 weight 与证据条数一旦对不上，这一页就没法用来核对了。
+     *
+     * @return 真正写下去的主题个数
+     */
+    private int storeTopics(AiWikiClaimsResultDTO result, Map<String, Long> entityIds) {
+        int written = 0;
+        for (AiWikiTopicDTO dto : nullSafe(result.getTopics())) {
+            List<String> normalized = nullSafe(dto.getEntities());
+            List<Long> ids = new ArrayList<>();
+            List<String> missing = new ArrayList<>();
+            for (String name : normalized) {
+                Long id = entityIds.get(name);
+                if (id == null) {
+                    missing.add(name);
+                } else if (!ids.contains(id)) {
+                    ids.add(id);
+                }
+            }
+            if (!missing.isEmpty()) {
+                log.warn("Wiki 主题里有成员没落库，已跳过它们：{}（主题 {}）", missing, dto.getName());
+            }
+            if (ids.size() < 2) {
+                // 一个实体的「主题」没有意义（主题的定义就是「它们被一起谈论」）；
+                // 这里如实跳过并 warn，而不是写一行 size=1 的假主题出来
+                log.warn("Wiki 主题成员不足 2 个，已跳过：{}", dto.getName());
+                continue;
+            }
+
+            String signature = signatureOf(normalized);
+            AiWikiTopic existing = topicMapper.selectOne(
+                    new LambdaQueryWrapper<AiWikiTopic>().eq(AiWikiTopic::getSignature, signature));
+            int weight = dto.getWeight() == null ? 0 : dto.getWeight();
+            String keywords = String.join(",", nullSafe(dto.getKeywords()));
+            Long topicId;
+            if (existing == null) {
+                AiWikiTopic row = new AiWikiTopic();
+                row.setSignature(signature);
+                row.setName(dto.getName());
+                row.setKeywords(keywords);
+                row.setSize(ids.size());
+                row.setWeight(weight);
+                topicMapper.insert(row);
+                topicId = row.getId();
+            } else {
+                topicId = existing.getId();
+                AiWikiTopic update = new AiWikiTopic();
+                update.setId(topicId);
+                update.setSize(ids.size());
+                update.setWeight(weight);
+                update.setKeywords(keywords);
+                // 名字只在真的变了时更新（代表写法可能随数据变化，那时才该覆盖）
+                if (dto.getName() != null && !dto.getName().equals(existing.getName())) {
+                    update.setName(dto.getName());
+                }
+                topicMapper.updateById(update);
+            }
+
+            topicEntityMapper.delete(
+                    new LambdaQueryWrapper<AiWikiTopicEntity>()
+                            .eq(AiWikiTopicEntity::getTopicId, topicId));
+            for (Long entityId : ids) {
+                AiWikiTopicEntity link = new AiWikiTopicEntity();
+                link.setTopicId(topicId);
+                link.setEntityId(entityId);
+                topicEntityMapper.insert(link);
+            }
+
+            topicEvidenceMapper.delete(
+                    new LambdaQueryWrapper<AiWikiTopicEvidence>()
+                            .eq(AiWikiTopicEvidence::getTopicId, topicId));
+            for (AiWikiTopicDTO.EvidenceDTO evidence : nullSafe(dto.getEvidence())) {
+                if (evidence.getPostId() == null || evidence.getClaimText() == null) {
+                    continue;
+                }
+                AiWikiTopicEvidence row = new AiWikiTopicEvidence();
+                row.setTopicId(topicId);
+                row.setPostId(evidence.getPostId());
+                row.setChunkIndex(evidence.getChunkIndex() == null ? 0 : evidence.getChunkIndex());
+                row.setClaimText(evidence.getClaimText());
+                topicEvidenceMapper.insert(row);
+            }
+            written++;
+        }
+        return written;
+    }
+
+    /** 成员规范化名字**排序后**拼接再取 SHA-256：成员相同 → 同一个主题。 */
+    private static String signatureOf(List<String> normalized) {
+        List<String> sorted = new ArrayList<>(normalized);
+        Collections.sort(sorted);
+        String joined = String.join("\n", sorted);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(joined.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException exception) {
+            // SHA-256 是 JDK 必备算法；真缺了也不能静默降级成「用名字当锚点」——
+            // 那会让幂等悄悄失效（看起来一切正常，只是库在膨胀）
+            throw new IllegalStateException("JVM 缺少 SHA-256，无法计算主题锚点", exception);
+        }
+    }
+
+    /** 一轮落库的三种结果：新增 / 更新 / 未变动（外加「缺证据被拒」与知识图四计数）。 */
     private static final class Counters {
         private int inserted;
         private int updated;
@@ -545,5 +777,6 @@ public class AiWikiServiceImpl implements AiWikiService {
         private int entities;
         private int mentions;
         private int relations;
+        private int topics;
     }
 }
