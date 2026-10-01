@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS `ai_provider_config` (
     `timeout_ms` INT NOT NULL DEFAULT 30000,
     `max_tokens` INT DEFAULT NULL,
     `temperature` DECIMAL(3,2) DEFAULT NULL,
+    `price_input_per_million` DECIMAL(10,4) DEFAULT NULL,
+    `price_output_per_million` DECIMAL(10,4) DEFAULT NULL,
     `enabled` TINYINT NOT NULL DEFAULT 1,
     `last_check_status` VARCHAR(16) DEFAULT NULL,
     `last_check_message` VARCHAR(500) DEFAULT NULL,
@@ -52,4 +54,26 @@ CREATE TABLE IF NOT EXISTS `ai_model` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_endpoint_model` (`base_url`, `model`)
+);
+
+-- AI 调用账（E3-1）。与 deploy/sql/12_ai_call_log.sql 一致。
+-- 只被 AiUsageServiceImpl 用到；切片测试里那个服务是替身，本表只有整上下文测试才真的碰。
+CREATE TABLE IF NOT EXISTS `ai_call_log` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `trace_id` VARCHAR(64) DEFAULT NULL,
+    `user_id` BIGINT DEFAULT NULL,
+    `role` VARCHAR(16) DEFAULT NULL,
+    `scene` VARCHAR(32) NOT NULL,
+    `provider_role` VARCHAR(32) DEFAULT NULL,
+    `model` VARCHAR(128) DEFAULT NULL,
+    `prompt_tokens` INT DEFAULT NULL,
+    `completion_tokens` INT DEFAULT NULL,
+    `total_tokens` INT DEFAULT NULL,
+    `latency_ms` INT DEFAULT NULL,
+    `success` TINYINT NOT NULL DEFAULT 1,
+    `error_code` VARCHAR(64) DEFAULT NULL,
+    `price_input` DECIMAL(10,4) DEFAULT NULL,
+    `price_output` DECIMAL(10,4) DEFAULT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
 );

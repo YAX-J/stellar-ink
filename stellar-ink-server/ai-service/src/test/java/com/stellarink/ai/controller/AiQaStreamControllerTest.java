@@ -13,7 +13,9 @@ import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.enums.ErrorCode;
+import com.stellarink.ai.service.AiUsageService;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.Answers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
@@ -67,6 +69,14 @@ class AiQaStreamControllerTest {
 
     @MockBean
     private QaStreamClient qaStreamClient;
+
+    /**
+     * 调用账替身：用**真实默认实现**透传调用（不记账）。
+     * 记账不在这几个切片的被测范围内，而 {@code around} 是接口的 default 方法 ——
+     * 这样就不必在每个用例里 stub 一遍「把 supplier 执行掉」。
+     */
+    @MockBean(answer = Answers.CALLS_REAL_METHODS)
+    private AiUsageService usageService;
 
     /** 切片会把同包组件一起装配：探活要 Feign 客户端，模型配置要 Mapper，这里都 mock 掉。 */
     @MockBean
@@ -183,7 +193,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("写失败（浏览器断开）：必须关掉下游，否则模型继续生成")
     void sendFailureCancelsUpstream() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, usageService);
         StubHandle handle = new StubHandle(List.of(frame("delta", "\"text\": \"好\"")), false);
         when(qaStreamClient.open(any())).thenReturn(handle);
 
@@ -204,7 +214,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("上游不可用：给一帧可读的 error，前端不会停在「生成中」")
     void upstreamFailureSendsErrorFrame() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, usageService);
         StubHandle handle = new StubHandle(List.of(), true);
         when(qaStreamClient.open(any())).thenReturn(handle);
 

@@ -7,6 +7,8 @@ import com.stellarink.aiclient.dto.WritingSuggestRequestDTO;
 import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
 import com.stellarink.aiclient.enums.WritingTask;
 import com.stellarink.aiclient.enums.WritingTone;
+import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiWritingStyleDTO;
 import com.stellarink.sharedmodel.dto.ai.AiWritingSuggestDTO;
@@ -42,6 +44,9 @@ public class AiWritingController {
 
     private final PythonAiClient pythonAiClient;
 
+    /** 调用账（E3-1）：只记**真的调了模型**的路径，故只有 {@code /suggest} 记账 */
+    private final AiUsageService usageService;
+
     @PostMapping("/suggest")
     @Operation(
             summary = "生成写作候选",
@@ -58,7 +63,10 @@ public class AiWritingController {
                 .candidateCount(request.getCandidateCount())
                 .build();
 
-        WritingSuggestResultDTO result = pythonAiClient.writingSuggest(internal);
+        WritingSuggestResultDTO result = usageService.around(
+                AiCallScene.WRITING_SUGGEST,
+                () -> pythonAiClient.writingSuggest(internal),
+                WritingSuggestResultDTO::getUsage);
 
         log.info("AI 写作建议完成：author={} task={} candidates={} model={} latencyMs={}",
                 authorId,
@@ -84,6 +92,9 @@ public class AiWritingController {
      *
      * <p>画像**只读**：Python 侧现算、不落库、不进索引，因此这里没有清理与失效的问题。
      * 它同时是 E2 只读 Agent 的前置上下文（Agent 需要「这个作者平时怎么说话」）。
+     *
+     * <p>⚠️ 画像**不记调用账**：它是字符级统计，一次模型都不调 —— 记进去只会让成本看板上
+     * 多出一行「花了 0 元」的假调用。账只记真正调用模型的路径。
      *
      * <p>样本不够时 Python 返回 `evidenceSufficient=false` + 可读的 `notes`，
      * 这一层**原样透传**：把「还没写够」显示成「没有风格」是两回事。

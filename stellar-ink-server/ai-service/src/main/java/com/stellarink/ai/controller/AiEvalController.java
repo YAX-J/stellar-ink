@@ -3,6 +3,8 @@ package com.stellarink.ai.controller;
 import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
+import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.response.Response;
@@ -42,6 +44,12 @@ public class AiEvalController {
 
     private final PythonAiClient pythonAiClient;
 
+    /**
+     * 调用账（E3-1）：评测一轮要跑嵌入与重排多个模型，token 目前不由 Python 回报，
+     * 因此这条账记的是「谁在什么时候跑了一轮、成功与否、耗时多久」，用量留空。
+     */
+    private final AiUsageService usageService;
+
     @GetMapping("/datasets")
     @Operation(summary = "可评测的数据集清单", description = "面板下拉框用它填充")
     public Response<List<Map<String, Object>>> datasets() {
@@ -66,7 +74,8 @@ public class AiEvalController {
         AuthHelper.requireAtLeast(Role.ADMIN);
         Long operator = AuthHelper.loginId();
 
-        EvalRunResponseDTO result = pythonAiClient.evalRun(request);
+        EvalRunResponseDTO result = usageService.around(
+                AiCallScene.EVAL, () -> pythonAiClient.evalRun(request), answer -> null);
 
         // 审计：谁跑了哪份数据集、几组策略、多少题。不记问题与正文（评测数据量大且无必要）
         log.info("AI 评测完成：operator={} dataset={} strategies={} cases={} models={} elapsedMs={}",

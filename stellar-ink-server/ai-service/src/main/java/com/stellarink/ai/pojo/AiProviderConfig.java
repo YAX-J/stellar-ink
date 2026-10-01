@@ -59,6 +59,17 @@ public class AiProviderConfig {
 
     private BigDecimal temperature;
 
+    /**
+     * 输入单价（元/百万 token）。空 = 未定价。
+     *
+     * <p>只用于「AI 调用账」（{@code ai_call_log}）算成本：记账时把当时的值**快照**进账里，
+     * 所以事后改单价不会改写历史账目。为空的调用成本按「未知」处理，不会当 0 算。
+     */
+    private BigDecimal priceInputPerMillion;
+
+    /** 输出单价（元/百万 token）。空 = 未定价。 */
+    private BigDecimal priceOutputPerMillion;
+
     private Integer enabled;
 
     private String lastCheckStatus;

@@ -3,6 +3,9 @@ package com.stellarink.ai.controller;
 import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.UsageDTO;
+import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAgentAskDTO;
 import com.stellarink.sharedmodel.response.Response;
@@ -43,6 +46,9 @@ public class AiAgentController {
 
     private final PythonAiClient pythonAiClient;
 
+    /** 调用账（E3-1）：Agent 比一次问答更贵，更该记清谁跑了多少步 */
+    private final AiUsageService usageService;
+
     @PostMapping("/ask")
     @Operation(
             summary = "只读 Agent 问答",
@@ -56,7 +62,12 @@ public class AiAgentController {
                 .maxToolCalls(bounded(request.getMaxToolCalls(), DEFAULT_MAX_TOOL_CALLS))
                 .build();
 
-        AgentAskResultDTO result = pythonAiClient.agentAsk(internal);
+        // Agent 目前只回报模型名、不回报 token（见 AgentAskResultDTO）：
+        // 账里仍然记下模型，token 留空由 untokenizedCalls 暴露，绝不当 0
+        AgentAskResultDTO result = usageService.around(
+                AiCallScene.AGENT,
+                () -> pythonAiClient.agentAsk(internal),
+                answer -> UsageDTO.builder().model(answer.getUsageModel()).build());
 
         // 审计：谁问的、几步、几次工具、是否收敛、用的哪个模型。
         // **不记问题原文与 thought** —— thought 里可能带上作者草稿或隐私片段

@@ -10,7 +10,9 @@ import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.enums.Role;
+import com.stellarink.ai.service.AiUsageService;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.Answers;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
@@ -54,6 +56,14 @@ class AiAgentControllerTest {
 
     @MockBean
     private PythonAiClient pythonAiClient;
+
+    /**
+     * 调用账替身：用**真实默认实现**透传调用（不记账）。
+     * 记账不在这几个切片的被测范围内，而 {@code around} 是接口的 default 方法 ——
+     * 这样就不必在每个用例里 stub 一遍「把 supplier 执行掉」。
+     */
+    @MockBean(answer = Answers.CALLS_REAL_METHODS)
+    private AiUsageService usageService;
 
     /** 切片会把同包组件一起装配：模型配置控制器要 Mapper，这里 mock 掉。 */
     @MockBean

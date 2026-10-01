@@ -3,6 +3,8 @@ package com.stellarink.ai.controller;
 import com.stellarink.ai.stream.QaSseFrame;
 import com.stellarink.ai.stream.QaStreamClient;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
+import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -52,6 +54,9 @@ public class AiQaStreamController {
 
     private final QaStreamClient qaStreamClient;
 
+    /** 调用账（E3-1）：流式这条路径原先**只在自己的注释里写着「记账」而并没有记** */
+    private final AiUsageService usageService;
+
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(
             summary = "就全站文章提问（SSE 流式）",
@@ -80,6 +85,7 @@ public class AiQaStreamController {
      * 分开写三处 close 迟早漏一处，而漏掉的那处就是「关掉页面后模型继续生成」。
      */
     void forwardFrames(ResponseBodyEmitter emitter, QaStreamRequestDTO request, Long userId) {
+        long started = System.currentTimeMillis();
         String lastType = QaSseFrame.UNKNOWN;
         try (QaStreamClient.Handle handle = qaStreamClient.open(request)) {
             for (QaSseFrame frame : handle) {
@@ -88,13 +94,19 @@ public class AiQaStreamController {
             }
             emitter.complete();
             log.info("AI 流式问答完成：userId={} lastEvent={}", userId, lastType);
+            // 用量记「未计量」：它写在 done 帧的 JSON 里，而按既定设计 Java **不解析事件体**
+            // （解析等于再抄一份 Python 的事件契约）。缺口由看板的 untokenizedCalls 如实暴露。
+            usageService.recordSuccess(AiCallScene.QA_STREAM, null, started);
         } catch (IOException error) {
             // 浏览器断开（或 emitter 已超时）：**这里就是取消传播的落点**
             log.info("问答流写入失败，取消下游生成：userId={} reason={}", userId, error.getMessage());
+            // 客户端主动断开**不算失败**：用户就是想停，把它记成 0 会把失败率抬高
+            usageService.recordSuccess(AiCallScene.QA_STREAM, null, started);
             emitter.completeWithError(error);
         } catch (Exception error) {
             // 上游不可用：给一帧可读的 error，而不是让前端停在「生成中」
             log.warn("问答流上游失败：userId={} reason={}", userId, error.getMessage());
+            usageService.recordFailure(AiCallScene.QA_STREAM, error, started);
             sendErrorFrame(emitter);
         }
     }

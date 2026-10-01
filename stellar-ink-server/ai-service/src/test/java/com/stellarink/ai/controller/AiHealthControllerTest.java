@@ -6,6 +6,7 @@ import com.stellarink.ai.client.PythonHealthProbe;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
+import com.stellarink.ai.service.AiUsageService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import org.mockito.Answers;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -51,6 +53,14 @@ class AiHealthControllerTest {
 
     @MockBean
     private PythonHealthProbe pythonHealthProbe;
+
+    /**
+     * 调用账替身：用**真实默认实现**透传调用（不记账）。
+     * 记账不在这几个切片的被测范围内，而 {@code around} 是接口的 default 方法 ——
+     * 这样就不必在每个用例里 stub 一遍「把 supplier 执行掉」。
+     */
+    @MockBean(answer = Answers.CALLS_REAL_METHODS)
+    private AiUsageService usageService;
 
     /**
      * 评测控制器也在这个切片里被装配（启动类显式声明了 {@code @ComponentScan}，
