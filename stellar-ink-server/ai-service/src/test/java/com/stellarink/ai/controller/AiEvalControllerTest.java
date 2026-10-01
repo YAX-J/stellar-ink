@@ -36,6 +36,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
@@ -238,6 +239,40 @@ class AiEvalControllerTest {
             // 诚实提示必须原样透出：面板要展示它，Java 不能吞掉
             assertTrue(data.get("notes").get(0).asText().contains("FakeProvider"));
             auth.verify(() -> AuthHelper.requireAtLeast(Role.ADMIN));
+        }
+    }
+
+    @Test
+    @DisplayName("图检索字段原样转发：enableGraph 与 graph 不能在中途被丢掉（E5-2）")
+    void graphFieldsAreForwarded() throws Exception {
+        when(pythonAiClient.evalRun(any())).thenReturn(sampleResponse());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubLoggedInAs(auth, Role.ADMIN, 1L);
+
+            mockMvc.perform(post("/ai/admin/eval/run")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"dataset":"golden_v1",
+                                     "strategies":[{"key":"graph_local","enableGraph":true,
+                                                    "enableSparse":false,"enableDense":false}],
+                                     "graph":{"claims":[{"text":"每天写五百字可以累积成十八万字",
+                                                         "postId":7,"chunkIndex":0}],
+                                              "entities":[],"relations":[]}}
+                                    """))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(0));
+
+            ArgumentCaptor<EvalRunRequestDTO> captor = ArgumentCaptor.forClass(EvalRunRequestDTO.class);
+            verify(pythonAiClient).evalRun(captor.capture());
+            EvalRunRequestDTO forwarded = captor.getValue();
+
+            // 「这一行到底跑没跑图检索」取决于这两个字段是否真的到了 Python：
+            // 丢掉 enableGraph 会让那一行变成普通的 pipeline 结果，丢掉 graph 会让它显示成
+            // 「本次没带图」—— 两种都会让对比表的数字被误读
+            assertEquals(Boolean.TRUE, forwarded.getStrategies().get(0).getEnableGraph());
+            assertNotNull(forwarded.getGraph(), "graph 必须原样带上，否则图检索那一行没有意义");
+            assertTrue(forwarded.getGraph().containsKey("claims"));
         }
     }
 
