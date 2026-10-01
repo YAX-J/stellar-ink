@@ -61,4 +61,13 @@ public class EvalStrategySpecDTO implements Serializable {
 
     /** 重排后保留的候选数 */
     private Integer rerankTopN;
+
+    /**
+     * 启用图检索（E5-2）：走知识图的实体与共现边，**一次模型都不调**。
+     *
+     * <p>它需要请求里带上 {@code graph}（一次 {@code /wiki/claims} 返回体）；
+     * 没带时 Python 会如实回一条「本次没带图」的行，而不是静悄悄少一列 ——
+     * 那一行看起来像「图检索效果为零」，实际是「根本没跑」。
+     */
+    private Boolean enableGraph;
 }

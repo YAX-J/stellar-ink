@@ -1,6 +1,5 @@
 {
   "dataset": "golden_v1",
-  "maxCases": 30,
   "strategies": [
     {
       "key": "sparse",
@@ -15,7 +14,8 @@
       "minScore": 0.0,
       "minScoreRatio": 0.0,
       "minDenseScore": 0.0,
-      "rerankTopN": 10
+      "rerankTopN": 10,
+      "enableGraph": false
     },
     {
       "key": "hybrid+rerank",
@@ -30,7 +30,8 @@
       "minScore": 0.0,
       "minScoreRatio": 0.0,
       "minDenseScore": 0.0,
-      "rerankTopN": 10
+      "rerankTopN": 10,
+      "enableGraph": false
     },
     {
       "key": "sparse+floor",
@@ -45,7 +46,10 @@
       "minScore": 11.0,
       "minScoreRatio": 0.5,
       "minDenseScore": 0.0,
-      "rerankTopN": 10
+      "rerankTopN": 10,
+      "enableGraph": false
     }
-  ]
+  ],
+  "graph": null,
+  "maxCases": 30
 }

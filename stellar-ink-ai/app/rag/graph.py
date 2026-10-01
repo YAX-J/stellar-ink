@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
@@ -292,3 +293,157 @@ def graph_stats(context: GraphContext) -> Counter[str]:
     stats["neighbors"] = len(context.neighbors)
     stats["topics"] = len(context.topics)
     return stats
+
+
+def graph_from_payload(payload: dict[str, Any]) -> GraphIndex:
+    """从**一次抽取的返回体**装出图（就是 `/wiki/claims` 响应的形状）。
+
+    为什么从返回体装而不是从库里读：Python 不碰库（M0 起的边界），而抽取结果本来就要
+    经过 Java 落库。这条路径让「同一份结果」既能落库、也能直接喂给检索 ——
+    评测里因此不需要再造一份「图的数据格式」：**格式只有一个**。
+    """
+    claims = [
+        ClaimLike(
+            text=str(item.get("text", "")),
+            post_id=int(item.get("postId", 0)),
+            chunk_index=int(item.get("chunkIndex", 0)),
+            quote=str(item.get("quote", "")),
+        )
+        for item in payload.get("claims", []) or []
+        if isinstance(item, dict)
+    ]
+    clusters: list[Any] = []
+    mentions: list[Any] = []
+    for entity in payload.get("entities", []) or []:
+        if not isinstance(entity, dict):
+            continue
+        normalized = str(entity.get("normalized", ""))
+        clusters.append(
+            _ClusterLike(name=str(entity.get("name", normalized)), normalized=normalized)
+        )
+        for mention in entity.get("mentions", []) or []:
+            if not isinstance(mention, dict):
+                continue
+            mentions.append(
+                _MentionLike(
+                    name=str(mention.get("name", normalized)),
+                    normalized=normalized,
+                    post_id=int(mention.get("postId", 0)),
+                    chunk_index=int(mention.get("chunkIndex", 0)),
+                    claim_text=str(mention.get("claimText", "")),
+                )
+            )
+    relations = [
+        _RelationLike(
+            source=str(item.get("source", "")),
+            target=str(item.get("target", "")),
+            weight=int(item.get("weight", 0)),
+        )
+        for item in payload.get("relations", []) or []
+        if isinstance(item, dict)
+    ]
+    return GraphIndex(claims, mentions, relations, clusters)
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimLike:
+    """检索只需要主张的这四个字段（不引入完整的抽取模型，避免两处定义打架）。"""
+
+    text: str
+    post_id: int
+    chunk_index: int
+    quote: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _ClusterLike:
+    name: str
+    normalized: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MentionLike:
+    name: str
+    normalized: str
+    post_id: int
+    chunk_index: int
+    claim_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RelationLike:
+    source: str
+    target: str
+    weight: int
+
+
+class GraphRetriever:
+    """把图检索接成**检索器**（`app/rag/eval_runner.py` 的 `Retriever` 协议）。
+
+    它一次模型都不调（图上走的是已有的实体与共现边），所以：
+
+    * 可以在**没有额度**时被评测台选中、跑通、进对比表；
+    * 但这也意味着它**不会**比别的策略更懂「没被抽取过的说法」——
+      它的上限由**知识图的覆盖率**决定，而不是由检索算法决定。
+
+    ⚠️ **离线（Fake 模型）跑出来的对比数字不能当收益证据**：那一刻其它策略用的是假嵌入。
+    E5-2 的结论必须来自真实额度。
+    """
+
+    def __init__(
+        self,
+        index: GraphIndex,
+        *,
+        mode: str = "local",
+        min_weight: int = DEFAULT_MIN_WEIGHT,
+        max_claims: int = DEFAULT_MAX_CLAIMS,
+    ) -> None:
+        self._index = index
+        self._mode = mode
+        self._min_weight = min_weight
+        self._max_claims = max_claims
+        #: 上一次检索的提示语（为什么没命中）。
+        #: ⚠️ 它**不在 `RetrievalOutcome` 里**：那个结构没有 reason 字段，
+        #: 运行器是自己带一条 reason 的。所以这里挂在检索器上，供日志与用例读取 ——
+        #: 编一个多余的字段塞进共用结构，会为了一个断言改掉所有调用方的形状。
+        self.last_note = ""
+
+    async def retrieve(self, question: str, *, top_k: int) -> Any:
+        started = time.perf_counter()
+        if self._mode == "global":
+            # 全局检索要主题，而主题是**抽取阶段**算出来的；没传就如实说不可用，
+            # 不能悄悄退回局部检索（那样「全局」这一行的数字解释不通）
+            context = self._index.global_search(question, [])
+        else:
+            context = self._index.local_search(
+                question, min_weight=self._min_weight, max_claims=self._max_claims
+            )
+        posts = _ordered_posts(context, top_k)
+        self.last_note = "" if posts else ("；".join(context.notes) or "图上没有落点")
+        return _outcome(
+            posts=posts, context=context, latency_ms=(time.perf_counter() - started) * 1000
+        )
+
+
+def _ordered_posts(context: GraphContext, top_k: int) -> list[int]:
+    """命中的文章按结果顺序去重（图检索没有分数，顺序本身就是证据强度）。"""
+    ordered: list[int] = []
+    for hit in context.hits:
+        if hit.post_id not in ordered:
+            ordered.append(hit.post_id)
+    return ordered[:top_k]
+
+
+def _outcome(*, posts: list[int], context: GraphContext, latency_ms: float) -> Any:
+    """装成 `RetrievalOutcome`（延迟导入：graph 模块不该依赖评测运行器）。"""
+    from app.rag.eval_runner import RetrievalOutcome
+
+    return RetrievalOutcome(
+        posts=posts,
+        chunks=[],
+        cited_chunks=[],
+        # **没有命中就如实 refused**：不是「检索到 0 篇」，而是「图里没有落点」——
+        # 两者在指标上都是 0，但在「该不该回退向量检索」上是两个结论
+        refused=not posts,
+        latency_ms=latency_ms,
+    )

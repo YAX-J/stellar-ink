@@ -9,6 +9,7 @@
 """
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field
 
@@ -55,6 +56,13 @@ class EvalStrategySpec(ContractRequest):
     )
     rerank_top_n: int = Field(default=10, ge=1, le=100, description="重排后保留的候选数")
 
+    enable_graph: bool = Field(
+        default=False,
+        description="启用图检索（E5-2）：走知识图的实体与共现边，**一次模型都不调**。"
+        "它需要请求里带上 `graph`（一次抽取的返回体）；没带就如实回一条「没有图」的行，"
+        "而不是静悄悄少一列",
+    )
+
 
 class EvalRunRequest(ContractRequest):
     """``POST /eval/run`` 的请求体。"""
@@ -65,6 +73,13 @@ class EvalRunRequest(ContractRequest):
         default_factory=list,
         max_length=MAX_STRATEGIES,
         description="被测配置；为空时用标准五组",
+    )
+
+    graph: dict[str, Any] | None = Field(
+        default=None,
+        description="知识图（一次 `/wiki/claims` 返回体）；只有开了 `enableGraph` 才需要。"
+        "图检索的上限由**图的覆盖率**决定，所以「用哪一份图跑的评测」必须由调用方显式给出，"
+        "不能在服务端偷偷用缓存（那样两次评测的数字不可比）",
     )
 
     max_cases: int | None = Field(

@@ -47,7 +47,8 @@
 | E4-10 主题页前端 | ✅ | 阅读页「本文参与的主题」：一行看「叫什么、多大、涉及几篇」，按需**展开成员与原文**（不新增一级导航 —— 它固定 6 项）；主题与条目/实体是**三套独立状态** | `wiki-selfcheck.mjs`（+9 条：主题独立失败、失败不影响条目与实体、空列表 ≠ 失败、换文章清空、空 id 不发请求） |
 | E4-11 增量失效 | ✅ **E4 收口** | `app/rag/staleness.py`：三种状态**分开报**（`current` 不用动 / `stale` 内容变了→重建 / `orphan` 段落没了→清理）；判定**只看段落哈希**、哈希缺失按 current（否则会逼人做全量重建）。定向重建：`POST /wiki/claims` 的 `postIds`（「就要这几篇」，与 `maxPosts` 的「按顺序取几篇」是**两个意图**）；`GET /ai/admin/wiki/stale`（ADMIN）**只报告不重建** | Python `tests/test_wiki_staleness.py`（8 条）+ `tests/test_wiki_api.py`（+5 条：定向只抽点名文章、超长列表 422、盘点三态分开、空列表说「不用重建」）+ Java `AiWikiServiceImplTest`（+2）+ `AiWikiControllerTest`（+3：读者 403、报告可执行、定向去重保序、封顶） |
 | E5-1 GraphRAG 图检索核心 | ✅ 前半（Python） | `app/rag/graph.py`：**Local Search**（问题里命中的实体 → 沿共现边一跳 → 收集这一片的主张与原文）+ **Global Search**（按主题聚合，回答「覆盖了什么」）。每条结果带 `via`（凭什么捞出来）；**没命中就说没落点并回退向量检索**，不拿弱相关的边充数 | `tests/test_rag_graph.py`（11 条：种子命中、一跳不跨社区、最长实体优先、没命中不是错误、阈值过滤、截断不静默、结果可复现、全局按关键词命中、主题未知如实说） |
-| E5-2 GraphRAG 与普通 RAG 的对比 | ⏳ 下一刀 | 把它接成评测策略，在同一批跨文章问题上与 dense/sparse/hybrid 比 —— **证明收益才保留**（fast-track-plan 的约定） | — |
+| E5-2 GraphRAG 接成评测策略 | ✅ 接线（**数字待真实额度**） | `GraphRetriever`（`Retriever` 协议）+ `graph_from_payload`（**直接从 `/wiki/claims` 返回体装图**，不造第二份格式）+ 评测请求的 `enableGraph` / `graph`：没带图时如实回一条「本次没带图」的行，而不是少一列或显示成 0 分 | `tests/test_rag_graph.py`（+6：检索器按图顺序出文章、没落点 refused、top_k、全局无主题如实说、返回体装图、缺字段不炸）+ 两侧契约（fixture 加 `enableGraph`/`graph`，Java DTO 同步） |
+| E5-3 GraphRAG 的收益结论 | ⏳ **等用户环境** | 在真实额度下与 dense/sparse/hybrid 比；结论只能是「保留并接读者侧」或「删掉，不留半成品」 | — |
 
 ## 3. 一次完整核验的命令与结果
 
@@ -216,6 +217,14 @@ Agent 比一次问答慢、也更贵（可能多次调用模型），在配额�
 - ~~**配额与 `retrievalAudit` 未实现**~~ → **配额已在 E3-2 落地**（用户·角色·并发三维，触顶 429）；
   Nginx 的 `ai` 档（30r/m）仍在，那是边缘限流、与配额是两层。
   `retrievalAudit`（把每次检索的候选与分数落库）仍未做 —— 目前靠 E3-4 的按 traceId 回放看链路。
+- **ai-service 有一个偶发失败（顺序相关，已复现一次、复跑即过）**：
+  `AiHealthControllerTest.doesNotLeakConfiguration` 断言健康响应体里不得出现 `8200`
+  等敏感串；单跑该类 7/7 通过、`mvn test` 全量复跑也通过，但有一次
+  `-pl stellar-ink-ai-client,ai-service -am test` 的组合跑里它失败了（`expected: <false> but was: <true>`）。
+  判据：**同样的命令连跑两次结果不同** → 顺序/Spring 上下文缓存相关，不是断言本身错了。
+  怀疑点是「脱敏用的那条已配置地址」与桩消息里的地址是否逐字相等 ——
+  若上下文来自别的切片（属性不同），替换就落空、`8200` 原样透出。
+  目前**未修**（没有稳定的复现路径，猜着改等于赌）；下次它再出现时按这条线索查。
 
 ## 4.5 已拍板的三件事（2026-10-01，用户决定；不要再当成待办去问）
 

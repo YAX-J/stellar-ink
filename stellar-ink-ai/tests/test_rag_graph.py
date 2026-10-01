@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from app.rag.entities import EntityCluster, EntityMention, EntityRelation, relation_edges
-from app.rag.graph import GraphIndex, graph_stats
+from app.rag.graph import GraphIndex, GraphRetriever, graph_from_payload, graph_stats
 from app.rag.topics import build_topics
 from app.rag.wiki import WikiClaim
 
@@ -205,3 +205,115 @@ def test_stats_shape_for_logging() -> None:
 
     assert stats["hits"] >= 1
     assert stats["seeds"] == 1
+
+
+# ------------------------------------------------- 接成检索器（E5-2 的前半）
+
+
+async def test_retriever_returns_posts_in_graph_order() -> None:
+    """检索器输出的是**文章 id 列表**（评测指标按文章算），顺序即证据强度。"""
+    retriever = GraphRetriever(index())
+
+    outcome = await retriever.retrieve("每天写五百字怎么坚持", top_k=10)
+
+    assert outcome.posts == [7]
+    assert outcome.refused is False
+    assert outcome.latency_ms >= 0
+
+
+async def test_retriever_refuses_when_no_entity_matches() -> None:
+    """没落点 → refused（不是「检索到 0 篇」），并把原因留在检索器上给日志看。"""
+    retriever = GraphRetriever(index())
+
+    outcome = await retriever.retrieve("量子纠缠与咖啡因代谢", top_k=10)
+
+    assert outcome.posts == []
+    assert outcome.refused is True
+    assert "向量检索" in retriever.last_note, "提示要能指路（回退向量检索），而不是只说没找到"
+
+
+async def test_retriever_honours_top_k() -> None:
+    graph = GraphIndex(
+        [
+            claim(7, 0, "每天写五百字可以累积成十八万字"),
+            claim(9, 0, "深夜写作要先清掉手机干扰"),
+        ],
+        [
+            mention("写作", "每天写五百字可以累积成十八万字"),
+            mention("写作", "深夜写作要先清掉手机干扰", post_id=9),
+        ],
+        [],
+        [],
+    )
+    retriever = GraphRetriever(graph)
+
+    outcome = await retriever.retrieve("写作这件事", top_k=1)
+
+    assert len(outcome.posts) == 1
+
+
+async def test_global_mode_without_topics_says_unavailable() -> None:
+    """全局检索需要主题（抽取阶段才有）；没传就**如实说不可用**，不悄悄退回局部。"""
+    retriever = GraphRetriever(index(), mode="global")
+
+    outcome = await retriever.retrieve("每天写五百字", top_k=10)
+
+    assert outcome.posts == []
+    assert "还没有这个话题" in retriever.last_note
+
+
+def test_graph_from_payload_round_trips_extraction_result() -> None:
+    """从**一次抽取的返回体**装图：评测不需要再造一份图的数据格式。"""
+    payload = {
+        "claims": [
+            {
+                "text": "每天写五百字可以累积成十八万字",
+                "postId": 7,
+                "chunkIndex": 0,
+                "quote": "每天写五百字，一年就是十八万字",
+            }
+        ],
+        "entities": [
+            {
+                "name": "每天写五百字",
+                "normalized": "每天写五百字",
+                "mentions": [
+                    {
+                        "name": "每天写五百字",
+                        "postId": 7,
+                        "chunkIndex": 0,
+                        "claimText": "每天写五百字可以累积成十八万字",
+                    }
+                ],
+            },
+            {
+                "name": "十八万字",
+                "normalized": "十八万字",
+                "mentions": [
+                    {
+                        "name": "十八万字",
+                        "postId": 7,
+                        "chunkIndex": 0,
+                        "claimText": "每天写五百字可以累积成十八万字",
+                    }
+                ],
+            },
+        ],
+        "relations": [{"source": "十八万字", "target": "每天写五百字", "weight": 2}],
+    }
+
+    graph = graph_from_payload(payload)
+    context = graph.local_search("十八万字是怎么来的")
+
+    assert context.seeds == ["十八万字"]
+    assert "每天写五百字" in context.neighbors
+    assert context.hits[0].post_id == 7
+    assert context.hits[0].quote == "每天写五百字，一年就是十八万字"
+
+
+def test_graph_from_payload_tolerates_missing_sections() -> None:
+    """返回体缺字段（老版本或裁剪过的样例）时不能炸 —— 空图就是空图。"""
+    graph = graph_from_payload({})
+
+    assert graph.entity_count == 0
+    assert graph.local_search("随便问问").notes, "空图也要如实说没落点"
