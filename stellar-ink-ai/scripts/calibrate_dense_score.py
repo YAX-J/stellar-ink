@@ -193,8 +193,10 @@ def format_no_threshold(rows: list[ScoreRow], *, min_keep: float = DEFAULT_MIN_K
             "两者在分数上分不开。",
             "    **不要把「全拒」当成结论**：那会把向量通路整个关掉，"
             "症状是「开了混合检索和没开一样」。",
-            "    可做的：先查这组无答案题的期望答案是否真的不在语料里"
-            "（`check_golden_evidence.py`），再决定是补语料还是改题。",
+            "    可做的：跑 `uv run python scripts/check_golden_evidence.py` 看**无答案题自查**一节"
+            "（它列出与语料措辞重合的题、以及带了 expectedPosts 的题）——"
+            "措辞重合不等于有答案，要人工读那篇确认；确认有答案就改题或补进有答案组，"
+            "没有就保留，但要知道这类题会让门限更难标定。",
         ]
     )
 
