@@ -32,7 +32,8 @@
 | E1 写作记忆 | ✅ | `app/rag/style.py`（**不引用原句**）+ `/ai/writing/style` + 只读画像面板 | `tests/test_style*.py`；`AiWritingStyleControllerTest` |
 | E2 只读 Agent | ✅ 核心（**前端入口未接**） | `app/rag/agent.py`（三维预算 + 引用核实 + 中断）+ 只读工具 + `/ai/agent/ask` | `tests/test_agent*.py`；`AiAgentControllerTest` |
 | E3-1 调用账（审计 + 成本） | ✅ | `deploy/sql/12_ai_call_log.sql`（账表 + 角色单价两列）+ 五条路径埋点（qa / qa_stream / writing_suggest / agent / eval）+ `GET /ai/admin/usage/summary`（ADMIN） | `AiUsageServiceImplTest`（H2 真落库 + 成本快照 + 缺口计数）；`AiUsageControllerTest`（门槛与形状） |
-| E3-2/3/4 配额 / MCP / 观测出口 | ❌ **未开始** | — | — |
+| E3-2 配额与并发 | ✅ | 额度在配置（`stellar.ink.ai.quota.*`）、计数在 Redis（`stellar-ink:ai:quota:`，自然日窗口）；拦截挂在 `AiUsageService.around`（调用前检查、调用后计数）；触顶 429、Redis 故障 fail-open + warn；ai-service 放开 `RedisUtils` | `AiQuotaPolicyTest`（窗口/上限边界/键名）；`AiUsageQuotaTest`（10 条：用户·角色·并发三维触顶、回滚、fail-open、拒绝时不调用下游） |
+| E3-3 MCP / E3-4 观测出口 | ❌ **未开始** | — | — |
 | E4 GraphRAG / LLM Wiki | ❌ **未开始** | — | — |
 
 ## 3. 一次完整核验的命令与结果

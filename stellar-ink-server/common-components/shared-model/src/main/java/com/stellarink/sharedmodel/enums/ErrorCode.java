@@ -20,6 +20,8 @@ public enum ErrorCode {
     METHOD_NOT_ALLOWED(405, "请求方法不支持"),
     SYSTEM_ERROR(500, "系统繁忙，请稍后重试"),
     SERVICE_UNAVAILABLE(503, "服务不可用"),
+    /** 用量/配额触顶。**code 与 HTTP 语义都取 429**：前端 {@code isRateLimited()} 同时认 status 与 code */
+    TOO_MANY_REQUESTS(429, "今日 AI 用量已达上限，请稍后再试。"),
 
     // 业务错误
     PARAM_ERROR(1001, "参数错误"),

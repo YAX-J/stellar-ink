@@ -26,10 +26,32 @@ spring:
         group: DEFAULT_GROUP
         namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
 
+  # Redis：**只用于 E3-2 的 AI 配额与并发闸门**（当天调用数 / token 数 / 在飞请求数）。
+  # 显式写出来而不是靠 Nacos 下发：Spring Boot 不认 `REDIS_HOST` 这种自定义变量名
+  # （只认 `SPRING_DATA_REDIS_HOST`），配置里没有占位符时它会**静默**退回 localhost:6379 ——
+  # 容器里的 localhost 不是 Redis，症状是「配额静默失效」而不是报错。
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 500ms              # 计数是旁路：超时到点即放行（见 AiUsageServiceImpl 的 fail-open）
+      connect-timeout: 2s
+      lettuce:
+        shutdown-timeout: 200ms
+        # 「共享连接」与「验活空闲连接」由 common-core 的 RedisLettuceTuningConfig 关/开
+        pool:
+          enabled: true
+          max-active: 16
+          max-idle: 1             # 只留一条空闲连接：LIFO 借用保证业务拿到心跳刚热过的那条
+          min-idle: 0             # 不预造：预造的连接永远排在第二个位置、借不到，只会闲到被丢
+          max-wait: 500ms
+          time-between-eviction-runs: 30s
+
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路抖动时只能等操作系统放弃（Windows 约 21s）
+    driver-class-name: com.mysql.cj.jdbc.Driver    # 连接/读超时必须显式给：Connector/J 默认 0 = 无限等，链路抖动时只能等操作系统放弃（Windows 约 21s）
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
@@ -56,11 +78,23 @@ stellar:
     # 30s 一次真 PING 让链路永不空闲；失败就把整池丢掉重建（见 RedisKeepAliveHeartbeat）。
     redis:
       keepalive:
-        enabled: false
+        # E3-2 起本服务真的用 Redis（配额计数），空闲连接被 NAT 静默丢弃后
+        # 症状是「配额突然全部放行」——比缓存失效更隐蔽，所以这里必须是 true
+        enabled: true
         interval: 30s
     ai:
       # Python 编排服务地址：仅内网可达（不注册 Nacos，浏览器/网关都不应直达 8200）
       python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
+      # 配额（E3-2）：**额度定义在配置里，计数在 Redis 里**。0 = 不限。
+      # 默认值刻意给得宽（开发期要能跑评测：一轮五组策略就是上百次调用），
+      # 生产要收紧就改这里或 Nacos 上的同名键，不必改代码。
+      quota:
+        enabled: ${AI_QUOTA_ENABLED:true}
+        daily-calls-per-user: ${AI_QUOTA_DAILY_CALLS_PER_USER:500}
+        daily-tokens-per-user: ${AI_QUOTA_DAILY_TOKENS_PER_USER:2000000}
+        daily-calls-per-role: ${AI_QUOTA_DAILY_CALLS_PER_ROLE:1000}
+        max-concurrent-per-user: ${AI_QUOTA_MAX_CONCURRENT_PER_USER:4}
+        inflight-ttl-seconds: 300
 
 mybatis-plus:
   configuration:
