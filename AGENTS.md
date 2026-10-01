@@ -633,7 +633,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
   ⚠️ 这条里的「Redis 限流」指**博客 API 的边缘限流**；**AI 域的调用配额已获用户明确放行**
   （2026-10-01），E3-2 可以放开 ai-service 的 Redis。
-  M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调；一轮一个可验证切片、一个主题一个提交。
+  ⚠️ **GraphRAG 已获准进入（E5，2026-10）**，但形态被限定为「**先当评测策略**」：
+  E5-1 的检索核心可以在没有额度时先写、先单测；**E5-2 的对比必须有真实额度**，
+  且结论只能是二者之一：证明收益（保留并接读者侧）或没证明（**删掉，不留半成品**）。
+  多 Agent 与微调**仍未开始**，仍守「一轮一个可验证切片、一个主题一个提交」。
 - **不要加回来的入口**：光谱→星图（`/archive` 标签星座）、复核→`/notes/mine?view=review`、
   星籍→账号（`/account`）；旧路径只留 `redirect`。一级导航固定 6 项，
   视觉基准只有 `styles/tokens/variables.css` + `components/common/TopNav.vue`（`prototype/` 已整体删除）。
