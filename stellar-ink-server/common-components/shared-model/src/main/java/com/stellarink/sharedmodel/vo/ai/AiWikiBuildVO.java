@@ -55,6 +55,14 @@ public class AiWikiBuildVO implements Serializable {
     /** 丢弃原因 → 条数 */
     private Map<String, Integer> dropped;
 
+    /** 合并后的实体个数（E4-4）—— 实体是后面「关系」与「主题页面」的骨架 */
+    private Integer entities;
+
+    /** 模型提出多少次实体、通过证据校验多少次（「实体也必须有证据」要看得见） */
+    private Integer entityProposed;
+
+    private Integer entityKept;
+
     private String usageModel;
 
     private Long latencyMs;

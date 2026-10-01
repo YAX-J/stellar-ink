@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -20,6 +21,8 @@ from app.schemas.wiki import (
     WikiClaimsRequest,
     WikiClaimsResult,
     WikiClaimView,
+    WikiEntityMentionView,
+    WikiEntityView,
     WikiExtractionStatsView,
 )
 
@@ -49,17 +52,34 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
         max_claims_per_chunk=request.max_claims_per_chunk,
     )
     logger.info(
-        "Wiki 主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s，模型 %s",
+        "Wiki 主张抽取：文章 %d 篇，提出 %d 条，留下 %d 条，丢弃 %s；实体 提出 %d、留下 %d、"
+        "合并成 %d；模型 %s",
         result.stats.posts,
         result.stats.proposed,
         result.stats.kept,
         result.stats.dropped or "无",
+        result.stats.entity_proposed,
+        result.stats.entity_kept,
+        result.stats.entities,
         result.usage_model,
     )
     return WikiClaimsResult(
         claims=[WikiClaimView(**claim.to_dict()) for claim in result.claims],
+        entities=[_entity_view(cluster) for cluster in result.entities],
         stats=WikiExtractionStatsView(**result.stats.to_dict()),
         notes=list(result.notes),
         usage_model=result.usage_model,
         latency_ms=result.latency_ms,
+    )
+
+
+def _entity_view(cluster: Any) -> WikiEntityView:
+    """把实体簇转成契约视图（每个提及的 `mention.to_dict()` 与契约字段名一致）。"""
+    return WikiEntityView(
+        name=cluster.name,
+        normalized=cluster.normalized,
+        kind=cluster.kind,
+        count=cluster.count,
+        post_ids=sorted({mention.post_id for mention in cluster.mentions}),
+        mentions=[WikiEntityMentionView(**mention.to_dict()) for mention in cluster.mentions],
     )

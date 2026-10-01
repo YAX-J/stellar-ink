@@ -31,6 +31,9 @@ public class AiWikiClaimsResultDTO implements Serializable {
 
     private List<AiWikiClaimDTO> claims;
 
+    /** 合并后的实体（E4-4）：按出现次数排序，每个提及都能回到某条主张 */
+    private List<AiWikiEntityDTO> entities;
+
     private AiWikiStatsDTO stats;
 
     /** 给人看的提示（例如「N 条因引用找不到原文依据被丢弃」） */
@@ -57,5 +60,12 @@ public class AiWikiClaimsResultDTO implements Serializable {
         private Map<String, Integer> dropped;
 
         private Integer posts;
+
+        /** 实体：模型提出多少次、通过证据校验多少次、合并成几个 */
+        private Integer entityProposed;
+
+        private Integer entityKept;
+
+        private Integer entities;
     }
 }

@@ -374,9 +374,10 @@ class AiContractTest {
         assertEquals(4, result.getStats().getProposed());
         assertEquals(3, result.getStats().getKept());
         assertEquals(
-                Map.of("quoteNotFound", 1),
+                Map.of("quoteNotFound", 1, "entityNotInText", 1),
                 result.getStats().getDropped(),
-                "被证据校验挡掉多少必须在契约里：它是「模型不行 vs 引用编造」的唯一线索");
+                "被证据校验挡下多少必须在契约里：它是「模型不行 vs 编造被挡」的唯一线索；"
+                        + "实体与主张各有自己的丢弃原因");
 
         AiWikiClaimDTO claim = result.getClaims().get(0);
         assertNotNull(claim.getPostId());
@@ -386,6 +387,21 @@ class AiContractTest {
         assertEquals("每天写五百字，一年就是十八万字", claim.getQuote());
         assertTrue(claim.getConfidence() > 0);
         assertTrue(result.getNotes().stream().anyMatch(note -> note.contains("引用找不到原文依据")));
+
+        // 实体（E4-4）：写法差异合并成一个，且每个提及都能回到某条主张
+        assertEquals(4, result.getStats().getEntityProposed());
+        assertEquals(3, result.getStats().getEntityKept());
+        assertEquals(2, result.getStats().getEntities());
+        assertEquals(2, result.getEntities().size());
+        assertEquals("每天写五百字", result.getEntities().get(0).getName());
+        assertEquals(2, result.getEntities().get(0).getCount(), "空白/全角差异应当合并");
+        assertEquals(List.of(7L), result.getEntities().get(0).getPostIds());
+        assertTrue(
+                result.getEntities().stream()
+                        .flatMap(entity -> entity.getMentions().stream())
+                        .allMatch(mention -> mention.getClaimText() != null
+                                && !mention.getClaimText().isEmpty()),
+                "每个实体提及都要挂在一条具体主张上 —— 那是它回到证据的那条线");
     }
 
     @Test
