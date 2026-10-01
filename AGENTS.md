@@ -456,6 +456,19 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **工具执行失败是 `result.isError=true`**（客户端要喂回模型，不是协议故障）。
   新增工具时同时补 `input_schema` / `required_role` / `timeout_ms`（都在 `ToolSpec` 上）；
   新增路由要同步 `tests/test_app.py` 的 `EXPOSED_PATHS`（那条断言会直接红）。
+- **Provider 层两条护栏（B/C 收口）**：① **退避重试**（`app/providers/retry.py`）——
+  只重试错误分类里 `retryable=True` 的（429/5xx/超时/连不上），401/400 一次都不重试；
+  退避确定性、有上限（`attempts` 与 `max_delay_ms`），上游给 `Retry-After` 就听它的（仍封顶）。
+  ⚠️ **「额度用尽」与「瞬时限流」必须分开**（`ProviderQuotaExhaustedError`，`retryable=False`）：
+  实测免费档是**每模型每日 50 次**（`limit_source=openrouter_free_tier_daily`，次日 UTC 零点重置），
+  退避几秒救不了 —— 消息里必须带「每日上限 + 重置时间 + 重试无用」，
+  否则「今天别试了」会被说成「稍后重试」，让人白折腾一天。对外错误码仍是 `AI_RATE_LIMITED`（不动契约）。
+  ⚠️ 断言「状态码 → 错误分类」的测试要显式传 `RetryPolicy.disabled()`，
+  否则每个失败态用例白等 5.6 秒（套件从 7 秒变 35 秒，已踩过）。
+  ② **嵌入缓存**（`app/providers/embedding_cache.py`，在 `ProviderRegistry._build` 里包）——
+  键含**模型指纹**（换模型必须重嵌，否则「链路全对、结果全错」）、有界 LRU、失败不缓存；
+  **只包嵌入不包 chat**（对话有状态）。背景：不缓存时三个 dense 管道各嵌一遍整库，
+  免费档直接 429，30 道题全被降级成「拒答」，看起来像「开了重排就彻底失效」。
 - **模型配置口径（重要）**：**面板是模型的唯一来源，代码里没有任何默认模型或厂商预设**。
   前端 `AiLabView` 不预置厂商、不带默认端点与模型名（端点与模型名照服务方文档填），
   Python 侧按角色（`chat` / `fast` / `reasoning` / `embedding` / `rerank`）从

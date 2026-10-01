@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -26,6 +28,7 @@ from app.core.trace import record_event
 from app.providers.errors import (
     ProviderAuthError,
     ProviderError,
+    ProviderQuotaExhaustedError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -42,8 +45,13 @@ from app.providers.models import (
     RerankResult,
     TokenUsage,
 )
+from app.providers.retry import RetryPolicy
 
 logger = logging.getLogger(__name__)
+
+#: 重置时间超过这个秒数就判定为「额度用尽」而不是「瞬时限流」。
+#: 退避策略最多等 `RetryPolicy.max_delay_ms`（默认 8 秒），等 5 分钟以上的东西一定等不到。
+_QUOTA_WAIT_CEILING_SECONDS = 300
 
 
 class OpenAICompatibleProvider:
@@ -54,9 +62,14 @@ class OpenAICompatibleProvider:
         config: ProviderConfig,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        retry: RetryPolicy | None = None,
+        sleeper: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._caps = config.capabilities
+        self._retry = retry if retry is not None else RetryPolicy()
+        # 睡眠做成可注入的接缝：单测里重试必须**立刻**发生，否则一个用例要等好几秒
+        self._sleeper = sleeper if sleeper is not None else asyncio.sleep
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             timeout=httpx.Timeout(config.timeout_ms / 1000),
@@ -345,26 +358,32 @@ class OpenAICompatibleProvider:
         return explicit if explicit is not None else configured
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            response = await self._client.post(path, json=payload)
-        except httpx.TimeoutException as exc:
-            raise ProviderTimeoutError("模型服务响应超时") from exc
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailableError("无法连接模型服务") from exc
+        """带退避重试的 POST；用尽重试后抛**分类错误**（调用方据此决定降级还是改配置）。
 
-        if response.status_code in (401, 403):
-            raise ProviderAuthError("模型密钥无效或无权限，请检查面板里的 API Key")
-        if response.status_code == 429:
-            raise ProviderRateLimitError("模型服务限流，请稍后重试")
-        if response.status_code >= 500:
-            raise ProviderUnavailableError(f"模型服务返回 {response.status_code}")
-        if response.status_code >= 400:
-            # 400 多为模型名写错、参数不被支持：属于配置问题，不可重试
-            _record_model_failure(self._config, response.status_code)
-            raise ProviderError(
-                f"模型服务拒绝了请求（HTTP {response.status_code}）",
-                detail="常见原因：模型名不存在或不支持该参数",
-            )
+        为什么重试（实测）：标准五组跑到第 4 组时免费档 429，30 道题全部被降级成「拒答」，
+        一行 `recall 0` 看起来像「开了重排就彻底失效」—— 一次限流不该毁掉整轮评测。
+        为什么不能无限重试：429 是配额语义，重试到天荒地老只会把并发全占住。
+        """
+        error: ProviderError
+        for attempt in range(1, self._retry.attempts + 1):
+            try:
+                response = await self._client.post(path, json=payload)
+                if response.status_code < 400:
+                    return self._decode(response)
+                error = self._error_for_status(response)
+            except httpx.TimeoutException:
+                error = ProviderTimeoutError("模型服务响应超时")
+            except httpx.HTTPError:
+                error = ProviderUnavailableError("无法连接模型服务")
+
+            if attempt >= self._retry.attempts or not self._retry.should_retry(error):
+                raise error
+            await self._retry_after(error, attempt, path)
+
+        # 循环要么 return、要么 raise；走到这里说明 attempts 配错了
+        raise ProviderError("重试策略配置不正确：attempts 必须 >= 1")
+
+    def _decode(self, response: httpx.Response) -> dict[str, Any]:
         try:
             data = response.json()
         except ValueError as exc:
@@ -372,6 +391,107 @@ class OpenAICompatibleProvider:
         if not isinstance(data, dict):
             raise ProviderUnavailableError("模型服务返回结构异常")
         return data
+
+    def _error_for_status(self, response: httpx.Response) -> ProviderError:
+        """HTTP 响应 → 分类错误；失败也记一条链路事件（回放里能看到「上游到底回了什么」）。"""
+        status_code = response.status_code
+        error: ProviderError
+        if status_code in (401, 403):
+            error = ProviderAuthError("模型密钥无效或无权限，请检查面板里的 API Key")
+        elif status_code == 429:
+            error = _rate_limit_error(response)
+        elif status_code >= 500:
+            error = ProviderUnavailableError(f"模型服务返回 {status_code}")
+        else:
+            # 400 多为模型名写错、参数不被支持：属于配置问题，不可重试
+            error = ProviderError(
+                f"模型服务拒绝了请求（HTTP {status_code}）",
+                detail="常见原因：模型名不存在或不支持该参数",
+            )
+        _record_model_failure(self._config, status_code)
+        return error
+
+    async def _retry_after(self, error: ProviderError, attempt: int, path: str) -> None:
+        """等一会儿再重试：上游给了 `Retry-After` 就听它的（仍受 `max_delay_ms` 封顶）。"""
+        suggested = getattr(error, "retry_after_seconds", None)
+        delay = self._retry.delay_for(attempt)
+        if suggested is not None:
+            delay = min(float(suggested), self._retry.max_delay_ms / 1000)
+        logger.info(
+            "模型调用失败，%.1fs 后重试（第 %d/%d 次）：path=%s model=%s reason=%s",
+            delay,
+            attempt,
+            self._retry.attempts,
+            path,
+            self._config.model,
+            error,
+        )
+        await self._sleeper(delay)
+
+
+def _rate_limit_error(response: httpx.Response) -> ProviderError:
+    """区分「瞬时限流」与「额度已用尽」—— 两者的正确处置完全不同。
+
+    实测（OpenRouter 免费档）：`429` + `X-RateLimit-Remaining: 0` + `X-RateLimit-Reset`
+    指向次日 UTC 零点，真实原因是 `openrouter_free_tier_daily`（50 次/日）。
+    把它当成瞬时限流的话，表现是「重试三次、每次退避几秒，然后仍然失败」，
+    而且错误信息只说「稍后重试」—— 让人白折腾一天。
+
+    **只读文档化的限流响应头，不回显上游报文**（报文可能回显用户内容）。
+    重置时间离得远（超过退避能覆盖的量级）就判定为额度用尽。
+    """
+    headers = response.headers
+    remaining = headers.get("x-ratelimit-remaining")
+    limit = headers.get("x-ratelimit-limit")
+    reset_at = _reset_moment(headers.get("x-ratelimit-reset"))
+    retry_after = _retry_after_seconds(headers)
+
+    if remaining == "0" and reset_at is not None:
+        seconds_left = (reset_at - datetime.now()).total_seconds()
+        if seconds_left > _QUOTA_WAIT_CEILING_SECONDS:
+            return ProviderQuotaExhaustedError(
+                f"上游额度已用尽（每日上限 {limit or '未知'} 次）",
+                detail=(
+                    f"将于 {reset_at:%m-%d %H:%M}（本地时间）重置；"
+                    "重试无用 —— 请改用付费/自建模型，或等重置后再跑"
+                ),
+            )
+    message = "模型服务限流，请稍后重试"
+    detail = f"上游建议 {retry_after:.0f} 秒后重试" if retry_after else None
+    error = ProviderRateLimitError(message, detail=detail)
+    if retry_after is not None:
+        # 交给重试循环：上游说了等多久就等多久（仍受策略上限封顶）
+        error.retry_after_seconds = retry_after  # type: ignore[attr-defined]
+    return error
+
+
+def _reset_moment(raw: str | None) -> datetime | None:
+    """把 `X-RateLimit-Reset`（毫秒或秒级时间戳）解析成本地时间。"""
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    # 毫秒时间戳（本仓库实测到的形态）比秒级大三个数量级，超过 1e11 就按毫秒解释
+    if value > 1e11:
+        value /= 1000
+    try:
+        return datetime.fromtimestamp(value)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _retry_after_seconds(headers: httpx.Headers) -> float | None:
+    """尊重上游的 `Retry-After`（秒）；解析不出来就返回 None（用策略自己的退避）。"""
+    raw = headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None
 
 
 def _record_model_failure(config: ProviderConfig, status_code: int) -> None:
