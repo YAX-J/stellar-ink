@@ -1,0 +1,28 @@
+{
+  "traceId": "0123456789abcdef0123456789abcdef",
+  "found": true,
+  "events": [
+    {
+      "atMs": 0,
+      "kind": "retrieval",
+      "topK": 3,
+      "candidates": 30,
+      "posts": 3,
+      "chunks": 5,
+      "refused": false,
+      "sparse": true,
+      "dense": true,
+      "rerank": false
+    },
+    {
+      "atMs": 1,
+      "kind": "model",
+      "call": "chat",
+      "role": "chat",
+      "model": "fixture-chat",
+      "promptTokens": 49,
+      "completionTokens": 51,
+      "finishReason": "stop"
+    }
+  ]
+}

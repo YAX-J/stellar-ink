@@ -1,6 +1,7 @@
 package com.stellarink.aiclient.client;
 
 import com.stellarink.aiclient.constant.AiContractPaths;
+import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
@@ -126,4 +127,13 @@ public interface PythonAiClient {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     EvalRunResponseDTO evalRun(@RequestBody EvalRunRequestDTO request);
+
+    /**
+     * 按 traceId 取回 Python 侧的链路事件（E3-4）。
+     *
+     * <p>只回「这一台 Python 实例记到的事件」：缓冲有界且是进程内的，
+     * 查不到时 {@code found=false} —— 调用方要把它当成「换一台再查」，而不是「链路不存在」。
+     */
+    @GetMapping(value = AiContractPaths.TRACE_REPLAY, produces = MediaType.APPLICATION_JSON_VALUE)
+    AiTraceDTO traceReplay(@PathVariable("traceId") String traceId);
 }
