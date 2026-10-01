@@ -354,7 +354,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   已有库升级脚本按顺序各执行一次：`03_multi-author`（多作者归属）、
   `04_post_views_glow`（计数 + 点赞明细 + 浏览闸门）、`05_user_role`（早期库缺 `user.role`
   会让所有用户查询报 Unknown column）、`06_note`、`07_role_apply`、`08_user_avatar`、`09_comment`、
-  `10_ai-schema`、`11_ai_model_library`（后两个是 AI 域的表）；各脚本改了什么见文件头注释。
+  `10_ai-schema`、`11_ai_model_library`、`12_ai_call_log`（后三个是 AI 域的表/列）；
+  各脚本改了什么见文件头注释。
 - 作者申请口径：**不建独立申请表**，待审状态用 `user.role_applied_at` 非空表示（每人最多一条待审，
   最新即当前）；审核队列复用 `GET /user/list`，前端不再发第二个请求。
   **通过与驳回都复用 `PUT /user/{id}/role`**，并在 `changeRole` 内统一清空申请字段 ——
@@ -445,6 +446,10 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   退回会让「忘了配」表现成「回答质量差」，是最难查的一类问题。
   `fake` 仍然可用，但必须**显式**配置（面板里把协议选成 fake，或测试里显式注入），
   它只用于离线自测与契约测试。
+  **`base_url` 填 API 根，路径由代码拼**（`/chat/completions`、`/embeddings`、`/rerank`）：
+  填成完整端点会拼出 `/rerank/rerank` → 404，而报出来的话是「模型名不存在」（踩过）。
+  面板那个「测试连接」是 `scope: tcp_only`，对这类错误**一声不响**；
+  验证「配置真的能用」要跑 `uv run python scripts/provider_smoke.py`（按角色各打一次真实调用）。
   面板 `POST /ai/admin/providers` 提交明文 Key，
   落库前 AES-256-GCM 加密（`AesGcmCipher`，主密钥 `AI_SECRET_MASTER_KEY` 只在环境变量），
   列表**只回掩码**（`sk-…9f3a`），没有任何接口能读回明文。加解密在 Java 与 Python 各实现一份，
@@ -508,9 +513,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）未开始；
+- **未做的事（别当成已做）**：E3 的**配额、MCP 工具服务、观测出口**未开始（E3-1 调用账已落地：
+  `ai_call_log` + `/ai/admin/usage/summary` + 五条路径埋点）；E4（GraphRAG / LLM Wiki）未开始；
   E2 只读 Agent 没有前端入口；Qdrant 从未连过真实实例（欠一次 `uv run python scripts/qdrant_smoke.py`）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
+  ⚠️ 这条里的「Redis 限流」指**博客 API 的边缘限流**；**AI 域的调用配额已获用户明确放行**
+  （2026-10-01），E3-2 可以放开 ai-service 的 Redis。
   M0–M5 完成前不并行开发多 Agent、GraphRAG 与微调；一轮一个可验证切片、一个主题一个提交。
 - **不要加回来的入口**：光谱→星图（`/archive` 标签星座）、复核→`/notes/mine?view=review`、
   星籍→账号（`/account`）；旧路径只留 `redirect`。一级导航固定 6 项，

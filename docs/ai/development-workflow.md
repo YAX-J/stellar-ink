@@ -90,6 +90,11 @@ uv sync && uv run uvicorn app.main:app --host 127.0.0.1 --port 8200
 # Python（新增代码必须全绿）
 cd stellar-ink-ai && ruff check . && mypy app && pytest
 
+# Python（改了模型配置或检索链路时再加一步：对每个角色打一次**真实**调用）
+#   面板的「测试连接」是 tcp_only，只证明端点可达 —— 配置错了它一声不响（实测踩过）
+uv run python scripts/provider_smoke.py          # 3/3 通过才算「配好了」
+uv run python scripts/compare_strategies.py --provider panel   # 真实模型上的策略对比
+
 # Java（改到的模块必须能打包；契约相关要跑测试）
 cd stellar-ink-server && mvn -DskipTests package && mvn test
 
@@ -180,6 +185,7 @@ M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:
 | D2s（前端） | `utils/sse.js`（手写切帧：**`EventSource` 只支持 GET**，而问答必须 POST）+ `stores/qa.js` 的 `askStream`（逐帧拼成与一次性回答同形状的 `answer`，缺 `done` 提示中断）+ 深读页流式渲染与「停止」；补掉 `/ai` 在 vite 与 nginx 两处都缺失的**部署缺口**，并用 `scripts/deploy-selfcheck.mjs` 把它变成 `npm run check` 的一部分。**D 阶段收口** |
 | E1 | `app/rag/style.py`（字符级统计，**不引分词库**；字组只在反复出现 ≥3 次时给出，**绝不引用原句**）+ `app/api/v1/style.py`（种子语料按 `authorId` 取样，样本不足返回人话）+ 契约 `app/schemas/style.py` 与 fixture（由 `scripts/gen_style_fixture.py` 用固定样本生成）+ Java `/ai/writing/style`（**authorId 取登录身份**）+ 执笔页只读画像面板 |
 | E2（核心） | `app/rag/agent.py`（决策协议 `{thought,tool,arguments}` / `{thought,final,citations}`；**三维预算**步数·调用次数·观察字符；引用必须被观察到；中断只在步间检查）+ `app/rag/agent_tools.py`（只读工具，`ToolBox` 在装配时拒绝写工具）+ 内网 `/agent/ask` 与 Java `/ai/agent/ask`（默认预算 4/6，**客户端只能收紧**）。**前端入口未接**；E3/E4 未开始 |
+| 真实模型核验（2026-10-01） | `scripts/provider_smoke.py`（按角色各打一次真实调用，替代「只证明端点可达」的面板自检）+ `compare_strategies.py --provider panel`（真模型走同一条编排）；同一轮修掉三处「报错指向错误方向」：rerank 的 `base_url` 双拼路径（404 报成「模型名不存在」）、评测单题上游失败被静默降级成「拒答」（429 变成「策略全错」）、读库 1044 冒成 `code=500` |
 
 > **切片测试的一个坑（C3-2 踩到，值得记住）**：`ai-service` 的启动类**显式声明了 `@ComponentScan`**，
 > 而显式声明会让 Spring Boot 切片测试的类型排除过滤器失效 —— `@WebMvcTest` 实际会把
@@ -217,10 +223,27 @@ M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:
 > nonce 防重放目前是**进程内**存储 + TTL（见 `app/core/internal_auth.py`）；多实例部署前要换 Redis，
 > 届时同时放开 `AiServiceApplication` 里对 `RedisUtils`/`RedisCache` 的排除，并同步 `AGENTS.md` 的 AI 口径。
 
-**下一刀**：**收口与核验** —— E2 的循环、预算、中断、引用核实都已就绪并接上 HTTP，
-但**前端入口没接**（Agent 比一次问答慢且贵，等有真实模型与配额后再决定放哪个页面）。
+**下一刀**：**真实模型链路的收口**（2026-10-01 已完成一半）——
+`chat` / `embedding` / `rerank` 三个角色都已实测可用（`scripts/provider_smoke.py` 3/3），
+真实嵌入下的 `dense` / `hybrid` 数字也拿到了（见 `status.md` §3）。剩下的两件：
+
+1. **`minDenseScore` 标定** —— Dense 通路的拒答只能靠这个余弦绝对下限，而它必须按真实分数分布定。
+   ⚠️ `calibrate_min_score.py` 扫的是 **BM25 的 `minScore`**（稀疏路），Dense 门限目前**没有入口**，
+   得先补一个「按真实分数分布扫 `minDenseScore`」的工具，别拿稀疏路的曲线去定向量路的门限。
+2. **免费档吞吐** —— 标准五组在 `:free` 模型下会 429（实测 `errorCount=30`，
+   且评测里每个 dense 策略各自把整库嵌入一遍）。要跑完一轮，先做嵌入缓存与 429 退避，
+   或者换一个不限额的嵌入/重排服务。
+
 E3（MCP 与观测）、E4（GraphRAG / LLM Wiki）**未开始**，不要把它们说成「已完成」。
 另外欠一次 Qdrant 真实冒烟（方式见下），做完才能说 B 阶段「实测通过」。
+
+**E3 的第四刀已交付（2026-10-01 下午）**：E3-1 **AI 调用账**（审计 + 成本）——
+`ai_call_log` 表 + 五条路径埋点 + `GET /ai/admin/usage/summary`（ADMIN）。
+**接着做 E3-2 配额**（用户/角色/模型三维 + 并发，Redis；**边界已获用户放行**：
+AGENTS §6 里的「Redis 限流」只指博客 API 的边缘限流）。
+配额要用的数据底座已经就位 —— 先有账，才谈得上限额；E2 的前端入口也在等它。
+之后是 E3-3 MCP 工具服务、E3-4 观测出口（traceId 已全链路，缺 OTel/Langfuse 出口，
+「是否部署 Langfuse」是用户输入）。
 
 ```bash
 ssh -N -L 6333:127.0.0.1:6333 <server>          # 隧道（命令细节见 deploy/docker/README.md 第十节）
@@ -273,8 +296,11 @@ Recall@1 0.833、Recall@3 0.942、Precision@5 0.800、拒答率 0.4、误拒率 
 
 ### 迁移脚本编号提醒（沿用）
 
-`deploy/sql/` 的 `01`–`09` 已被现有功能占用，AI 相关脚本从 **`10_ai-schema.sql`**、
-**`11_post-outbox.sql`** 开始（roadmap §17 里的 04/05 是旧编号，已修正）。
+`deploy/sql/` 的 `01`–`09` 已被现有功能占用，AI 相关脚本从 **`10_ai-schema.sql`** 起编号
+（现有：`10_ai-schema`（provider 配置 + 评测表骨架）、`11_ai_model_library`（模型库 + `model_id`）、
+`12_ai_call_log`（调用账 + 角色单价两列））。用 `10`/`11` 时注意 `implementation-roadmap.md` §17
+里的 `04/05` 是旧编号，已修正。**新增 AI 表时同时更新 `ai-service/src/test/resources/test-schema.sql`**
+（H2 那份是测试用的镜像，漏了它整上下文测试会以「表不存在」的形态红）。
 
 ## 10. 待确认的选型（不阻塞 M0，M2 之前必须定）
 

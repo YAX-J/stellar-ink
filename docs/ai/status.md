@@ -6,8 +6,14 @@
 
 ## 1. 一句话结论
 
-**A / B / C / D 四阶段与 E1、E2 已完成并可执行验证；E3（MCP 与观测）、E4（GraphRAG）未开始。**
+**A / B / C / D 四阶段与 E1、E2 已完成并可执行验证；E3 只完成了第一刀（调用账），E4 未开始。**
 另有三处**已知缺口**写在 §4，它们不影响「功能可用」，但影响「可以放心用真实模型与真实流量」。
+
+**真实模型链路（2026-10-01 实测）**：`chat` / `embedding` / `rerank` 三个角色都已配好，
+并**各打通过一次真实调用** —— `uv run python scripts/provider_smoke.py` 3/3 通过
+（chat 702ms / embedding 2048 维 / rerank 首名正确）。真实嵌入下的检索数字也跑出来了，
+见 §3 的第二张表。**仍未实测的是 Qdrant 的真实往返**（§4.2）；`minDenseScore` 的标定被
+免费档限流挡在路上（§4.1）。
 
 ## 2. 逐阶段核验
 
@@ -25,7 +31,8 @@
 | D3 Copilot | ✅ | `app/rag/writing.py` + `/ai/writing/suggest` + 执笔页差异预览与人工采纳 | `tests/test_writing*.py`；`AiWritingControllerTest`；`npm run check` |
 | E1 写作记忆 | ✅ | `app/rag/style.py`（**不引用原句**）+ `/ai/writing/style` + 只读画像面板 | `tests/test_style*.py`；`AiWritingStyleControllerTest` |
 | E2 只读 Agent | ✅ 核心（**前端入口未接**） | `app/rag/agent.py`（三维预算 + 引用核实 + 中断）+ 只读工具 + `/ai/agent/ask` | `tests/test_agent*.py`；`AiAgentControllerTest` |
-| E3 MCP 与观测 | ❌ **未开始** | — | — |
+| E3-1 调用账（审计 + 成本） | ✅ | `deploy/sql/12_ai_call_log.sql`（账表 + 角色单价两列）+ 五条路径埋点（qa / qa_stream / writing_suggest / agent / eval）+ `GET /ai/admin/usage/summary`（ADMIN） | `AiUsageServiceImplTest`（H2 真落库 + 成本快照 + 缺口计数）；`AiUsageControllerTest`（门槛与形状） |
+| E3-2/3/4 配额 / MCP / 观测出口 | ❌ **未开始** | — | — |
 | E4 GraphRAG / LLM Wiki | ❌ **未开始** | — | — |
 
 ## 3. 一次完整核验的命令与结果
@@ -68,9 +75,43 @@ npm run check                  # 差异/采纳/SSE 切帧 46 条 + 部署自检 
 这两次跑出来的坑都记在 §6 的第 9–10 条 —— 它们**只在真实推理模型上出现**，
 Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型没问题」。
 
+**第二次真实模型端到端（2026-10-01）：嵌入与重排也接上了**
+
+配置：`chat = deepseek-flash @ api.deepseek.com`、`embedding = nvidia/llama-nemotron-embed-vl-1b-v2:free`
+（2048 维）、`rerank = nvidia/llama-nemotron-rerank-vl-1b-v2:free @ openrouter.ai/api/v1`。
+
+先跑 `uv run python scripts/provider_smoke.py`（**真实往返**，不是面板那个 `tcp_only` 自检）：
+
+| 角色 | 结论 |
+|---|---|
+| chat | ✓ 702ms、返回 2 字、`finish=stop`、tokens 49+51 |
+| embedding | ✓ 1880ms、2 条 / **2048 维**、两段不同文本相似度 0.031（确实在编码内容） |
+| rerank | ✓ 2546ms、首名 `#0`（相关那篇）、分数 `[0.7012, 0.0008, 0.0007]` |
+
+再用**同一条检索编排**跑真实模型（`uv run python scripts/compare_strategies.py --provider panel`，
+29 篇文章 / 41 个子块 / 30 道题）：
+
+| 策略 | recall@1 | recall@3 | recall@5 | precision@5 | ndcg@5 | mrr | 拒答率 |
+|---|---|---|---|---|---|---|---|
+| sparse | 0.8333 | 0.9417 | 0.9583 | 0.25 | 0.9554 | 0.975 | 0.0 |
+| dense | 0.8083 | 0.9333 | 0.9500 | 0.25 | 0.9474 | 0.975 | 0.0 |
+| **hybrid** | **0.8583** | **0.9583** | 0.9583 | 0.25 | **0.9705** | **1.0** | 0.0 |
+| hybrid+rerank | — | — | — | — | — | — | — （`errorCount=30`，见下） |
+| sparse+floor | 0.8333 | 0.9417 | 0.9417 | 0.80 | 0.9485 | 0.975 | 0.4 |
+
+三条读得出的结论：
+
+1. **向量通路是真的**：Fake 伪向量下 dense 的 recall@1 是 0.075，真实嵌入下是 **0.8083** ——
+   前者接近随机，后者与稀疏路同档。这也是「`--provider fake` 的数字不能当质量」的实证。
+2. **混合检索确实带来提升**：hybrid 的 recall@1/@3、NDCG@5、MRR 全部高于单路
+   （MRR 1.0 = 20 道有答案题里每次首位就命中）。这是 M4 决策门要的那个量化答案。
+3. **重排那一行暂时不可用**：`errorCount=30`，30 道题全部因上游 `ProviderRateLimitError`
+   （OpenRouter 免费档 429）被降级成「拒答」。**它与重排质量无关**，
+   而且降级后的行看起来恰好和「开了重排就彻底失效」一模一样 —— 这正是 §6 第 15 条要防的事。
+
 ## 4. 已知缺口（**都要在接真实流量前处理**）
 
-### 4.1 真实 Provider 已接进编排，但**还没填过真 Key 跑一轮**
+### 4.1 三个角色都实测可用；剩下的是**阈值标定**与**免费档吞吐**
 
 面板是模型的**唯一来源**，代码里没有任何默认模型（`fake` 也要在面板里显式选）。装配链路：
 
@@ -82,10 +123,20 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
 - 问答 / 流式问答 / Copilot / 画像 / Agent / 评测**全部**走这条路径；
   `ProviderError` 由 `app/main.py` 的全局处理器转成 429（限流）/ 400（配置）/ 502（上游）。
 
-仍然算缺口的部分：**只有 `chat` 角色被真跑过**（见 §3），`embedding` / `rerank` 还没配，
-因此 Dense 与 Rerank 两列、以及全部检索指标仍然是**离线口径**（种子语料 + 显式 fake），
-不代表真实模型质量；Qdrant 的真实往返也还没做（见 §4.2）。填完嵌入模型后的第一件事应是：
-在一个小策略集上跑评测台，标定 `minDenseScore`（`scripts/calibrate_min_score.py` 也是为此）。
+仍然算缺口的部分（2026-10-01 更新）：
+
+- **`minDenseScore` 还没标定**。Dense 通路的拒答只能靠这个余弦绝对下限（`min_score_ratio`
+  永远不让结果为空），而它必须按**真实分数分布**定 —— 离线伪向量的分数在 0.03 量级，
+  照那个分布定出来的门限会静默清空向量通路（§6 第 4 条就是踩过的版本）。
+  ⚠️ 顺带修正一处文档口径：`scripts/calibrate_min_score.py` **扫的是 BM25 的 `min_score`
+  （稀疏路），不是 `minDenseScore`** —— 它证明的是「拒答只能靠绝对下限」，不是 Dense 门限。
+  Dense 门限目前没有现成工具，得先补一个「按真实分数分布扫 `minDenseScore`」的入口。
+- **免费档吞吐不够跑完标准五组**。OpenRouter 的 `:free` 模型在 30 题 × 多策略下会 429
+  （实测 `errorCount=30`）。两处放大因素：① 评测里**每个 dense 策略各自嵌入整库一遍**
+  （`prepare()` 的 `self._vectors` 是实例级的），五组里三组带 dense = 三次整库嵌入；
+  ② 逐题嵌入与重排没有退避重试。要跑真实评测，得先处理这两条（缓存嵌入 / 429 退避），
+  或者换一个不限额的嵌入与重排服务。
+- Qdrant 的真实往返仍未做（见 §4.2）。
 
 ⚠️ 配真实**推理**模型时一定要调大该角色的 `maxTokens`（建议 ≥2048）：
 实测 `deepseek-flash` 的一次问答用了 1636 个 completion tokens，其中约 1360 个是推理内容 ——
@@ -121,10 +172,11 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
 2. 执行 `mysql -u root -p stellar_ink < deploy/sql/10_ai-schema.sql`（`ai_*` 表）。
 3. 在 `/ai-lab` 面板里填 API Key（只写不读，列表只回掩码）并跑一次连通性自检。
    ⚠️ 那个自检是 `scope: tcp_only`：**只证明端点可达，不验证模型名与密钥**（已实测过这个差别）。
-   真正的验证是打一次真实调用（配好 `chat` 后随便问一句即可），
+   真正的验证是 `uv run python scripts/provider_smoke.py`：它读的就是应用读的那份配置，
+   按角色各打一次真实调用，把「配了」与「能用」分开 —— 面板那个自检**对配置错误一律沉默**。
    配推理模型时记得把该角色的 `maxTokens` 调到 2048 以上。
-4. **再配 `embedding` 角色**（向量维度照服务方文档填）：在那之前问答的 Dense 通路、评测台的
-   `dense` / `hybrid` / `hybrid+rerank` 三列都用不了（会直接报 400 并说明缺哪个角色，不会用假向量凑数）。
+4. `embedding`（向量维度照服务方文档填，实测该模型是 **2048**）与 `rerank` 角色已配好并实测通过；
+   换模型后要重跑 §4.1 里的两件事（真实评测 + 门限标定）。
 5. 跑一次 Qdrant 真实冒烟（§4.2 的命令）。
 
 ## 6. 这 20 轮里最值得记住的几个坑
@@ -175,8 +227,9 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
     Spring Cloud OpenFeign 因此走「忽略降级」的那条路径 —— `PythonAiClientFallbackFactory`
     写得很完整却从未被调用（异常直接穿到调用方，实测确认）。
     也就是说「Python 挂了」现在表现为 `code=500` 而不是「服务不可用」。
-    要么补上 circuit breaker 依赖并显式配置超时，要么删掉这个降级工厂 ——
-    **待定，别以为它已经在保护你了**。
+    **已决定并执行：删掉那个从不生效的降级工厂**（`AGENTS.md` §5 AI 口径已同步）——
+    留着一个「看起来在保护你」的类，比没有它更危险。要么将来补上 circuit breaker 依赖
+    并显式配置超时，要么维持现状（异常穿透 + 全局处理器给 `code=500`），二者不要再混。
 14. **「保存按钮是假的」不是后端坏了，是写成功之后的刷新失败被当成了写失败**（用户报的）：
     模型库面板点「保存到模型库」看起来毫无反应。后端探针（POST/GET/DELETE 全 200）排除了接口问题；
     真正的原因是 `stores/ai.js` 的 `saveModel` 在 POST 成功后又 `await this.loadModels()` +
@@ -188,3 +241,43 @@ Fake 与桩永远碰不到，所以「指标全绿」并不等于「接上模型
     同一轮还补了另一个同症状的问题：`.btn` 没有 `:disabled` 样式，
     **禁用的保存按钮和可点的一模一样**，点下去什么都不发生 —— 现在禁用态有可见差异，
     且表单不再用 `disabled` 挡校验，而是点得动并就地提示「还差：展示名、接口地址…」。
+
+### 2026-10-01 追加的四条（真实模型 / 真实库上踩的）
+
+15. **路径拼接错误会伪装成「模型名不存在」**：面板把 `rerank` 的 `base_url` 填成完整端点
+    `https://openrouter.ai/api/v1/rerank`，而 `openai_compatible._post("/rerank", ...)` 还会再拼一次
+    → 实际请求 `/api/v1/rerank/rerank` → **404 text/plain**，报出来的话是
+    「模型服务拒绝了请求（HTTP 404）…常见原因：模型名不存在或不支持该参数」。
+    用户会去改模型名，而真因是多写了一截路径。**base_url 是 API 根**（`https://openrouter.ai/api/v1`），
+    路径由代码拼 —— 面板的自检是 `tcp_only`，对这类错误**一声不响**（它当时还显示 ok/unknown）。
+    现在由 `scripts/provider_smoke.py` 打真实调用来兜住这一类。
+16. **上游故障被降级成「拒答」后，会变成一条看起来像质量结论的假数据**（本轮最有价值的一条）：
+    免费档嵌入模型 429，`eval_runner._retrieve_safely` 把每道题的异常静默吞成「拒答」——
+    于是对比表上 `hybrid+rerank` 是 `recall 0 / 拒答率 1.0`，读起来就是「开了重排就彻底失效」，
+    而当时那个 `except` **连一行日志都没打**，脚本、面板、日志三处都没有线索。
+    现在：`CaseResult.error` 记原因 + `logger.warning` 逐题打 + 指标里出 `errorCount` +
+    响应 `notes` 首条警示 + 命令行单独喊一行。**判据：`errorCount` 非 0 时那一行指标不可用。**
+17. **「配置读不到」会被伪装成「服务坏了」**：测试机的 `root@'%'` 只有 `USAGE` 权限，直连报
+    `1044 Access denied ... to database 'stellar_ink'`；这条异常原样冒到端点，而
+    `ASSEMBLY_ERRORS` 不认它 → `code=500「系统繁忙，请稍后重试」`。
+    真因是一句授权问题，界面却说服务故障。现在 `_fetch_rows` 把连接/查询异常统一翻成
+    `ProviderConfigError`（带「读的是哪个库」与「该核对哪几个变量」，**不回显密码**）。
+18. **测试的加载器少一步，报错会指到脚本作者头上**：`tests/test_scripts.py` 的
+    `load_module_from_path` 原先 `exec_module` 前不注册 `sys.modules`，于是任何脚本只要用了
+    `@dataclass(slots=True)`（生成新类时要读 `sys.modules[cls.__module__].__dict__`）就会
+    `AttributeError: 'NoneType' object has no attribute '__dict__'`，栈底落在 `dataclasses.py` ——
+    看起来像脚本自己写坏了。真实 `import` 一定有注册这一步，现已补上并有回归测试。
+
+### 2026-10-01 下午：做 E3-1（调用账）时踩的两条
+
+19. **`Set-Content -Encoding UTF8` 会写 BOM，javac 直接报「非法字符 '\ufeff'」**：
+    用脚本批量给 7 个切片测试插入 `@MockBean` 时踩到 —— AGENTS 里记过同款坑（Python 生成的模板带 BOM），
+    这次换成了 PowerShell 的 `Set-Content`。正确写法是
+    `[System.IO.File]::WriteAllText($p, $text, (New-Object System.Text.UTF8Encoding($false)))`；
+    已入库文件若被写坏，用 `ReadAllText` + 无 BOM 的 `WriteAllText` 可原地修回。
+20. **切片测试的地雷是「新增一个 @Service」而不是「新增一个控制器」**：启动类的显式 `@ComponentScan`
+    让 `@WebMvcTest` 会把**所有**组件装配一遍，于是 `AiUsageServiceImpl` 一落地，
+    **7 个既有切片测试同时起不来**（`No qualifying bean of type AiCallLogMapper`）。
+    这次的处理办法是给它们各加一个 `@MockBean(answer = Answers.CALLS_REAL_METHODS) AiUsageService` ——
+    把「包住一次调用」做成接口的 **default 方法**之后，替身不必 stub 就能透传调用。
+    新增依赖 Mapper 的服务时，请一次把这批测试改完，别等 CI 红。

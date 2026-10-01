@@ -218,6 +218,8 @@ Druid 的借用是 LIFO（取最近归还的那条），一条一条借还只会
 本机库是把远端库补齐过来的：`deploy/sql/10_ai-schema.sql` + `11_ai_model_library.sql`
 建好本机缺的 5 张 `ai_*` 表，再把 `ai_provider_config` / `ai_model` 的数据搬过来
 （密钥列是用本机 `.env` 里的 `AI_SECRET_MASTER_KEY` 加密的，所以搬过来仍能解密）。
+E3-1 起又多了一张 `ai_call_log`（AI 调用账）与角色单价两列，脚本是 `12_ai_call_log.sql`
+（**幂等**：`CREATE` 用 `IF NOT EXISTS`、`ALTER` 走 `information_schema` 判断，可重复执行）。
 
 ⚠️ **两份数据不再同步**：本地写的内容不会上服务器，服务器上的新内容也不会下来。
 要发布内容仍然必须连远端库（`set USE_REMOTE_MYSQL=1` 再跑 `start-all.bat`）。

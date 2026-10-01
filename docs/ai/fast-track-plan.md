@@ -54,7 +54,10 @@ E. 扩展（按需）
       Python 现算不落库 + `/ai/writing/style` + 执笔页只读面板）
    E2 只读单 Agent ✅ 核心（状态机 + 三维预算 + 中断 + 引用核实；工具只读且**装不进来**；
       内网 `/agent/ask` + 网关 `/ai/agent/ask`；**前端入口未接**，真实模型与配额待办）
-   E3 MCP 工具服务与观测（配额、审计、成本看板）⏳ 未开始
+   E3 MCP 工具服务与观测（配额、审计、成本看板）⏳ 进行中
+      E3-1 调用账 ✅（`ai_call_log` + 五条路径埋点 + `/ai/admin/usage/summary`；
+        身份只在 Java、表归 ai-service，成本按角色单价快照，缺口计数如实暴露）
+      E3-2 配额 / E3-3 MCP / E3-4 观测出口 ⏳ 未开始（Redis 边界已获用户放行）
    E4 GraphRAG / LLM Wiki ⏳ 未开始
 ```
 
@@ -150,6 +153,37 @@ ai-service：AES-GCM 加密 → 写 MySQL `ai_provider_config`
     选数据集 → 勾策略 → 跑一轮 → 对比表 + 逐题下钻（默认只看漏召/误拒/该拒未拒），
     `notes` 原文以暖色提示块展示。数据走 `stores/ai.js`，视图不直接请求后端。
     **C 阶段到此收口**；D1（问答编排，非流式）见下，D2/D3 待做。
+13. **真实模型核验（2026-10-01）** ✅ 三角色实测 + 真实数字；⏳ 门限标定与吞吐问题
+    - `scripts/provider_smoke.py`（**新增**）：按角色各打一次真实调用，把「配了」与「能用」分开。
+      起因是一个**面板永远发现不了**的错误：`rerank` 的 `base_url` 被填成完整端点，
+      而代码按约定再拼一次 `/rerank` → 真实请求打到 `/api/v1/rerank/rerank` → 404，
+      报出来的话却是「模型名不存在」。修掉后 rerank 首名正确（0.7012 vs 0.0008）。
+    - `scripts/compare_strategies.py` 增加 `--provider panel`：**同一份 CONFIGS、同一条编排**，
+      只把模型来源换成面板配置 —— 不另写一套，避免「命令行数字」与「面板数字」分叉。
+      实测：dense recall@1 0.8083（fake 0.075）、hybrid 0.8583 / MRR 1.0；`hybrid+rerank` 因免费档 429
+      整行不可用（`errorCount=30`）。
+    - `eval_runner` 的静默降级修掉：单题上游失败原先只记成「拒答」且**不打日志**，
+      于是一次 429 让整行看起来像「开了重排就失效」。现在记 `error` + 打 `logger.warning`
+      + 指标出 `errorCount` + `notes` 首条警示 + 命令行单独喊一行。
+    - `app/providers/config_source.py`：读库异常（实测 1044 无权限）原先冒成 `code=500`，
+      现在统一翻成 `ProviderConfigError`（说清读的是哪个库、该核对哪些变量，不回显密码）。
+    - 待办：`minDenseScore` 标定（现有 `calibrate_min_score.py` 扫的是 BM25 的 `minScore`，
+      Dense 门限没有入口）；嵌入缓存与 429 退避（否则标准五组跑不完）。
+14. **E3-1 调用账** ✅（审计 + 成本）—— 回答「谁用了多少、花了多少、失败率多少」，
+    此前只有零散的 `log.info`，日志会滚动、无法聚合、也不含成本。
+    - **账记在 Java 侧**，三条理由都硬：身份（`userId`/`role`）只在 Java；`ai_*` 表归 ai-service；
+      每次 AI 调用都必经这一层（也是 E3-2 配额拦截的同一层）。
+    - `deploy/sql/12_ai_call_log.sql`：账表 + `ai_provider_config` 两个单价列（**幂等**，
+      ALTER 走 `information_schema` 判断；已在干净库上验证过迁移路径）。
+    - **单价按角色配、记账时快照**：事后改价不改写历史账目。没配单价 → 成本算不出来（NULL），
+      由 `unpricedCalls` 如实暴露，**绝不当 0**（当 0 会让看板显示「本月花了 ¥0.00」，
+      那是看起来最正常的一种假数据）。
+    - **token 缺 = NULL ≠ 0**：Agent 与评测目前都不回报用量，记成「未计量」而不是「免费」。
+      ⚠️ **流式的 token 记不到**：用量在 Python 的 `done` 帧里，而按既定设计 Java 不解析事件体
+      （解析等于再抄一份 Python 事件契约）—— 要补齐得先给 `done` 事件定义 Java DTO。
+    - 记账是 **best-effort**：入库失败只打 `warn`，绝不把成功的调用报成失败；但也不静默。
+    - 埋点用接口的 default 方法 `AiUsageService.around(...)` 收口（计时/记账/异常分类只一处），
+      连带好处是切片测试用 `@MockBean(answer = CALLS_REAL_METHODS)` 就能透传，不必逐个 stub。
 
 ### 等一个信息才能继续
 
@@ -237,7 +271,13 @@ ai-service：AES-GCM 加密 → 写 MySQL `ai_provider_config`
 
 读法：`dense` 接近随机**恰好证明向量通路真的在起作用**（没有偷偷退回 Sparse）；
 `hybrid+rerank` 与 `dense` 相同则说明**重排必须换一个模型**（bge-reranker 之类）才有意义。
-真实质量必须等 Qdrant + bge-m3 接上后重跑，届时这张表就是「高级链路到底有没有用」的答案。
+
+**这张表已经在真实模型上重跑过一次**（2026-10-01，`--provider panel`，真实嵌入 2048 维）：
+`dense` 从 0.075 升到 **0.8083**、`hybrid` 到 **0.8583 / MRR 1.0** —— 与上面那条读法互相印证
+（伪向量接近随机、真向量有语义）。**Qdrant 仍然没参与**：`assembly.pipeline_for()` 不传
+`dense_store`，Dense 走本地余弦，所以真实数字不需要向量库也能拿。
+`hybrid+rerank` 那一格因为免费档 429 整行作废（`errorCount=30`），仍待一次干净的运行。
+数字与读数见 `status.md` §3。
 
 ### D1 阶段的落地记录（问答编排，非流式）
 

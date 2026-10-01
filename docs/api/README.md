@@ -354,6 +354,9 @@ curl -s -X POST http://127.0.0.1:8200/eval/run \
   由 `scripts/gen_eval_response_fixture.py` 真实跑出来，不做手工修饰）
 - `EvalRunResponseDTO.perStrategy` 用 `Map<String,Object>`：指标集合由 Python 侧决定，
   Java 再定义一遍等于把指标名写死两处；形状由契约测试守着
+- `perStrategy` 每组里除指标外还有 **`errorCount`**：因上游失败（429/超时/5xx）被降级成
+  「拒答」的题数。**它非 0 时该行指标不可用** —— 降级的结果与「策略真的全错」
+  在表格上一模一样，所以这个计数与 `notes` 里对应的警示必须一起透出，不能被吞掉
 - 降级沿用统一口径：Python 不可用时抛 503 业务异常，**不返回空对比表**
   （那会让面板显示「0 分」而不是「服务没连上」）
 
@@ -379,6 +382,37 @@ curl -s -X POST http://127.0.0.1:8080/ai/admin/eval/run \
   （身份取自 Sa-Token，traceId 取自 MDC）；密钥 `AI_INTERNAL_SECRET` 缺失时**拒绝签名**而不是降级为不签名
 - `notes` 必须原样透出到面板：里面写着「Fake 向量不代表真实语义质量」等口径，
   Java 不能吞掉这些提示
+
+**AI 用量与成本看板（E3-1，全部 ADMIN）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/admin/usage/summary` | AI 调用账汇总：`?days=7`（1..90，默认 7），按场景与模型分组返回调用数、tokens、成本与两个缺口计数 | ADMIN |
+
+```bash
+curl -s "http://127.0.0.1:8080/ai/admin/usage/summary?days=7" -H "Authorization: <ADMIN token>"
+# => {"code":0,"data":{"days":7,"calls":12,"successCalls":11,"failedCalls":1,
+#     "promptTokens":9000,"completionTokens":3000,"totalTokens":12000,
+#     "cost":0.4200,"unpricedCalls":2,"untokenizedCalls":3,
+#     "byScene":[{"key":"qa","calls":9,...}],"byModel":[{"key":"deepseek-flash",...}]}}
+```
+
+- **账记在 Java（ai-service）**：身份（`userId`/`role`）只在 Java 侧、`ai_*` 表归 ai-service、
+  每次 AI 调用都必经这一层（也是将来配额拦截的同一层）。表：`deploy/sql/12_ai_call_log.sql`
+- **记账是 best-effort**：入库失败只打 `warn`，**绝不把一次成功的调用报成失败**；
+  但也不静默 —— 账缺了同样是要处理的故障
+- **失败也记**：`success=0` + `errorCode`（异常类名，**不记报文**，报文可能含用户内容）
+- **`cost` 必须连着两个缺口计数一起看**：`unpricedCalls`（有 token 但角色没配单价）与
+  `untokenizedCalls`（上游没回报 token）任一非 0，金额就只是**下限**，不是「花了这么多」
+- **单价按角色配**（`ai_provider_config.price_input_per_million` / `price_output_per_million`，
+  元/百万 token，面板下一刀补表单），**记账时快照进账** —— 事后改单价不改写历史账目
+- **统计口径**：`calls`/`successCalls`/`failedCalls` 覆盖全部调用；
+  token、成本与两个缺口计数**只统计成功调用**（失败调用的用量本来就不存在，
+  混进去会把「上游没回报用量」显示成「失败很多」）
+- 覆盖路径：`qa`、`qa_stream`、`writing_suggest`、`agent`、`eval`。
+  ⚠️ **流式的 token 目前记不到**：用量在 Python 的 `done` 帧里，而按既定设计 Java **不解析事件体**
+  （解析等于再抄一份 Python 的事件契约）。这些调用以 `scene=qa_stream` 记入 `untokenizedCalls`；
+  要补齐得先给 `done` 事件定义 Java DTO。写作画像是纯统计、一次模型都不调，**刻意不记账**
 
 **星海问答（D 阶段）**
 
