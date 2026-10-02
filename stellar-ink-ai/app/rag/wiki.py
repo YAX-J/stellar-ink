@@ -361,7 +361,11 @@ def _prompt(post_chunks: list[IndexedChunk], max_claims_per_chunk: int) -> str:
     blocks = []
     for chunk in post_chunks:
         blocks.append(f"[chunkIndex={_chunk_index(chunk)}]\n{_chunk_text(chunk)}")
-    return PROMPT.format(
+    # 走注册表渲染：模板只有一份，且「这次用的是哪一版」可查（M8）
+    from app.prompts import registry
+
+    return registry().render(
+        "wiki.claims",
         title=title,
         chunks="\n\n".join(blocks),
         max_per_chunk=max_claims_per_chunk,
