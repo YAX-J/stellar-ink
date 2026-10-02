@@ -211,7 +211,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("写失败（浏览器断开）：必须关掉下游，否则模型继续生成")
     void sendFailureCancelsUpstream() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
         StubHandle handle = new StubHandle(List.of(frame("delta", "\"text\": \"好\"")), false);
         when(qaStreamClient.open(any())).thenReturn(handle);
 
@@ -232,7 +232,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("上游不可用：给一帧可读的 error，前端不会停在「生成中」")
     void upstreamFailureSendsErrorFrame() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
         StubHandle handle = new StubHandle(List.of(), true);
         when(qaStreamClient.open(any())).thenReturn(handle);
 

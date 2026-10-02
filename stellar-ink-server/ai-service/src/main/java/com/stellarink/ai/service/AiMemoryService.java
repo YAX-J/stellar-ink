@@ -20,6 +20,17 @@ import java.util.List;
 public interface AiMemoryService {
 
     /**
+     * 取出这个用户**当前可召回**的记忆正文（给问答/Agent 塞进提示词用）。
+     *
+     * <p>三步都在这里做，调用方不需要知道细节：按登录身份取自己的 active 记忆 →
+     * 交给 Python `/memory/recall` 过滤（类型/可信度/有效期）→ 按它给的顺序取出正文。
+     *
+     * <p>⚠️ **取数范围就是用户隔离**：这里只查 {@code user_id} 匹配的行，
+     * 所以「用户 A 的记忆不会被 B 召回」不依赖任何过滤条件 —— 过滤条件漏一处就是数据泄露。
+     */
+    List<String> listRecallable(Long userId, int limit);
+
+    /**
      * 从一段对话里抽候选，并存成 <b>pending</b>（等人确认）。
      *
      * <p>为什么抽出来就落库、而不是只回给前端：候选要能被「稍后再看」，

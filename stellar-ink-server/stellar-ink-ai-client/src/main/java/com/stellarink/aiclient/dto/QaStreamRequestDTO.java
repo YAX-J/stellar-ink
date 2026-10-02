@@ -26,6 +26,16 @@ public class QaStreamRequestDTO implements Serializable {
     /** 用户问题（不超过 500 字，与 Python 契约同口径） */
     private String question;
 
+    /**
+     * 这位作者的长期记忆（M9，最多几条由 Python 侧封顶）。
+     *
+     * <p><b>它不是文章内容</b>：Python 的提示词明确要求只用它调整语气与取舍，
+     * 不得当事实陈述、不得编号引用 —— 否则「作者喜欢短句」会被写成「文章里说他喜欢短句」。
+     *
+     * <p>由 Java 按登录身份取好再传：Python 不碰库，而**取数范围就是用户隔离**。
+     */
+    private java.util.List<String> memories;
+
     /** 多轮会话标识；为空表示一次性提问 */
     private String conversationId;
 

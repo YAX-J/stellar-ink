@@ -30,11 +30,24 @@ QuestionText = Annotated[
 
 CitationList = Annotated[list[Citation], Field(max_length=MAX_CITATIONS)]
 
+#: 一次问答最多带几条长期记忆进提示词（M9）。
+#: 上限存在的理由与 context 预算一样：记忆是**语气与取舍**的参考，不是内容来源，
+#: 堆多了会挤掉真正要引用的摘录。
+MAX_MEMORIES = 5
+
 
 class QaStreamRequest(ContractRequest):
     """``POST /ai/qa/stream`` 的请求体。"""
 
     question: QuestionText
+
+    memories: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_MEMORIES,
+        description="这位作者的长期记忆（M9，由 Java 按登录身份取好并过滤后传入）。"
+        "**它不是文章内容**：提示词里明确要求只用它调整语气与取舍，"
+        "不得当事实陈述、不得编号引用 —— 否则「作者喜欢短句」会被写成「文章里说他喜欢短句」",
+    )
 
     conversation_id: str | None = Field(
         default=None,

@@ -4,6 +4,7 @@ import com.stellarink.ai.stream.QaSseFrame;
 import com.stellarink.ai.stream.QaStreamClient;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
@@ -55,6 +56,9 @@ public class AiQaStreamController {
     private final QaStreamClient qaStreamClient;
 
     /** 调用账（E3-1）：流式这条路径原先**只在自己的注释里写着「记账」而并没有记** */
+    /** 长期记忆（M9）：与非流式同一份口径，只用来调整语气与取舍。 */
+    private final AiMemoryService memoryService;
+
     private final AiUsageService usageService;
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -73,6 +77,8 @@ public class AiQaStreamController {
         QaStreamRequestDTO internal = QaStreamRequestDTO.builder()
                 .question(request.getQuestion().trim())
                 .topK(request.getTopK())
+                // 长期记忆（M9）：与非流式同一份口径 —— 只影响语气与取舍，不进证据
+                .memories(memoryService.listRecallable(userId, 5))
                 .build();
         forwardFrames(emitter, internal, userId);
         return emitter;

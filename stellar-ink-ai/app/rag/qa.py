@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 from app.providers.base import ChatModel, model_tag_of
@@ -54,6 +54,17 @@ SYSTEM_PROMPT = (
     "不要使用摘录之外的知识，也不要编造细节。"
     "每条结论后面用 [1] [2] 这样的编号标注它来自哪段摘录。"
     "如果摘录不足以回答，就直说「文章里没有找到依据」，不要勉强作答。"
+)
+
+#: 记忆段的说明（M9）。**它把记忆与证据明确分开**：
+#: 记忆是「作者本人的偏好/事实/决定」，只能用来调整**语气与取舍**，
+#: 不能当成文章内容、更不能当成引用来源 —— 否则模型会把「作者喜欢短句」
+#: 写成「文章里说他喜欢短句」，而那条记忆其实来自一次对话。
+MEMORY_PROMPT = (
+    "下面是这位作者本人的长期记忆（来自以往对话，**不是文章内容**）。"
+    "只用它来调整语气与取舍，比如更贴合他的偏好；"
+    "**不要**把它当作文章里的事实来陈述，也不要给它编号引用。"
+    "如果它与摘录冲突，以摘录为准。"
 )
 
 
@@ -158,7 +169,7 @@ class QaService:
 
         excerpts = self._excerpts(outcome.hits)
         citations = [self._citation(excerpt) for excerpt in excerpts]
-        messages = self._messages(request.question, excerpts)
+        messages = self._messages(request.question, excerpts, request.memories)
         response = await self.chat.chat(
             messages, temperature=self.settings.temperature, max_tokens=self.settings.max_tokens
         )
@@ -232,7 +243,7 @@ class QaService:
         for citation in citations:
             yield citation_event(citation)
 
-        messages = self._messages(request.question, excerpts)
+        messages = self._messages(request.question, excerpts, request.memories)
         async for event in self._stream_answer(messages, len(citations), int(outcome.latency_ms)):
             yield event
 
@@ -324,10 +335,12 @@ class QaService:
         """从模型对象上取一个可展示的标识（真实 Provider 与离线桩都有）。"""
         return model_tag_of(self.chat)
 
-    def _messages(self, question: str, excerpts: list[_Excerpt]) -> list[ChatMessage]:
+    def _messages(
+        self, question: str, excerpts: list[_Excerpt], memories: Sequence[str] = ()
+    ) -> list[ChatMessage]:
         return [
             ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT),
-            ChatMessage(role=MessageRole.USER, content=_user_prompt(question, excerpts)),
+            ChatMessage(role=MessageRole.USER, content=_user_prompt(question, excerpts, memories)),
         ]
 
     def _refusal(self, latency_ms: float) -> QaAnswer:
@@ -389,8 +402,16 @@ def _snippet(chunk: IndexedChunk, limit: int) -> str:
     return raw if len(raw) <= limit else raw[:limit].rstrip() + "…"
 
 
-def _user_prompt(question: str, excerpts: list[_Excerpt]) -> str:
-    lines = [f"问题：{question}", "", "文章摘录："]
+def _user_prompt(question: str, excerpts: list[_Excerpt], memories: Sequence[str] = ()) -> str:
+    """拼用户消息。记忆段放在摘录**之前**并单独标注（见 `MEMORY_PROMPT`）。"""
+    lines: list[str] = []
+    if memories:
+        lines.append(MEMORY_PROMPT)
+        lines.extend(f"- {item}" for item in memories)
+        lines.append("")
+    lines.append(f"问题：{question}")
+    lines.append("")
+    lines.append("文章摘录：")
     for excerpt in excerpts:
         title = excerpt.chunk.title or excerpt.chunk.post_id
         lines.append(f"[{excerpt.number}]《{title}》：{excerpt.snippet}")
