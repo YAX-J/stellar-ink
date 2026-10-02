@@ -4,6 +4,12 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLinkStore } from '@/stores/links'
 import { useSettingsStore } from '@/stores/settings'
+import {
+  useMemoryStore,
+  kindLabel,
+  statusLabel,
+  evidenceLabel,
+} from '@/stores/memory'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -13,6 +19,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const links = useLinkStore()
 const settings = useSettingsStore()
+const memory = useMemoryStore()
 
 const user = computed(() => auth.user)
 const roleClass = computed(() => `role-${(user.value && user.value.role) || 'READER'}`.toLowerCase())
@@ -194,6 +201,52 @@ async function changePassword() {
 async function logout() {
   await auth.logout()
   router.replace('/')
+}
+
+/* ---- AI 记忆（M9）：默认收起，第一次展开时才取数 ----
+   为什么按需加载而不是 onMounted 就拉：记忆面板是「偶尔来管理一次」的东西，
+   而账号页是登录后常来的页面 —— 每次进来都发两个请求去取一份多数时候没人看的列表，
+   属于拿所有人的开销换少数人的方便。 */
+const memoryOpen = ref(false)
+const styleAt = computed(() => {
+  const raw = memory.styleProfile?.createdAt
+  return raw ? String(raw).replace('T', ' ').slice(0, 16) : '—'
+})
+
+async function toggleMemory() {
+  memoryOpen.value = !memoryOpen.value
+  if (memoryOpen.value) {
+    await Promise.all([memory.load(), memory.loadStyleProfile()])
+  }
+}
+
+async function confirmOne(id) {
+  await memory.confirm([id])
+}
+
+async function confirmAll() {
+  await memory.confirm(memory.pending.map((item) => item.id))
+}
+
+/** 保留已有那条：把待确认的那条丢掉（冲突的候选本来就没写进去）。 */
+async function keepExisting(item) {
+  await memory.confirm([]) // 只刷新，不确认任何候选
+  memory.conflicts = memory.conflicts.filter((entry) => entry !== item)
+  memory.notice = '已保留原有记忆（新的那条仍是待确认，你可以稍后决定）。'
+}
+
+async function toggleStatus(item) {
+  await memory.setStatus(item.id, item.status === 'active' ? 'disabled' : 'active')
+}
+
+async function removeOne(id) {
+  await memory.remove(id)
+}
+
+/** 全部清除**不可撤销**：先确认一次，不做「静默清空」。 */
+async function clearAllMemories() {
+  if (!window.confirm('清除全部 AI 记忆？连同证据与派生画像一起，且不可撤销。')) return
+  await memory.clearAll()
 }
 
 /* ---- 本机偏好（原舰桥页的「恢复本机默认偏好」搬到这里，与账号设置同处） ---- */
@@ -503,6 +556,103 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- AI 记忆（M9）：用户自己的长期记忆，**默认收起**（没主动看时不占版面） -->
+      <div class="panel reveal" style="--d:.21s">
+        <div class="row-between">
+          <h3 style="margin: 0">AI 记忆 · 星笺记住了我什么</h3>
+          <button class="btn btn-ghost" @click="toggleMemory">
+            {{ memoryOpen ? '收起' : '查看' }}
+          </button>
+        </div>
+
+        <template v-if="memoryOpen">
+          <p v-if="memory.notice" class="msg">{{ memory.notice }}</p>
+
+          <!-- 取不到必须说出来：用户主动来看，不能让他以为「我没记过东西」 -->
+          <p v-if="memory.failed" class="msg err">
+            记忆暂时读不出来（**不是**「你没有记忆」）—— 稍后再试。
+          </p>
+          <p v-else-if="memory.loading" class="dim">正在读取…</p>
+
+          <!-- 待确认：模型提出的候选，**不参与召回**，由你决定要不要记住 -->
+          <div v-if="memory.hasPending" class="memory-block">
+            <h4>待确认（{{ memory.pending.length }}）</h4>
+            <p class="dim">这些只是候选，还没有生效；确认后才会在问答里用上。</p>
+            <div v-for="item in memory.pending" :key="item.id" class="memory-row">
+              <div class="memory-main">
+                <span class="memory-kind">{{ kindLabel(item.memoryType) }}</span>
+                <b>{{ item.content }}</b>
+                <span v-for="(ev, i) in item.evidence" :key="i" class="memory-evidence">
+                  {{ evidenceLabel(ev) }}
+                </span>
+              </div>
+              <button class="btn btn-ghost" @click="confirmOne(item.id)">记下来</button>
+            </div>
+            <div class="memory-actions">
+              <button class="btn" @click="confirmAll">全部确认</button>
+            </div>
+          </div>
+
+          <!-- 冲突：**没有被写进去**，显示两地正文让人选 -->
+          <div v-if="memory.hasConflicts" class="memory-block">
+            <h4>需要你决定（{{ memory.conflicts.length }}）</h4>
+            <p class="dim">
+              这几条与已有记忆说法相近但结论不同 —— 可能是同一件事换了个说法，也可能是你改了主意。
+              <b>没有自动覆盖</b>：请选择保留哪一条。
+            </p>
+            <div v-for="(item, i) in memory.conflicts" :key="i" class="memory-conflict">
+              <div><span class="dim">已有：</span>{{ item.existingContent }}</div>
+              <div><span class="dim">新的：</span>{{ item.candidateContent }}</div>
+              <div class="memory-actions">
+                <button class="btn btn-ghost" @click="keepExisting(item)">保留已有</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 已生效 / 已禁用 -->
+          <div class="memory-block">
+            <h4>我的记忆（{{ memory.memories.length }}）</h4>
+            <p v-if="!memory.hasMemories && !memory.failed" class="dim">
+              还没有记忆。问答里的「深挖」会从对话中提出候选，你确认后才会记下来。
+            </p>
+            <div v-for="item in memory.memories" :key="item.id" class="memory-row">
+              <div class="memory-main">
+                <span class="memory-kind">{{ kindLabel(item.memoryType) }}</span>
+                <b :class="{ 'memory-off': item.status === 'disabled' }">{{ item.content }}</b>
+                <span class="memory-status">{{ statusLabel(item.status) }}</span>
+                <span v-for="(ev, i) in item.evidence" :key="i" class="memory-evidence">
+                  {{ evidenceLabel(ev) }}
+                </span>
+              </div>
+              <div class="memory-actions">
+                <button class="btn btn-ghost" @click="toggleStatus(item)">
+                  {{ item.status === 'active' ? '禁用' : '启用' }}
+                </button>
+                <button class="btn btn-ghost" @click="removeOne(item.id)">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 派生风格画像（M9-3b）：与记忆一起被清除 -->
+          <div class="memory-block">
+            <h4>风格画像</h4>
+            <p v-if="memory.styleFailed" class="msg err">画像暂时读不出来。</p>
+            <p v-else-if="!memory.styleProfile" class="dim">
+              还没有生成过。它会按你自己已发表的文章统计（只量句长、标点这类特征，不存原句）。
+            </p>
+            <p v-else class="dim">第 {{ memory.styleProfile.version }} 版，生成于 {{ styleAt }}。</p>
+            <div class="memory-actions">
+              <button class="btn btn-ghost" @click="memory.refreshStyleProfile()">按我的文章刷新</button>
+            </div>
+          </div>
+
+          <div class="memory-actions memory-danger">
+            <button class="btn btn-ghost" @click="clearAllMemories">全部清除</button>
+            <span class="dim">连证据与派生画像一起清掉，不可撤销。</span>
+          </div>
+        </template>
+      </div>
+
       <!-- 成员管理（仅站长） -->
       <div v-if="auth.isAdmin" class="panel reveal" style="--d:.24s">
         <h3>
@@ -677,4 +827,56 @@ onMounted(async () => {
 .member-role select:focus{border-color:var(--primary)}
 .hint{font-size:11px; color:var(--ink-faint)}
 @media (max-width:820px){ .account-grid{grid-template-columns:1fr} }
+/* ---- AI 记忆面板（M9-4）：沿用全局 .panel/.btn，这里只补面板内部排版 ---- */
+.memory-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.memory-block h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.memory-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.memory-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.memory-kind,
+.memory-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.memory-evidence {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.memory-off {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+.memory-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.memory-conflict {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.memory-danger {
+  margin-top: 18px;
+}
 </style>
