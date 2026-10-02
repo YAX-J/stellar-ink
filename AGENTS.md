@@ -588,14 +588,18 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 本节只放**规则与边界**，不记流水 —— 往这里加「X 已完成」会把它顶到工作区指令的 64KB 上限而被截断，
 排查过程与产物路径请写进对应专题文档。
 
-- **未做的事（别当成已做）**：E1 / E2 / E3 / B-C 收口与 **E4（LLM Wiki 全十一段：带证据抽取 →
-  落库 → 读者侧条目/实体/主题 → 增量失效）都已落地**。**现在只剩 E5 GraphRAG**：
-  E5-1 的图检索核心（Local/Global Search）已落地，E5-2 要把它接成评测策略、
-  与 dense/sparse/hybrid 在同一批跨文章问题上比 —— **证明收益才保留**，
-  不因为它叫 GraphRAG 就默认更好（这一条是 fast-track-plan 的约定，也是它唯一的上线条件）。
-  两件环境动作**由用户处理**（换付费/自建 embedding 与 rerank、开 Qdrant 隧道），
-  之后跑 `scripts/calibrate_dense_score.py` 与 `scripts/qdrant_smoke.py` 收口；
-  **E5-2 的对比同样要在这两件做完之后才有意义**（免费档每日 50 次连一轮评测都跑不完）。
+- **未做的事（别当成已做）**：**M0–M10 的代码侧已全部落地**
+  （E1/E2/E3 四刀、B-C 收口、E4 LLM Wiki 十一段、E5 GraphRAG、**M9 作者记忆**、
+  M8 的 Prompt Registry / 熔断 / 检索审计、M6 的契约测试 / 降级 / 压测工具、M4 的对账式增量索引）。
+  剩下**四件只能由用户做**的环境动作，做完才是真正验收：
+  ① 执行 `deploy/sql/` 里尚未跑过的脚本（Wiki 三张、`16_ai_memory.sql`、`17_ai_retrieval_audit.sql`）——
+  不跑的话阅读页的 Wiki 三块、记忆面板、检索审计都会「静默不显示/读不出来」，那是**预期**而非 bug；
+  ② **真实 embedding/rerank 额度**（免费档每模型每日 50 次跑不完一轮标准五组）：
+  用于 E5-3 的 GraphRAG 收益结论与 `scripts/calibrate_dense_score.py` 的 `minDenseScore` 标定；
+  ③ **Qdrant 隧道**：`scripts/qdrant_smoke.py` 与 `scripts/index_reconcile.py` 的真实往返；
+  ④ **本地推理服务（vLLM/SGLang + 权重）或云端额度**：M6 的真实压测数字与量化对比。
+  ⚠️ **GraphRAG 的形态已被限定**：先当评测策略（`compare_strategies.py --graph`），
+  **证明收益才保留**，没证明就**删掉，不留半成品**。
   **观测出口的接受形态就是进程内回放**（已拍板不部署 OTel/Langfuse；
   跨副本查不到时返回 `found=false` 是**已知且被接受的限制**，不是缺陷，别再当成待办）。
 - **必须等用户明确要求才动**：文件上传、全文检索引擎（现用 LIKE）、Redis 限流、Sentinel 规则持久化。
