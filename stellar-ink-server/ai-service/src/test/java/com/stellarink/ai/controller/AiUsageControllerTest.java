@@ -1,6 +1,7 @@
 package com.stellarink.ai.controller;
 
 import com.stellarink.aiclient.client.PythonAiClient;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -51,6 +52,9 @@ class AiUsageControllerTest {
     private MockMvc mockMvc;
 
     /** 看板本身就是要测的对象，这里必须是真的 stub，不能用透传替身 */
+    @MockBean
+    private AiRetrievalAuditService auditService;
+
     @MockBean
     private AiStyleProfileService styleProfileService;
 

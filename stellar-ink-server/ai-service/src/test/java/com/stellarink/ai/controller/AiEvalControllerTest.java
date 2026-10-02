@@ -7,6 +7,7 @@ import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.EvalStrategySummaryDTO;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -73,6 +74,9 @@ class AiEvalControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;

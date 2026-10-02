@@ -5,6 +5,7 @@ import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.service.AiMemoryService;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
@@ -18,6 +19,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 星海问答：读者就全站已发布文章提问，回答必须带引用（或明确拒答）。
@@ -48,6 +51,9 @@ public class AiQaController {
     /** 长期记忆（M9）：只用来调整语气与取舍，不进证据 */
     private final AiMemoryService memoryService;
 
+    /** 检索审计（M8）：best-effort，失败不影响本次问答 */
+    private final AiRetrievalAuditService auditService;
+
     @PostMapping
     @Operation(
             summary = "就全站文章提问",
@@ -67,6 +73,18 @@ public class AiQaController {
 
         QaAnswerDTO answer = usageService.around(
                 AiCallScene.QA, () -> pythonAiClient.qaAsk(internal), QaAnswerDTO::getUsage);
+
+        // 检索审计（M8）：**best-effort**，写不进去也不能让用户拿不到答案（服务自己吞异常只记 warn）。
+        // 记的是规模与结果（引用数、命中文章、最高分、耗时、模型），**不记问题原文**。
+        auditService.record(
+                userId,
+                "qa",
+                request.getQuestion(),
+                answer == null || answer.getCitations() == null ? List.of() : answer.getCitations(),
+                0,
+                answer == null,
+                answer == null || answer.getUsage() == null ? null : answer.getUsage().getLatencyMs(),
+                answer == null || answer.getUsage() == null ? null : answer.getUsage().getModel());
 
         // 审计：谁问了、有几个引用、是否拒答、用的哪个模型。**不记问题原文**（可能含个人信息）
         log.info("AI 问答完成：userId={} memories={} citations={} evidenceSufficient={} model={} latencyMs={}",

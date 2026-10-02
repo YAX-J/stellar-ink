@@ -8,6 +8,7 @@ import com.stellarink.aiclient.dto.WritingSuggestResultDTO;
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.aiclient.enums.WritingTask;
 import com.stellarink.aiclient.enums.WritingTone;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -63,6 +64,9 @@ class AiWritingControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;

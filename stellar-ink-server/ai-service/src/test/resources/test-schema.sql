@@ -221,3 +221,24 @@ CREATE TABLE IF NOT EXISTS `ai_style_profile` (
     PRIMARY KEY (`id`),
     CONSTRAINT `uk_user_version` UNIQUE (`user_id`, `version`)
 );
+-- 检索审计（M8）。与 deploy/sql/17_ai_retrieval_audit.sql 一致：
+-- **不存问题原文**（只存哈希与长度），失败与拒答分开记。
+CREATE TABLE IF NOT EXISTS `ai_retrieval_audit` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `trace_id` VARCHAR(64) NOT NULL DEFAULT '',
+    `user_id` BIGINT NULL,
+    `scene` VARCHAR(32) NOT NULL,
+    `strategy` VARCHAR(64) NOT NULL DEFAULT '',
+    `question_hash` CHAR(64) NOT NULL,
+    `question_chars` INT NOT NULL DEFAULT 0,
+    `candidates` INT NOT NULL DEFAULT 0,
+    `citations` INT NOT NULL DEFAULT 0,
+    `post_ids` VARCHAR(512) NOT NULL DEFAULT '',
+    `top_score` DECIMAL(8, 5) NULL,
+    `refused` TINYINT NOT NULL DEFAULT 0,
+    `failed` TINYINT NOT NULL DEFAULT 0,
+    `latency_ms` INT NOT NULL DEFAULT 0,
+    `model` VARCHAR(128) NOT NULL DEFAULT '',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+);
