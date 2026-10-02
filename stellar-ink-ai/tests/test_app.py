@@ -96,6 +96,10 @@ EXPOSED_PATHS = {
     "/wiki/claims",
     # LLM Wiki 失效盘点（E4-11）：把库里的锚点交回来比对当前语料；只读、不花钱
     "/wiki/stale",
+    # 作者记忆（M9）：Python 只出判断（候选/计划/召回集合），落库与状态流转在 Java
+    "/memory/candidates",
+    "/memory/plan",
+    "/memory/recall",
 }
 
 

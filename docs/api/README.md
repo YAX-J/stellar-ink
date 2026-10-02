@@ -393,6 +393,28 @@ curl -s -X POST http://127.0.0.1:8080/ai/admin/eval/run \
   `beneficial`；差不够是 `no-benefit`（**按约定删掉这条路径**）；有上游失败（被记成拒答）
   或用的是离线 Fake 模型时一律 `inconclusive`（**不下结论**）。
 
+**作者记忆（M9，Python :8200 内部端点，受内部签名保护、不走网关）**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/memory/candidates` | 从一段对话里抽**记忆候选**并立刻用规则校验：`{conversation, maxCandidates, source}` → `{candidates, stats{proposed,kept,dropped}, notes, usageModel}` |
+| POST | `/memory/plan` | 拿「已有记忆 + 候选」算写入计划：`{existing, candidates}` → `{toAdd, duplicates[{memoryId,enriched}], conflicts[{memoryId,existingContent,candidateContent}], notes}` |
+| POST | `/memory/recall` | 按类型/可信度/有效期过滤出可召回的 id：`{memories, types, minConfidence, limit, expiresAtMs}` → `{memoryIds, notes}` |
+
+三条口径（改契约前先读）：
+
+① **请求体里没有 `userId`** —— 身份只从签名的 `X-AI-*` 头来，由 Java 按登录身份取数；
+「替我查用户 X 的记忆」这种参数一旦存在，构造参数就能越权。
+所以**用户隔离由取数范围保证**，不是由这几个端点过滤保证。
+② **出处校验只在 `/memory/candidates` 那一步做一次**（`quote` 必须真的出现在这次对话里；
+用户自己说的话也算证据，但同样要在上下文里）。`/memory/plan` 拿不到上下文，因此**不重新校验**，
+也不假装校验 —— 走过场的校验比不校验更糟。
+③ **`/memory/plan` 只报告不决定**：冲突（措辞相近但正文不同）**不自动覆盖** ——
+可能是同义改写、也可能是作者改了主意，两者都交给人或规则。
+
+⚠️ **Python 侧一条都不落库**：记忆的持久化与状态流转（确认/禁用/删除/清除）在 Java
+（`ai_memory` 系列表）。
+
 **AI 用量与成本看板（E3-1，全部 ADMIN）**
 
 | 方法 | 路径（**经网关**） | 说明 | 鉴权 |

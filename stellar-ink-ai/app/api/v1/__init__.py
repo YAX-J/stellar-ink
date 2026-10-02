@@ -6,6 +6,7 @@ from app.api.v1 import agent as agent_routes
 from app.api.v1 import eval as eval_routes
 from app.api.v1 import health
 from app.api.v1 import mcp as mcp_routes
+from app.api.v1 import memory as memory_routes
 from app.api.v1 import qa as qa_routes
 from app.api.v1 import style as style_routes
 from app.api.v1 import trace as trace_routes
@@ -26,3 +27,5 @@ api_router.include_router(mcp_routes.router)
 api_router.include_router(trace_routes.router)
 # LLM Wiki（E4）：从带证据的主张抽取起步；落库与读者侧页面在 Java
 api_router.include_router(wiki_routes.router)
+# 作者记忆（M9）：Python 只出判断（候选/计划/召回集合），落库与状态流转在 Java
+api_router.include_router(memory_routes.router)
