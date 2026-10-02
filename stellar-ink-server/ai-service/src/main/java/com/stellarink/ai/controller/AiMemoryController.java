@@ -1,6 +1,7 @@
 package com.stellarink.ai.controller;
 
 import com.stellarink.ai.service.AiMemoryService;
+import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.response.Response;
 import com.stellarink.sharedmodel.dto.ai.AiMemoryConfirmRequest;
@@ -8,6 +9,7 @@ import com.stellarink.sharedmodel.dto.ai.AiMemoryExtractRequest;
 import com.stellarink.sharedmodel.vo.ai.AiMemoryConfirmVO;
 import com.stellarink.sharedmodel.vo.ai.AiMemoryExtractVO;
 import com.stellarink.sharedmodel.vo.ai.AiMemoryVO;
+import com.stellarink.sharedmodel.vo.ai.AiStyleProfileVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,9 @@ import java.util.Map;
 public class AiMemoryController {
 
     private final AiMemoryService memoryService;
+
+    /** 派生风格画像（M9-3b）：它是从记忆与文章推出来的，删除记忆时要一起清 */
+    private final AiStyleProfileService styleProfileService;
 
     @GetMapping("/list")
     @Operation(summary = "列出我的记忆（可按状态与类型过滤）")
@@ -86,5 +91,23 @@ public class AiMemoryController {
     public Response<Map<String, Integer>> clear() {
         int removed = memoryService.clearAll(AuthHelper.loginId());
         return Response.success(Map.of("removed", removed));
+    }
+
+    @GetMapping("/style-profile")
+    @Operation(
+            summary = "取最新一版的派生风格画像",
+            description = "没有时 data 为 null —— 「还没生成过」与「生成出来是空的」不是一回事")
+    public Response<AiStyleProfileVO> styleProfile() {
+        return Response.success(styleProfileService.latest(AuthHelper.loginId()));
+    }
+
+    @PostMapping("/style-profile/refresh")
+    @Operation(
+            summary = "按登录者的文章刷新风格画像（存成新版本）",
+            description = "样本不足时返回参数错误并说明「再多写几篇」，而不是存一版空画像")
+    public Response<AiStyleProfileVO> refreshStyleProfile() {
+        Long userId = AuthHelper.loginId();
+        // 统计的是**登录者自己**的文章：让他刷新别人的风格画像没有意义
+        return Response.success(styleProfileService.refresh(userId, userId));
     }
 }

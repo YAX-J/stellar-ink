@@ -7,6 +7,7 @@ import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.aiclient.enums.DoneReason;
+import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
@@ -59,6 +60,9 @@ class AiQaControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiStyleProfileService styleProfileService;
 
     @MockBean
     private AiMemoryService memoryService;
