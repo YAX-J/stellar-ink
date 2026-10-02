@@ -100,6 +100,8 @@ EXPOSED_PATHS = {
     "/memory/candidates",
     "/memory/plan",
     "/memory/recall",
+    # 提示词注册表（M8）：只出元数据（版本/变量/评测状态），供观测出口与面板查看
+    "/prompts",
 }
 
 
