@@ -196,12 +196,20 @@ async def test_embedding_rejects_dimension_change() -> None:
     await provider.aclose()
 
 
-async def test_embedding_rejects_empty_input_without_calling_upstream() -> None:
+async def test_embedding_empty_input_is_empty_not_an_error() -> None:
+    """空输入 → 空结果，**且不调上游**（契约测试 M6 定的口径）。
+
+    这里原本断言「抛 `ProviderError`」，而 `fake` 对空输入返回空 —— 两个 provider 行为不一致。
+    M6 的契约套件把这个分歧顶出来后统一为：**空输入是业务语义，不是协议错误**
+    （「这批文章没有可嵌入的段落」不该表现成 500，也不该逼每个调用点补守卫）。
+    原用例真正有价值的那半保留了：**不花一次白调用**。
+    """
     provider, recorder = _provider(EMBEDDING_CONFIG, _json({"data": []}))
 
-    with pytest.raises(ProviderError):
-        await provider.embed([])
+    response = await provider.embed([])
 
+    assert response.vectors == []
+    assert response.dimension == 0, "空批次报 0：不猜一个「看起来像嵌过了」的维度"
     assert recorder.requests == [], "空输入不该白花一次调用"
     await provider.aclose()
 

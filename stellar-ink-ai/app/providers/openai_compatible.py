@@ -240,7 +240,17 @@ class OpenAICompatibleProvider:
     async def embed(self, texts: list[str]) -> EmbeddingResponse:
         self._require("embedding")
         if not texts:
-            raise ProviderError("嵌入输入不能为空")
+            # 空输入 → 空输出（**不炸、也不调上游**）。
+            # 契约测试（M6）发现这里原本抛错、而 `fake` 返回空 —— 两个 provider 行为不一致，
+            # 而「没有输入」是业务语义（这批文章没有可嵌入的段落），不是协议错误：
+            # 抛错会把「没什么要嵌的」表现成 500，让调用方不得不为每个调用点补守卫。
+            return EmbeddingResponse(
+                vectors=[],
+                # 维度记 0 而不是猜一个配置里的值：空批次什么都没嵌，
+                # 报一个「看起来像嵌过了」的维度会让上层的维度校验失去意义
+                dimension=0,
+                usage=TokenUsage(model=self._config.model, latency_ms=0),
+            )
 
         started = time.perf_counter()
         data = await self._post("/embeddings", {"model": self._config.model, "input": texts})
@@ -301,7 +311,12 @@ class OpenAICompatibleProvider:
     ) -> RerankResponse:
         self._require("rerank")
         if not documents:
-            raise ProviderError("重排候选不能为空")
+            # 同 `embed`：空候选是业务语义（检索没召回），不是协议错误 —— 返回空结果，
+            # 由上层按「空即拒答」的口径处理（那是业务决定，Provider 不该替它做）
+            return RerankResponse(
+                results=[],
+                usage=TokenUsage(model=self._config.model, latency_ms=0),
+            )
 
         payload: dict[str, Any] = {
             "model": self._config.model,
@@ -328,6 +343,13 @@ class OpenAICompatibleProvider:
                 raise ProviderUnavailableError("重排返回的候选下标越界", detail=f"index={index}")
             score = float(item.get("relevance_score") or 0.0)
             results.append(RerankResult(index=index, score=score))
+
+        # 自己排一遍再截断，**不指望上游一定听话**（契约测试发现的第二处不一致：
+        # 原本只是把 top_n 转发给上游，上游忽略它时返回的条数就超了 ——
+        # 而调用方是按「取前 N 条」用的，多出来的会被当成候选继续往下走）。
+        results.sort(key=lambda item: item.score, reverse=True)
+        if top_n is not None:
+            results = results[:top_n]
 
         usage = _as_mapping(data.get("usage"))
         record_event(
