@@ -320,6 +320,11 @@ public class AiMemoryServiceImpl implements AiMemoryService {
     public int clearAll(Long userId) {
         List<AiMemory> rows = memoryMapper.selectList(
                 new LambdaQueryWrapper<AiMemory>().eq(AiMemory::getUserId, userId));
+        // ⚠️ 派生画像**先清、且不受「有没有记忆」影响**：
+        // 曾经把这一步放在「没有记忆就 return 0」之后，于是「一条记忆都没有、但有画像」的用户
+        // 点「全部清除」会一无所获 —— 用户以为清干净了，画像还在（测试抓出来的）
+        styleProfileMapper.delete(new LambdaQueryWrapper<AiStyleProfile>()
+                .eq(AiStyleProfile::getUserId, userId));
         if (rows.isEmpty()) {
             return 0;
         }
@@ -328,8 +333,6 @@ public class AiMemoryServiceImpl implements AiMemoryService {
         evidenceMapper.delete(new LambdaQueryWrapper<AiMemoryEvidence>()
                 .in(AiMemoryEvidence::getMemoryId, ids));
         memoryMapper.delete(new LambdaQueryWrapper<AiMemory>().eq(AiMemory::getUserId, userId));
-        styleProfileMapper.delete(new LambdaQueryWrapper<AiStyleProfile>()
-                .eq(AiStyleProfile::getUserId, userId));
         log.info("记忆全部清除：userId={} 共 {} 条", userId, ids.size());
         return ids.size();
     }
