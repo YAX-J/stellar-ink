@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from app.core.trace import record_event
+from app.providers.circuit_breaker import CircuitBreaker
 from app.providers.errors import (
     ProviderAuthError,
     ProviderError,
@@ -64,12 +65,16 @@ class OpenAICompatibleProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         retry: RetryPolicy | None = None,
         sleeper: Callable[[float], Awaitable[None]] | None = None,
+        breaker: CircuitBreaker | None = None,
     ) -> None:
         self._config = config
         self._caps = config.capabilities
         self._retry = retry if retry is not None else RetryPolicy()
         # 睡眠做成可注入的接缝：单测里重试必须**立刻**发生，否则一个用例要等好几秒
         self._sleeper = sleeper if sleeper is not None else asyncio.sleep
+        # 断路的 key 含**角色 + 模型 + 端点**：嵌入挂了不该连累对话，换了模型也不该继承旧状态
+        self._breaker = breaker if breaker is not None else CircuitBreaker()
+        self._breaker_key = f"{config.role}:{config.model}@{config.base_url}"
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             timeout=httpx.Timeout(config.timeout_ms / 1000),
@@ -358,17 +363,27 @@ class OpenAICompatibleProvider:
         return explicit if explicit is not None else configured
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """带退避重试的 POST；用尽重试后抛**分类错误**（调用方据此决定降级还是改配置）。
+        """带**断路 + 退避重试**的 POST；用尽重试后抛**分类错误**（调用方据此决定降级还是改配置）。
 
         为什么重试（实测）：标准五组跑到第 4 组时免费档 429，30 道题全部被降级成「拒答」，
         一行 `recall 0` 看起来像「开了重排就彻底失效」—— 一次限流不该毁掉整轮评测。
         为什么不能无限重试：429 是配额语义，重试到天荒地老只会把并发全占住。
+        为什么还要断路（M8）：上游连续失败时，**每一题**都先等完退避再失败 ——
+        整轮评测的时间全花在等待上，而上游一次都没成功过。断路把那段时间直接快速失败。
+
+        ⚠️ 断路在**重试之前**：熔断打开时连第一次尝试都不做（否则「熔断」只是少重试几次）。
         """
+        allowed, wait_s = self._breaker.allow(self._breaker_key)
+        if not allowed:
+            raise self._breaker.error_for(self._breaker_key, wait_s)
+
         error: ProviderError
         for attempt in range(1, self._retry.attempts + 1):
             try:
                 response = await self._client.post(path, json=payload)
                 if response.status_code < 400:
+                    # 成功一次就清零：断路只统计**连续**失败
+                    self._breaker.record_success(self._breaker_key)
                     return self._decode(response)
                 error = self._error_for_status(response)
             except httpx.TimeoutException:
@@ -377,6 +392,7 @@ class OpenAICompatibleProvider:
                 error = ProviderUnavailableError("无法连接模型服务")
 
             if attempt >= self._retry.attempts or not self._retry.should_retry(error):
+                self._breaker.record_failure(self._breaker_key, error)
                 raise error
             await self._retry_after(error, attempt, path)
 
