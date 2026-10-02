@@ -178,3 +178,43 @@ CREATE TABLE IF NOT EXISTS `ai_wiki_topic_evidence` (
     PRIMARY KEY (`id`),
     CONSTRAINT `uk_topic_evidence` UNIQUE (`topic_id`, `post_id`, `chunk_index`, `claim_text`)
 );
+
+-- 作者记忆（M9-2）。与 deploy/sql/16_ai_memory.sql 一致：
+--   幂等锚点是 (user_id, memory_type, normalized)；
+--   状态四档而不是布尔（enabled=false 分不清「暂时关了」与「要求删掉」）。
+CREATE TABLE IF NOT EXISTS `ai_memory` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `memory_type` VARCHAR(32) NOT NULL,
+    `content` VARCHAR(200) NOT NULL,
+    `normalized` VARCHAR(200) NOT NULL,
+    `confidence` DECIMAL(4, 3) NOT NULL DEFAULT 0.500,
+    `source` VARCHAR(32) NOT NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+    `confirmed_at` DATETIME NULL,
+    `expires_at` DATETIME NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_memory` UNIQUE (`user_id`, `memory_type`, `normalized`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_memory_evidence` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `memory_id` BIGINT NOT NULL,
+    `kind` VARCHAR(16) NOT NULL,
+    `ref` VARCHAR(512) NOT NULL,
+    `post_id` BIGINT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+);
+
+CREATE TABLE IF NOT EXISTS `ai_style_profile` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `version` INT NOT NULL,
+    `payload` CLOB NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    CONSTRAINT `uk_user_version` UNIQUE (`user_id`, `version`)
+);

@@ -5,6 +5,7 @@ import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.AgentStepDTO;
 import com.stellarink.aiclient.dto.CitationDTO;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
@@ -55,6 +56,9 @@ class AiAgentControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     @MockBean
     private PythonAiClient pythonAiClient;

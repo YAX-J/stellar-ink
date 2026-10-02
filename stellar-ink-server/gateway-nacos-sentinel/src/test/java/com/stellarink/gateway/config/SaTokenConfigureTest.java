@@ -61,4 +61,17 @@ class SaTokenConfigureTest {
         assertThat(SaTokenConfigure.aiRequiresAuthor("POST", "/ai/qa/stream")).isFalse();
         assertThat(SaTokenConfigure.aiRequiresAuthor("POST", null)).isFalse();
     }
+
+    @Test
+    void shouldRequireLoginForAiMemoryOnEveryMethod() {
+        // 「模型替这个人记住了什么」是私密数据：GET 也必须登录，
+        // 否则会被「GET 全放行」漏出去（这是新增路由时最容易踩的一步）
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/memory/list")).isTrue();
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/memory/5")).isTrue();
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/memory/clear")).isTrue();
+        // 相似前缀不能误判
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/memoryx")).isFalse();
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/qa")).isFalse();
+        assertThat(SaTokenConfigure.aiRequiresLogin(null)).isFalse();
+    }
 }
