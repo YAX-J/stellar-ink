@@ -196,7 +196,10 @@ CREATE TABLE IF NOT EXISTS `ai_memory` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    CONSTRAINT `uk_memory` UNIQUE (`user_id`, `memory_type`, `normalized`)
+    -- 锚点**含状态**：pending 与 active 必须能共存，否则「候选与已生效记忆重复」
+    -- 根本表达不出来（抽取会 DuplicateKey、确认时的合并分支永远不触发）。
+    -- 详见 deploy/sql/16_ai_memory.sql 的注释。
+    CONSTRAINT `uk_memory` UNIQUE (`user_id`, `memory_type`, `normalized`, `status`)
 );
 
 CREATE TABLE IF NOT EXISTS `ai_memory_evidence` (

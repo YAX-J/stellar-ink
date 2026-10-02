@@ -3,6 +3,10 @@ package com.stellarink.ai.controller;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.response.Response;
+import com.stellarink.sharedmodel.dto.ai.AiMemoryConfirmRequest;
+import com.stellarink.sharedmodel.dto.ai.AiMemoryExtractRequest;
+import com.stellarink.sharedmodel.vo.ai.AiMemoryConfirmVO;
+import com.stellarink.sharedmodel.vo.ai.AiMemoryExtractVO;
 import com.stellarink.sharedmodel.vo.ai.AiMemoryVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,6 +16,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -52,6 +57,22 @@ public class AiMemoryController {
     public Response<AiMemoryVO> setStatus(
             @PathVariable Long id, @RequestParam String status) {
         return Response.success(memoryService.setStatus(AuthHelper.loginId(), id, status));
+    }
+
+    @PostMapping("/extract")
+    @Operation(summary = "从一段对话里抽记忆候选（落成待确认，不参与召回）")
+    public Response<AiMemoryExtractVO> extract(@RequestBody AiMemoryExtractRequest request) {
+        return Response.success(memoryService.extract(
+                AuthHelper.loginId(), request.getConversation(), request.getMaxCandidates()));
+    }
+
+    @PostMapping("/confirm")
+    @Operation(summary = "确认待确认的记忆（冲突保持待确认并原样报回）")
+    public Response<AiMemoryConfirmVO> confirm(
+            @RequestBody(required = false) AiMemoryConfirmRequest request) {
+        List<Long> ids = request == null || request.getMemoryIds() == null
+                ? List.of() : request.getMemoryIds();
+        return Response.success(memoryService.confirm(AuthHelper.loginId(), ids));
     }
 
     @DeleteMapping("/{id}")
