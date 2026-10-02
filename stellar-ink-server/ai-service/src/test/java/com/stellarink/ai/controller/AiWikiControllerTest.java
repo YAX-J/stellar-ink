@@ -1,6 +1,7 @@
 package com.stellarink.ai.controller;
 
 import com.stellarink.aiclient.client.PythonAiClient;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -61,6 +62,9 @@ class AiWikiControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;

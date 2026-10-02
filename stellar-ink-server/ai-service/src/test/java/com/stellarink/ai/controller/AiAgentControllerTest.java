@@ -5,6 +5,7 @@ import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.AgentStepDTO;
 import com.stellarink.aiclient.dto.CitationDTO;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -57,6 +58,9 @@ class AiAgentControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;

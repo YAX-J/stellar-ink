@@ -4,6 +4,7 @@ import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.WritingStyleProfileDTO;
 import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleResultDTO;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
@@ -55,6 +56,9 @@ class AiWritingStyleControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.ai.config.TestMasterKeyConfig;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
 import com.stellarink.ai.pojo.AiProviderConfig;
+import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiProviderConfigService;
@@ -53,6 +54,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("unittest")
 @Import(TestMasterKeyConfig.class)
 class AiProviderAdminControllerTest {
+
+    @MockBean
+    private AiRetrievalAuditService auditService;
 
     @MockBean
     private AiStyleProfileService styleProfileService;
