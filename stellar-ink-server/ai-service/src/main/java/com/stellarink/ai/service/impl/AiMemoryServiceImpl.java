@@ -10,6 +10,8 @@ import com.stellarink.aiclient.dto.MemoryExtractRequestDTO;
 import com.stellarink.aiclient.dto.MemoryExtractResultDTO;
 import com.stellarink.aiclient.dto.MemoryPlanRequestDTO;
 import com.stellarink.aiclient.dto.MemoryPlanResultDTO;
+import com.stellarink.aiclient.dto.MemoryRecallRequestDTO;
+import com.stellarink.aiclient.dto.MemoryRecallResultDTO;
 import com.stellarink.aiclient.dto.MemoryRecordDTO;
 import com.stellarink.ai.mapper.AiMemoryEvidenceMapper;
 import com.stellarink.ai.mapper.AiMemoryMapper;
@@ -73,6 +75,48 @@ public class AiMemoryServiceImpl implements AiMemoryService {
     private final AiMemoryEvidenceMapper evidenceMapper;
     private final AiStyleProfileMapper styleProfileMapper;
     private final PythonAiClient pythonAiClient;
+
+    // ------------------------------------------------------------------ 召回
+
+    @Override
+    public List<String> listRecallable(Long userId, int limit) {
+        List<AiMemory> active = memoryMapper.selectList(new LambdaQueryWrapper<AiMemory>()
+                .eq(AiMemory::getUserId, userId)
+                .eq(AiMemory::getStatus, "active"));
+        if (active.isEmpty()) {
+            // 没有记忆就别去调 Python：这是最常见的路径，不该多一次内网往返
+            return List.of();
+        }
+        Map<Long, AiMemory> byId = active.stream()
+                .collect(Collectors.toMap(AiMemory::getId, item -> item));
+        MemoryRecallResultDTO recalled = pythonAiClient.memoryRecall(
+                MemoryRecallRequestDTO.builder()
+                        .memories(active.stream().map(this::toRecordDTO).toList())
+                        .minConfidence(0.0)
+                        .limit(limit)
+                        .expiresAtMs(expiresAtOf(active))
+                        .build());
+        List<String> contents = new ArrayList<>();
+        for (Long memoryId : orEmpty(recalled.getMemoryIds())) {
+            AiMemory memory = byId.get(memoryId);
+            if (memory != null) {
+                contents.add(memory.getContent());
+            }
+        }
+        return contents;
+    }
+
+    /** 过期时间只在有值时传：区分「没设过期」与「已过期」是 Python 侧过滤的判据。 */
+    private Map<Long, Long> expiresAtOf(List<AiMemory> rows) {
+        Map<Long, Long> result = new java.util.HashMap<>();
+        for (AiMemory memory : rows) {
+            if (memory.getExpiresAt() != null) {
+                result.put(memory.getId(), memory.getExpiresAt()
+                        .toInstant(java.time.ZoneOffset.UTC).toEpochMilli());
+            }
+        }
+        return result;
+    }
 
     // ------------------------------------------------------------------ 抽取
 

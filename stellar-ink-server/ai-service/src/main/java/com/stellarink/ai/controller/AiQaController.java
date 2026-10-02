@@ -4,6 +4,7 @@ import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
@@ -44,6 +45,9 @@ public class AiQaController {
     /** 调用账（E3-1）：成功与失败都记一条，见 {@link AiUsageService} */
     private final AiUsageService usageService;
 
+    /** 长期记忆（M9）：只用来调整语气与取舍，不进证据 */
+    private final AiMemoryService memoryService;
+
     @PostMapping
     @Operation(
             summary = "就全站文章提问",
@@ -51,17 +55,23 @@ public class AiQaController {
     public Response<QaAnswerDTO> ask(@Valid @RequestBody AiAskDTO request) {
         Long userId = AuthHelper.loginId();
 
+        // 长期记忆（M9）：个性化只影响**语气与取舍**，不参与证据 ——
+        // 提示词里明确要求不得把它当文章内容引用（Python 侧的 MEMORY_PROMPT）
+        java.util.List<String> memories = memoryService.listRecallable(userId, 5);
+
         QaStreamRequestDTO internal = QaStreamRequestDTO.builder()
                 .question(request.getQuestion().trim())
                 .topK(request.getTopK())
+                .memories(memories)
                 .build();
 
         QaAnswerDTO answer = usageService.around(
                 AiCallScene.QA, () -> pythonAiClient.qaAsk(internal), QaAnswerDTO::getUsage);
 
         // 审计：谁问了、有几个引用、是否拒答、用的哪个模型。**不记问题原文**（可能含个人信息）
-        log.info("AI 问答完成：userId={} citations={} evidenceSufficient={} model={} latencyMs={}",
+        log.info("AI 问答完成：userId={} memories={} citations={} evidenceSufficient={} model={} latencyMs={}",
                 userId,
+                memories.size(),
                 answer == null || answer.getCitations() == null ? 0 : answer.getCitations().size(),
                 answer == null ? null : answer.getEvidenceSufficient(),
                 answer == null || answer.getUsage() == null ? null : answer.getUsage().getModel(),
