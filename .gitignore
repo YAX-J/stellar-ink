@@ -48,3 +48,8 @@ docs/*
 !docs/architecture/**
 !docs/ai/
 !docs/ai/**
+
+# docs/status.md 是功能侧真相源：AGENTS.md 与 docs/ai/* 都在链接它；
+# 它若不入库，克隆出来的仓库里那些链接就是死的（2026-10-02 补）。
+# 其余 docs/ 顶层文件（安全审查报告等）仍按上面的规则不入库。
+!docs/status.md
