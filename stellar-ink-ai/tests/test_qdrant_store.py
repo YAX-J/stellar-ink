@@ -513,3 +513,103 @@ async def test_error_detail_is_truncated() -> None:
     assert caught.value.detail is not None
     assert len(caught.value.detail) <= 200
     await store.aclose()
+
+
+async def test_hashes_by_post_reads_payload_without_vectors() -> None:
+    """增量索引对账（M4）：只读 payload、不读向量。
+
+    读向量的代价是「一次对账把几万条向量拉回来」—— 而对账要回答的是「有没有变」，
+    不是「像不像」。
+    """
+    recorder = _Recorder(
+        {
+            ("POST", f"/collections/{COLLECTION}/points/scroll"): httpx.Response(
+                200,
+                json={
+                    "result": {
+                        "points": [
+                            {"payload": {"postId": 1, "contentHash": "h1"}},
+                            {"payload": {"postId": 1, "contentHash": "h2"}},
+                            {"payload": {"postId": 2, "contentHash": "h3"}},
+                        ],
+                        "next_page_offset": None,
+                    }
+                },
+            )
+        }
+    )
+    store = _store(recorder)
+
+    grouped = await store.hashes_by_post()
+
+    assert grouped == {1: {"h1", "h2"}, 2: {"h3"}}
+    body = json.loads(recorder.requests[0].content)
+    assert body["with_vector"] is False, "对账不该读向量"
+    assert body["with_payload"] is True
+    await store.aclose()
+
+
+async def test_hashes_by_post_marks_missing_hash_as_none() -> None:
+    """老数据没有 `contentHash` → 记成 None（调用方据此判「要重建」），**不猜**。"""
+    recorder = _Recorder(
+        {
+            ("POST", f"/collections/{COLLECTION}/points/scroll"): httpx.Response(
+                200,
+                json={
+                    "result": {
+                        "points": [
+                            {"payload": {"postId": 7, "text": "老数据没有 contentHash"}},
+                            {"payload": {"postId": 8}},
+                            {"payload": {}},
+                        ],
+                        "next_page_offset": None,
+                    }
+                },
+            )
+        }
+    )
+    store = _store(recorder)
+
+    grouped = await store.hashes_by_post()
+
+    assert grouped[7] is None, "读不到哈希要如实标出来，而不是拿别的字段充数"
+    assert grouped[8] is None
+    assert 0 not in grouped, "连 postId 都没有的点直接跳过（它本身就该被清理）"
+    await store.aclose()
+
+
+async def test_hashes_by_post_follows_pagination() -> None:
+    """滚动分页：必须跟着 next_page_offset 一直翻，否则对账只看到第一页。"""
+    pages = [
+        httpx.Response(
+            200,
+            json={
+                "result": {
+                    "points": [{"payload": {"postId": 1, "contentHash": "h1"}}],
+                    "next_page_offset": 100,
+                }
+            },
+        ),
+        httpx.Response(
+            200,
+            json={
+                "result": {
+                    "points": [{"payload": {"postId": 2, "contentHash": "h2"}}],
+                    "next_page_offset": None,
+                }
+            },
+        ),
+    ]
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return pages[min(calls["count"] - 1, len(pages) - 1)]
+
+    config = QdrantConfig(collection=COLLECTION)
+    store = QdrantVectorStore(config, transport=httpx.MockTransport(handler))
+
+    grouped = await store.hashes_by_post(page_size=1)
+
+    assert set(grouped) == {1, 2}, "第二页也要读到"
+    await store.aclose()
