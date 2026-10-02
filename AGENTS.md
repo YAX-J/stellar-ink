@@ -111,6 +111,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   改完 `.bat` 的验证办法：复制一份，把 `call :kill_port` 与 `start "si-…"` 两类行换成 `echo`，
   拿它跑一遍 —— 控制流（标签、计数器、汇总）全都能验到，又不会真的重启服务。
 - 文档同步：改了接口/启动方式/目录结构，必须同步更新 `docs/api/README.md`、`docs/architecture/README.md` 和本文档。
+  ⚠️ **`docs/*` 在 .gitignore 里是被忽略的**（安全审查报告等本地文档不入库），只放开了
+  `docs/api`、`docs/architecture`、`docs/ai` 与 **`docs/status.md`**（它是功能侧真相源，
+  AGENTS 与 `docs/ai/*` 都在链接它）。所以在 `docs/` 顶层**新增**文件默认不会进仓库 ——
+  踩过一次：多轮「同步 docs/status.md」改了磁盘却没进任何提交，克隆出来的仓库里那些链接是死的。
+  要么 `git add -f`，要么在 `.gitignore` 里显式收窄规则。
 
 ## 4. 前端规范（stellar-ink-web）
 
