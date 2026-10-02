@@ -4,9 +4,14 @@
 --   1. **一行 = 一条能回到出处的记忆**，不是「聊天记录」。所以每条记忆都要有证据行
 --      （`ai_memory_evidence`：回到某段原文，或用户自己确认过）——
 --      没有出处的「事实」正是 M9 验收第三条要挡的东西（模型不能把推测写成永久用户事实）。
---   2. **幂等锚点**是 (user_id, memory_type, normalized)：同一用户、同一类型、
---      归一化后同一句话只存一条。归一化（全角/半角、大小写、空白）由 Python 侧算好传进来，
+--   2. **幂等锚点**是 (user_id, memory_type, normalized, **status**)：同一用户、同一类型、
+--      归一化后同一句话、同一状态只存一条。归一化（全角/半角、大小写、空白）由 Python 侧算好传进来，
 --      放在库里比对是为了让「重复确认」不会一天天把表撑大 —— 那看起来像「记性越来越好」。
+--      ⚠️ **状态必须在锚点里**（H2 的唯一键把这个设计问题顶出来过）：
+--      「这条候选与一条已生效记忆重复」是必然发生的常见情况，而不带状态时 pending 与 active
+--      无法共存 —— 表现有两种，都很难查：① 抽取接口直接 DuplicateKey（用户看到 500，
+--      而不是「这条已经记过了」）；② 确认流程里「合并重复」的分支永远不会触发。
+--      带上状态后，同一状态下的重复仍然不允许，而「候选 vs 已生效」能在确认时合并成一条。
 --   3. **状态区分四档**（pending/active/disabled/deleted）：
 --      · pending  = 模型提出的候选，等人确认（**不参与召回**）
 --      · active   = 生效中
@@ -38,7 +43,7 @@ CREATE TABLE IF NOT EXISTS `ai_memory`
     `updated_at`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近一次变更时间',
     PRIMARY KEY (`id`),
     -- 幂等锚点：同一用户 + 同一类型 + 同一句话 = 同一条记忆（重复确认只更新，不新增）
-    UNIQUE KEY `uk_memory` (`user_id`, `memory_type`, `normalized`),
+    UNIQUE KEY `uk_memory` (`user_id`, `memory_type`, `normalized`, `status`),
     -- 召回取数：按用户 + 状态取（**用户隔离由这里保证**，不靠 Python 侧过滤）
     KEY `idx_user_status` (`user_id`, `status`),
     -- 按类型召回（「只带偏好进去」这类请求）

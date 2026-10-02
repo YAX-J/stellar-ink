@@ -37,6 +37,11 @@ class MemoryCandidateView(ContractResponse):
 
     type: str = Field(description="preference / fact / decision")
     content: str = Field(min_length=MIN_CONTENT_LENGTH, description="记忆正文")
+    normalized: str = Field(
+        default="",
+        description="归一化正文（全角/大小写/空白抹平）——**由 Python 算好回传**："
+        "Java 侧不重复实现一遍，两份实现早晚分叉，而分叉的表现是「同一条记忆存了两行」",
+    )
     confidence: float = Field(ge=0, le=1, description="可信度（模型推测的封顶 0.7）")
     source: str = Field(description="model_suggested / user_stated / user_confirmed")
     evidence: list[MemoryEvidenceView] = Field(default_factory=list, description="出处（至少一条）")

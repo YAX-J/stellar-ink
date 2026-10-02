@@ -29,6 +29,7 @@ from app.rag.memory import (
     MemoryRecord,
     extract_candidates_async,
     filter_for_recall,
+    normalize_memory_text,
     plan_writes,
 )
 from app.schemas.memory import (
@@ -52,10 +53,15 @@ router = APIRouter(tags=["memory"])
 
 
 def _candidate_view(candidate: MemoryCandidate) -> MemoryCandidateView:
-    """`MemoryCandidate` → 契约视图（证据一起带上）。"""
+    """`MemoryCandidate` → 契约视图（证据与**归一化正文**一起带上）。
+
+    归一化正文由这里算（Java 不重复实现）：两份实现早晚会分叉，
+    而分叉的表现是「同一条记忆存了两行」。
+    """
     return MemoryCandidateView(
         type=candidate.memory_type,
         content=candidate.content,
+        normalized=normalize_memory_text(candidate.content),
         confidence=candidate.confidence,
         source=candidate.source,
         evidence=[

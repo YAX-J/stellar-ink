@@ -50,6 +50,15 @@ public final class AiContractPaths {
     /** 失效盘点（E4-11）：把库里的锚点交回去比对当前语料；只读、不花钱 */
     public static final String WIKI_STALE = "/wiki/stale";
 
+    /** 记忆候选抽取（M9）：从一段对话里抽候选，出处必须能被观察到 */
+    public static final String MEMORY_CANDIDATES = "/memory/candidates";
+
+    /** 写入计划（M9）：新增 / 重复 / 冲突三份清单，**冲突不自动覆盖** */
+    public static final String MEMORY_PLAN = "/memory/plan";
+
+    /** 可召回集合（M9）：按类型/可信度/有效期过滤，排序确定 */
+    public static final String MEMORY_RECALL = "/memory/recall";
+
     private AiContractPaths() {
     }
 }

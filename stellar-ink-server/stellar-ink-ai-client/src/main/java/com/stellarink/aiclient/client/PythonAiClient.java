@@ -6,7 +6,12 @@ import com.stellarink.aiclient.dto.AiWikiClaimsRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
 import com.stellarink.aiclient.dto.AiWikiStaleRequestDTO;
 import com.stellarink.aiclient.dto.AiWikiStaleResultDTO;
-import com.stellarink.aiclient.dto.AgentAskRequestDTO;
+import com.stellarink.aiclient.dto.MemoryExtractRequestDTO;
+import com.stellarink.aiclient.dto.MemoryExtractResultDTO;
+import com.stellarink.aiclient.dto.MemoryPlanRequestDTO;
+import com.stellarink.aiclient.dto.MemoryPlanResultDTO;
+import com.stellarink.aiclient.dto.MemoryRecallRequestDTO;
+import com.stellarink.aiclient.dto.MemoryRecallResultDTO;import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
@@ -165,4 +170,40 @@ public interface PythonAiClient {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     AiWikiStaleResultDTO wikiStale(@RequestBody AiWikiStaleRequestDTO request);
+
+    /**
+     * 抽取记忆候选（M9）：从一段对话里抽候选，**出处必须能在这次对话里找到**。
+     *
+     * <p>{@code stats.dropped} 与 {@code candidates} 同等重要：记忆抽得少时，
+     * 它是区分「模型没提出」与「提出了但出处对不上」的唯一线索。
+     */
+    @PostMapping(
+            value = AiContractPaths.MEMORY_CANDIDATES,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    MemoryExtractResultDTO memoryCandidates(@RequestBody MemoryExtractRequestDTO request);
+
+    /**
+     * 算写入计划（M9）：新增 / 重复 / 冲突。
+     *
+     * <p>为什么由 Python 判：规则的实现（归一化、相似度、冲突阈值）只在那边有一份，
+     * Java 复制一份的后果是「同一条记忆存了两行」或「冲突漏判」。
+     */
+    @PostMapping(
+            value = AiContractPaths.MEMORY_PLAN,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    MemoryPlanResultDTO memoryPlan(@RequestBody MemoryPlanRequestDTO request);
+
+    /**
+     * 算可召回的记忆（M9）：按类型 / 可信度 / 有效期过滤，排序确定。
+     *
+     * <p>⚠️ **用户隔离不在这里**：Java 按登录身份取出该用户的记忆再传进来 ——
+     * 「用户 A 的记忆不会被 B 召回」由取数范围保证，不是靠这层的过滤条件。
+     */
+    @PostMapping(
+            value = AiContractPaths.MEMORY_RECALL,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    MemoryRecallResultDTO memoryRecall(@RequestBody MemoryRecallRequestDTO request);
 }
