@@ -3,6 +3,7 @@ package com.stellarink.ai.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.ai.client.PythonHealthProbe;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
@@ -53,6 +54,9 @@ class AiHealthControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     @MockBean
     private PythonHealthProbe pythonHealthProbe;

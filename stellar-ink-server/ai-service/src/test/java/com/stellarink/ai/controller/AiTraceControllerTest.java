@@ -2,6 +2,7 @@ package com.stellarink.ai.controller;
 
 import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.AiTraceDTO;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.ai.service.AiUsageService;
@@ -49,6 +50,9 @@ class AiTraceControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     @MockBean
     private AiUsageService usageService;

@@ -2,6 +2,7 @@ package com.stellarink.ai.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.aiclient.client.PythonAiClient;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.ai.stream.QaSseFrame;
@@ -68,6 +69,9 @@ class AiQaStreamControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     @MockBean
     private QaStreamClient qaStreamClient;

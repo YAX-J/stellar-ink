@@ -81,6 +81,15 @@ public class SaTokenConfigure {
     /** AI 写作建议前缀：需要 AUTHOR（草稿助手涉及作者自己的内容） */
     private static final String AI_WRITING_PREFIX = "/ai/writing/";
 
+    /**
+     * 作者记忆前缀：**只要登录**（读者也能有自己的记忆，不必是作者）。
+     *
+     * <p>⚠️ 必须放在「GET 全放行」之前：否则 {@code GET /ai/memory/list} 会匿名可读 ——
+     * 而它返回的是「模型替这个人记住了什么」，属于私密数据。
+     * 角色门槛刻意留空：记忆是用户自己的东西，按角色卡反而会让读者用不了问答里的记忆。
+     */
+    private static final String AI_MEMORY_PREFIX = "/ai/memory/";
+
     @Bean
     public SaReactorFilter saReactorFilter() {
         return new SaReactorFilter()
@@ -109,6 +118,11 @@ public class SaTokenConfigure {
                     // 4) AI 写作建议：涉及作者草稿，写操作要 AUTHOR
                     if (aiRequiresAuthor(method, path)) {
                         requireRole(Role.AUTHOR);
+                        return;
+                    }
+                    // 4.5) 作者记忆：任何方法都要求登录（**必须先于 GET 全放行**，它是私密数据）
+                    if (aiRequiresLogin(path)) {
+                        StpUtil.checkLogin();
                         return;
                     }
                     // 5) 管理端读接口（需 ADMIN，须先于「GET 全放行」判断）
@@ -187,6 +201,19 @@ public class SaTokenConfigure {
     /** AI 管理端：任何方法（含 GET）都要 ADMIN。 */
     static boolean aiRequiresAdmin(String path) {
         return path != null && path.startsWith(AI_ADMIN_PREFIX);
+    }
+
+    /**
+     * 作者记忆：任何方法（含 GET）都要求登录，但**不卡角色**。
+     *
+     * <p>为什么单独一条而不是并进管理端：记忆是用户自己的东西，读者也该能用
+     * （问答里积累的偏好对读者同样有用），卡成 ADMIN 等于这个功能只有站长能用。
+     *
+     * <p>为什么必须显式列出来：网关对 GET 是全放行的，不拦就变成匿名可读 ——
+     * 而它返回的是「模型替这个人记住了什么」。
+     */
+    static boolean aiRequiresLogin(String path) {
+        return path != null && path.startsWith(AI_MEMORY_PREFIX);
     }
 
     /**

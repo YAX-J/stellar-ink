@@ -7,6 +7,7 @@ import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.aiclient.enums.DoneReason;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiModelLibraryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.common.advice.GlobalExceptionHandler;
@@ -58,6 +59,9 @@ class AiQaControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     @MockBean
     private PythonAiClient pythonAiClient;

@@ -415,6 +415,30 @@ curl -s -X POST http://127.0.0.1:8080/ai/admin/eval/run \
 ⚠️ **Python 侧一条都不落库**：记忆的持久化与状态流转（确认/禁用/删除/清除）在 Java
 （`ai_memory` 系列表）。
 
+**作者记忆（M9，经网关；门槛是「登录」而不是角色）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/ai/memory/list` | 列出**我自己**的记忆；`?status=`（pending/active/disabled）、`?type=`（preference/fact/decision）可选。每条都带证据 | 登录 |
+| PUT | `/ai/memory/{id}/status` | 启用/禁用：`?status=active\|disabled` | 登录 |
+| DELETE | `/ai/memory/{id}` | 删除一条（软删 + 清证据 + 清派生风格画像） | 登录 |
+| POST | `/ai/memory/clear` | 全部清除：`{"removed": n}` | 登录 |
+
+三条口径：
+
+① **路径与请求体里都没有 `userId`** —— 身份只从登录态取。
+「查某个用户的记忆」这种形状**根本不存在**（`GET /ai/memory/7/list` 会得到 code=404），
+所以「用户 A 看不到用户 B 的记忆」不是一条过滤条件，而是接口表达不出来。
+② **网关必须把 `/ai/memory/**` 拦在「GET 全放行」之前**（`SaTokenConfigure.AI_MEMORY_PREFIX`）：
+它是私密数据，忘了这一步的表现是「列表匿名可读」，而不是报错。
+角色门槛刻意留空（读者也能有自己的记忆），但**必须登录**。
+③ **删除走独立入口**：`PUT /{id}/status` 传 `deleted` 会被拒绝（code=1001）——
+删除要连带清理证据与派生画像，从状态接口走会绕过清理，界面上干净了、数据还在。
+
+> Python 侧另有三个内部端点（`/memory/candidates`、`/memory/plan`、`/memory/recall`）：
+> 抽取候选、算写入计划（新增/重复/冲突）、算可召回集合。
+> **落库与状态流转只在 Java**，Python 一条都不写库。
+
 **AI 用量与成本看板（E3-1，全部 ADMIN）**
 
 | 方法 | 路径（**经网关**） | 说明 | 鉴权 |

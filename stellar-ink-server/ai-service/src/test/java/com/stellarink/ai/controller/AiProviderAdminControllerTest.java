@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.ai.config.TestMasterKeyConfig;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
 import com.stellarink.ai.pojo.AiProviderConfig;
+import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiProviderConfigService;
 import com.stellarink.sharedmodel.dto.ai.AiProviderSaveDTO;
 import com.stellarink.sharedmodel.enums.AiModelRole;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -50,6 +52,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("unittest")
 @Import(TestMasterKeyConfig.class)
 class AiProviderAdminControllerTest {
+
+    @MockBean
+    private AiMemoryService memoryService;
 
     private static final String PLAINTEXT_KEY = "sk-live-abcdefghijklmnop-9f3a";
 
