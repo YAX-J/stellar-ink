@@ -39,6 +39,7 @@ _COLLECTIONS = "/collections"
 _SEARCH_PATH = "/points/search"
 _UPSERT_PATH = "/points"
 _DELETE_PATH = "/points/delete"
+_SCROLL_PATH = "/points/scroll"
 
 #: Qdrant 的 point id 只能是 uint64 或 UUID，而 chunk_id 是 `p1:v3a1b2c4:c0` 这种字符串。
 #: 取 SHA-256 前 8 字节并抹掉最高位：确定性（同一 chunk 永远同一 id，重复写入即覆盖）、
@@ -299,6 +300,66 @@ class QdrantVectorStore:
         if not isinstance(results, list):
             raise ProviderUnavailableError("Qdrant 检索响应缺少 result 数组")
         return [_hit_from_row(row) for row in results]
+
+    async def hashes_by_post(
+        self, *, page_size: int = 256, max_points: int = 200_000
+    ) -> dict[int, set[str] | None]:
+        """把索引里**已有点的段落哈希**按文章读回来（增量索引对账用，M4）。
+
+        三条设计：
+
+        * **只读 payload、不读向量**（`with_vector=false`）：对账要回答的是「有没有变」，
+          不是「像不像」—— 读向量会让一次对账把几万条向量拉回来。
+        * **滚动分页**：Qdrant 的 scroll 用 `next_page_offset` 翻页；这里按
+          `page_size` 一直翻到没有下一页，并有 `max_points` 上限防止集合大到把内存吃光
+          （到上限就停，宁可这次对账不完整也不要 OOM —— 对账是幂等的，再跑一次即可）。
+        * **payload 没有 `contentHash` 的文章记成 `None`**：调用方据此判定「要重建」。
+          这里**不猜**（比如拿 chunkId 充数），因为猜错的后果是改动永远进不了索引。
+        """
+        grouped: dict[int, set[str]] = {}
+        offset: Any = None
+        scanned = 0
+        while True:
+            body: dict[str, Any] = {
+                "limit": page_size,
+                "with_payload": True,
+                "with_vector": False,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            payload = await self._request(
+                "POST",
+                f"{_COLLECTIONS}/{self._config.collection}{_SCROLL_PATH}",
+                json=body,
+            )
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                raise ProviderUnavailableError("Qdrant 滚动响应缺少 result 对象")
+            points = result.get("points")
+            if not isinstance(points, list):
+                raise ProviderUnavailableError("Qdrant 滚动响应缺少 points 数组")
+            for row in points:
+                if not isinstance(row, dict):
+                    continue
+                scanned += 1
+                point_payload = row.get("payload")
+                if not isinstance(point_payload, dict):
+                    continue
+                post_id = point_payload.get("postId")
+                if not isinstance(post_id, int):
+                    # 连 postId 都没有的点：不知道属于哪篇，跳过（它本身就该被清理）
+                    continue
+                content_hash = point_payload.get("contentHash")
+                if isinstance(content_hash, str) and content_hash:
+                    grouped.setdefault(post_id, set()).add(content_hash)
+                else:
+                    # 显式记成 None：调用方会按「要重建」处理（见方法 docstring）
+                    grouped.setdefault(post_id, set())
+            offset = result.get("next_page_offset")
+            if offset is None or scanned >= max_points:
+                break
+        # 空集合的文章换成 None，让「读不到哈希」与「哈希为空」在调用方看来是同一件事
+        return {post_id: (hashes or None) for post_id, hashes in grouped.items()}
 
     async def delete_by_post_ids(self, post_ids: Sequence[int]) -> None:
         """按文章删点：文章改动/删除后重建索引时用，避免旧片段继续被引用。"""
