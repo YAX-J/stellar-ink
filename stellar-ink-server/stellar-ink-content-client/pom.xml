@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.stellarink</groupId>
+        <artifactId>stellar-ink-server</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>stellar-ink-content-client</artifactId>
+    <description>Java → content-service 的内部客户端契约：RAG 语料读取（Feign 接口，复用 shared-model 的语料 VO）</description>
+
+    <dependencies>
+        <!-- 只定义契约：不含 Controller、不引 Sa-Token、不直连 MySQL -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!-- 语料 VO（CorpusKind / CorpusItemVO / CorpusContentVO / CorpusSliceVO）在 shared-model，
+             两侧共用同一份定义 —— 不要在客户端再复制一套 DTO，否则契约会有两个版本 -->
+        <dependency>
+            <groupId>com.stellarink</groupId>
+            <artifactId>shared-model</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
