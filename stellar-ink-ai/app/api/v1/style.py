@@ -4,7 +4,7 @@
 画像全部由 `app/rag/style.py` 从作者已发表文章的正文现算，
 不落库、不进索引、不参与检索 —— 因此没有任何需要清理的派生状态。
 
-当前语料来源与问答/Copilot 一致（种子内容包，按 `post.user_id` 过滤作者）。
+当前语料来源与问答/Copilot 一致（线上投影表；不可用时回退种子包。按 `post.author_id` 过滤作者）。
 真实形态是 Java 把该作者已发布的文章推过来（或索引里按 `userId` 过滤），
 届时只需替换 `_samples_for` 这一处。
 """
@@ -15,7 +15,7 @@ from dataclasses import asdict
 from fastapi import APIRouter
 
 from app.rag.corpus import cached_posts
-from app.rag.seed_corpus import SeedPost
+from app.rag.pipeline import PostLike
 from app.rag.style import StyleSettings, build_style_profile
 from app.schemas.style import WritingStyleProfile, WritingStyleRequest, WritingStyleResult
 
@@ -34,7 +34,7 @@ NOTES = (
 load_corpus = cached_posts
 
 
-def _samples_for(author_id: int, max_samples: int) -> list[SeedPost]:
+def _samples_for(author_id: int, max_samples: int) -> list[PostLike]:
     """取该作者的已发布文章。
 
     种子内容包只有已发布文章（草稿不入种子），因此这里没有额外的可见性过滤；

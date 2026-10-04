@@ -36,7 +36,11 @@ from app.rag.retrieval import (
 
 
 class PostLike(Protocol):
-    """管道只要求「有 id / 标题 / 正文」，不依赖种子脚本的类型（避免 app 反向 import scripts）。"""
+    """管道只要求「有 id / 标题 / 正文」，不依赖种子脚本的类型（避免 app 反向 import scripts）。
+
+    画像与评测还要 `tags` 与 `author_id`，所以协议把它们一起声明：语料类型只有一份，
+    否则「管道能用、画像用不了」这种半可用状态会一直靠运气。
+    """
 
     @property
     def post_id(self) -> int: ...
@@ -46,6 +50,12 @@ class PostLike(Protocol):
 
     @property
     def plain(self) -> str: ...
+
+    @property
+    def tags(self) -> list[str]: ...
+
+    @property
+    def author_id(self) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)

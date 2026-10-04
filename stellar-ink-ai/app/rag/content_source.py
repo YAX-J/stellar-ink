@@ -53,7 +53,7 @@ MAX_DOC_CHARS = 200_000
 #: 只读查询：**只碰 ai_* 表**，且只要文章（笔记见模块开头的说明）。
 #: `content IS NOT NULL` 是必要的：没有正文的行切不出任何块，读进来只会变成噪声。
 SELECT_PUBLISHED_POSTS = (
-    "SELECT `content_id`, `title`, `content` FROM `ai_content_snapshot` "
+    "SELECT `content_id`, `title`, `content`, `tags`, `author_id` FROM `ai_content_snapshot` "
     "WHERE `kind` = 'post' AND `content` IS NOT NULL AND `content` <> '' "
     "ORDER BY `content_id`"
 )
@@ -170,8 +170,8 @@ def load_snapshot_posts() -> list[SnapshotDoc]:
                 # tags / author_id 投影表暂时没有：等补列后在这里取值（`row.get("tags")` 需要
                 # 按逗号拆分，`author_id` 直接转 int）。现在给空值而不是伪造，是为了让
                 # 「界面上标签为空、画像取不到样本」表现成显而易见的缺数据，而不是错数据。
-                tags=[],
-                author_id=0,
+                tags=[part.strip() for part in str(row.get("tags") or "").split(",") if part.strip()],  # noqa: E501 - 拆开反而不易读
+                author_id=int(row.get("author_id") or 0),
             )
         )
     return docs

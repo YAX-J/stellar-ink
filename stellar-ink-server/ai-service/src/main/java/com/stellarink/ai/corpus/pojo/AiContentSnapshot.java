@@ -50,6 +50,12 @@ public class AiContentSnapshot {
      *
      * <p>⚠️ 与向量库里**每个子块**的 contentHash（Python 切块时算）不是一回事，不要互比。
      */
+    /** 标签原文（逗号分隔）：写作画像要用（见 21_ai_content_snapshot_tags_author.sql 的说明）。 */
+    private String tags;
+
+    /** 作者 id：写作画像按作者取样要用。 */
+    private Long authorId;
+
     private String docHash;
 
     /** 字数（上游清单暂未提供时为 0）。 */
