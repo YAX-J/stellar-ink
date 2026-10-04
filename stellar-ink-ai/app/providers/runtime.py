@@ -13,7 +13,10 @@ Fake 只能作为**显式配置**存在（面板里把协议选成 `fake`）。
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import logging
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Sequence
+from threading import Lock
 
 from app.providers.config_source import load_provider_configs
 from app.providers.errors import UnsupportedCapabilityError
@@ -21,8 +24,19 @@ from app.providers.models import ProviderConfig
 from app.providers.registry import ProviderRegistry, capability_of
 from app.providers.resolver import ProviderResolver
 
+logger = logging.getLogger(__name__)
+
 #: 全局唯一的解析器；`use_provider_configs` 会替换它（只给测试与离线脚本用）
 _resolver = ProviderResolver(source=load_provider_configs)
+
+#: 个人配置来源：默认直连库按用户读（`user_id` 覆盖全局）
+UserConfigSource = Callable[[int], Sequence[ProviderConfig]]
+_user_source: UserConfigSource = lambda user_id: load_provider_configs(user_id=user_id)  # noqa: E731
+
+#: 个人解析器缓存上限（有界，见 `_user_resolver` 的说明）
+MAX_USER_RESOLVERS = 32
+_user_resolvers: OrderedDict[int, ProviderResolver] = OrderedDict()
+_user_lock = Lock()
 
 #: 「缺哪个角色」时统一给出的操作指引：只说「没配」等于只说了一半
 CONFIGURE_HINT = "请在「AI 实验室 → 模型配置」里填写该角色的端点与密钥"
@@ -49,9 +63,91 @@ def use_provider_configs(configs: Sequence[ProviderConfig]) -> None:
     它**不会**替你造默认模型：调用方必须显式列出每个角色，
     包括「我要用 fake」也要显式写成 `provider="fake"` ——
     这正是面板里把协议选成 Fake 的等价物。
+
+    同时清掉个人配置的解析器：测试里换了来源却还留着上一个用例的用户实例，
+    会让「隔离」这类断言变成随机通过。
     """
     global _resolver  # noqa: PLW0603 - 有意留这个接缝：装配来源只在启动/测试时确定
     _resolver = ProviderResolver(source=lambda: tuple(configs))
+    with _user_lock:
+        _user_resolvers.clear()
+
+
+def use_user_config_source(source: UserConfigSource) -> None:
+    """替换「按用户取配置」的来源（测试用）。
+
+    单独一个接缝，是因为它与全局来源**语义不同**：全局那份是「站长配的」，
+    用户那份要「用户行覆盖全局行」，两者不能互相替代。
+    """
+    global _user_source  # noqa: PLW0603 - 同上：只在启动/测试时确定
+    _user_source = source
+    with _user_lock:
+        _user_resolvers.clear()
+
+
+# --------------------------------------------------------------- 个人配置（读者/作者）
+
+
+def registry_for(user_id: int | None) -> ProviderRegistry:
+    """取**这个用户**的注册表：他的 chat/fast/reasoning 覆盖全局，其余回落到全局。
+
+    ⚠️ 检索侧（embedding/rerank）**必须**继续用全局的 `registry()`：
+    向量索引只有一份，用别的嵌入模型去检索得到的是错的结果，不是「差一点」。
+    所以本函数只该被「生成」类调用点使用（问答、Copilot、Agent）。
+    """
+    if not user_id:
+        return registry()
+    return _user_resolver(int(user_id)).registry()
+
+
+def fingerprint_for(user_id: int | None) -> str:
+    """该用户生效配置的指纹（用于「配置变了没有」的判断与日志）。"""
+    if not user_id:
+        return fingerprint()
+    return _user_resolver(int(user_id)).fingerprint
+
+
+def require_roles_for(user_id: int | None, *roles: str) -> None:
+    """按用户预检角色；错误消息带上「是个人配置还是全局配置」的线索。"""
+    if not user_id:
+        require_roles(*roles)
+        return
+    current = registry_for(user_id)
+    missing = [
+        role
+        for role in roles
+        if (config := current.config_of(role)) is None
+        or not config.capabilities.supports(capability_of(role))
+    ]
+    if missing:
+        raise UnsupportedCapabilityError(
+            "角色 " + "、".join(missing) + " 尚未配置模型",
+            detail=(
+                "可以在「账号 → 我的 AI 模型」里自己配一个，"
+                "或用站长的全局配置（未配的角色会自动回落到全局）"
+            ),
+        )
+
+
+def _user_resolver(user_id: int) -> ProviderResolver:
+    """按用户缓存解析器（有界 LRU）。
+
+    为什么要缓存：每个解析器持有一个 httpx 连接池，每次问答重建等于每次都重新握 TLS。
+    为什么要**有界**：用户是无限的，不设上限就是「每个来过的人都留一个连接池」——
+    那是内存泄漏，只是泄漏得比较慢。被淘汰的用户下次访问重建（多一次握手），
+    这个代价换内存有界是划算的。
+    """
+    with _user_lock:
+        existing = _user_resolvers.get(user_id)
+        if existing is not None:
+            _user_resolvers.move_to_end(user_id)
+            return existing
+        resolver = ProviderResolver(source=lambda: _user_source(user_id))
+        _user_resolvers[user_id] = resolver
+        while len(_user_resolvers) > MAX_USER_RESOLVERS:
+            evicted, _ = _user_resolvers.popitem(last=False)
+            logger.info("个人模型配置缓存已满，淘汰用户 %s 的解析器（下次访问时重建）", evicted)
+        return resolver
 
 
 def missing_roles(roles: Iterable[str]) -> list[str]:

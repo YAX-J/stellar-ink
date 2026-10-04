@@ -93,3 +93,13 @@ class UnsupportedCapabilityError(ProviderError):
 
     code = "AI_PROVIDER_CAPABILITY"
     retryable = False
+
+
+class InvalidBaseUrlError(ProviderError):
+    """`base_url` 不过安全策略（用户级配置的 SSRF 闸门，见 `url_policy.py`）。
+
+    单独一个类型是为了让 Java 侧能把它翻成**400 + 可操作提示**（「个人配置只能填公网地址」），
+    而不是混进「服务不可用」那一堆里 —— 后者会让人去查网络，而问题在他填的那一栏。
+    """
+
+    retryable = False

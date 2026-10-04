@@ -11,10 +11,12 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error, pipeline_for, roles_for
+from app.core.internal_auth import InternalIdentity
+from app.core.internal_auth_middleware import require_internal_identity
 from app.providers import runtime
 from app.rag.agent import Agent, AgentRun, AgentSettings, ToolBox
 from app.rag.agent_tools import read_only_tools
@@ -35,7 +37,7 @@ AGENT_RETRIEVAL = RetrievalConfig(
 )
 
 
-def build_agent() -> Agent:
+def build_agent(user_id: int | None = None) -> Agent:
     """装配只读 Agent。
 
     **不缓存 Agent 本身**：它只是个薄壳，真正贵的检索管道由 `assembly` 按
@@ -45,19 +47,24 @@ def build_agent() -> Agent:
     # 先一次性预检全部角色：Agent 每一步都要问模型，带着缺配置跑起来烧的是钱；
     # 也避免 pipeline_for 先抛「缺 embedding」，让用户以为配好 embedding 就没事了
     runtime.require_roles(*roles_for(AGENT_RETRIEVAL))
+    # 生成用哪个模型可以由用户自己配（个人配置，M12）；检索那条链路始终取全局
+    runtime.require_roles_for(user_id, "chat")
     # 作者身份与画像当前不属于 Agent 的可用上下文（真实形态由 Java 传作者 id 后再接）
     tools = read_only_tools(pipeline=pipeline_for(AGENT_RETRIEVAL))
     return Agent(
-        chat=runtime.registry().chat_model(),
+        chat=runtime.registry_for(user_id).chat_model(),
         tools=ToolBox(tools),
         settings=AgentSettings(),
     )
 
 
 @router.post("/agent/ask", summary="只读 Agent 问答（预算受限）", response_model=None)
-async def ask(request: AgentAskRequest) -> AgentAskResult | JSONResponse:
+async def ask(
+    request: AgentAskRequest,
+    identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
+) -> AgentAskResult | JSONResponse:
     try:
-        agent = build_agent()
+        agent = build_agent(identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 

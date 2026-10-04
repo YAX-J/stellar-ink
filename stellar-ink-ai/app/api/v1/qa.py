@@ -12,10 +12,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error, pipeline_for, roles_for
+from app.core.internal_auth import InternalIdentity
+from app.core.internal_auth_middleware import require_internal_identity
 from app.providers import runtime
 from app.rag.pipeline import RetrievalConfig
 from app.rag.qa import QaService, QaSettings
@@ -45,28 +47,35 @@ QA_RETRIEVAL = RetrievalConfig(
 )
 
 
-def build_qa_service() -> QaService:
+def build_qa_service(user_id: int | None = None) -> QaService:
     """按当前面板配置装配问答服务。
 
     **装配本身不做缓存**：语料与检索管道都由 `assembly` 按语料版本 + 配置指纹缓存，
     这里只是把已经预热好的管道和模型实例拼起来，代价可以忽略。
     反过来说，任何一层要是漏了缓存，接上真实嵌入模型后就会变成
     「每问一句把整库嵌入一遍」—— 那不是慢一点，是费用问题。
+
+    `user_id` 只影响**生成用的模型**（个人配置，M12）：检索那条链路的
+    embedding/rerank 始终取全局配置 —— 向量索引只有一份，换模型检索得到的是错的结果。
     """
     # 先一次性预检全部角色：缺 chat 又缺 embedding 时报两次，用户要跑两趟
     runtime.require_roles(*roles_for(QA_RETRIEVAL))
+    runtime.require_roles_for(user_id, "chat")
     return QaService(
         pipeline=pipeline_for(QA_RETRIEVAL),
-        chat=runtime.registry().chat_model(),
+        chat=runtime.registry_for(user_id).chat_model(),
         settings=QaSettings(),
     )
 
 
 @router.post("/qa", summary="星海问答（非流式）", response_model=None)
-async def ask(request: QaStreamRequest) -> QaAnswer | JSONResponse:
+async def ask(
+    request: QaStreamRequest,
+    identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
+) -> QaAnswer | JSONResponse:
     """一次问答：检索 → 引用 → 提示词 → 模型 → 结论（证据不足时明确拒答）。"""
     try:
-        service = build_qa_service()
+        service = build_qa_service(identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
@@ -82,7 +91,10 @@ async def ask(request: QaStreamRequest) -> QaAnswer | JSONResponse:
 
 
 @router.post("/qa/stream", summary="星海问答（SSE 流式）", response_model=None)
-async def ask_stream(request: QaStreamRequest) -> StreamingResponse | JSONResponse:
+async def ask_stream(
+    request: QaStreamRequest,
+    identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
+) -> StreamingResponse | JSONResponse:
     """流式问答：`meta → citation* → delta* → done`（见 `schemas/qa_stream.py`）。
 
     为什么用「生产者任务 + 队列」而不是直接 `async for event in service.stream(...)`：
@@ -92,7 +104,7 @@ async def ask_stream(request: QaStreamRequest) -> StreamingResponse | JSONRespon
     上游 HTTP 流关闭。**这条链路是「关掉页面就停止烧 token」的全部实现**。
     """
     try:
-        service = build_qa_service()
+        service = build_qa_service(identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
