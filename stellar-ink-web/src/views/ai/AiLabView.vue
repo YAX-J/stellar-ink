@@ -3,11 +3,13 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CAPABILITIES, AI_ROLES, useAiStore } from '@/stores/ai'
+import { RUNTIME_CAVEAT, useAiOpsStore } from '@/stores/aiOps'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
 const auth = useAuthStore()
 const ai = useAiStore()
+const ops = useAiOpsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -16,21 +18,42 @@ const editing = ref('')
 const saving = ref(false)
 
 /**
- * 页签：`providers` 模型配置 / `eval` 评测台。
+ * 页签：`providers` 模型配置 / `eval` 评测台 / `ops` 运行状态 / `usage` 用量与成本。
  * 状态写进 URL（`?tab=eval`）：刷新与分享链接后仍停在同一个页签，
  * 与「我的笔记 · 复核」视图的既有做法一致。
+ *
+ * ⚠️ 新增页签必须同时加进 `TAB_KEYS`：只加常量的话，URL 里那个值会被当成非法值
+ * 悄悄退回「模型配置」，而用户以为自己点的是新页签。
  */
 const TAB_PROVIDERS = 'providers'
 const TAB_EVAL = 'eval'
-const tab = ref(route.query.tab === TAB_EVAL ? TAB_EVAL : TAB_PROVIDERS)
+const TAB_OPS = 'ops'
+const TAB_USAGE = 'usage'
+const TAB_KEYS = [TAB_PROVIDERS, TAB_EVAL, TAB_OPS, TAB_USAGE]
+const tab = ref(TAB_KEYS.includes(String(route.query.tab)) ? String(route.query.tab) : TAB_PROVIDERS)
+
+/** 用量窗口（天）：三档够用，不做自由输入框 —— 那是让人猜该填多少 */
+const USAGE_DAYS = [1, 7, 30]
 
 watch(tab, (value) => {
   const query = { ...route.query }
-  if (value === TAB_EVAL) query.tab = TAB_EVAL
-  else delete query.tab
+  if (value === TAB_PROVIDERS) delete query.tab
+  else query.tab = value
   router.replace({ query })
   if (value === TAB_EVAL) ensureEvalMeta()
+  if (value === TAB_OPS) loadOps()
+  if (value === TAB_USAGE) loadUsage()
 })
+
+/** 运行状态：配置列表 + Python 探活。失败不弹全局 toast（面板内自己说，可重试）。 */
+function loadOps() {
+  ops.loadRuntime().catch(() => {})
+}
+
+/** 用量：默认 7 天窗口 */
+function loadUsage(days) {
+  ops.loadUsage(days).catch(() => {})
+}
 
 /* 表单是「按角色」的：切换角色时把已存配置或预设填进去，避免手抄一遍端点与模型名 */
 const form = reactive({
@@ -116,6 +139,9 @@ onMounted(() => {
   // 模型库读不到不该拖垮整页（最常见原因：还没执行 11_ai_model_library.sql），故吞掉错误
   ai.loadModels().catch(() => {})
   if (tab.value === TAB_EVAL) ensureEvalMeta()
+  // 直接落在新页签（URL 带 ?tab=ops / ?tab=usage）时也要取数，否则是一片空白
+  if (tab.value === TAB_OPS) loadOps()
+  if (tab.value === TAB_USAGE) loadUsage()
 })
 
 /** 元数据只取一次；失败时由面板上的「重试」按钮再来一次 */
@@ -454,7 +480,140 @@ async function applyModel(item) {
         >
           评测台
         </button>
+        <button
+          class="lab-tab" :class="{ on: tab === TAB_OPS }"
+          type="button" @click="tab = TAB_OPS"
+        >
+          运行状态
+        </button>
+        <button
+          class="lab-tab" :class="{ on: tab === TAB_USAGE }"
+          type="button" @click="tab = TAB_USAGE"
+        >
+          用量与成本
+        </button>
       </div>
+
+      <!-- 运行状态（第一优先）：回答「我配的模型到底生效了没有」。
+           ⚠️ 它证明的是「面板已配 + Python 可达」，不证明 Python 真的装配了这份配置 ——
+           这一点必须写在面板上（RUNTIME_CAVEAT），否则「已配置」会被读成「已验证」。 -->
+      <template v-if="tab === TAB_OPS">
+        <p class="lab-note reveal">{{ RUNTIME_CAVEAT }}</p>
+
+        <p v-if="ops.loading && !ops.loaded" class="state-text">正在读取装配状态…</p>
+        <p v-else-if="ops.failed" class="state-text error-text">
+          {{ ops.error }}
+          <button class="state-action" type="button" @click="loadOps()">重试</button>
+        </p>
+
+        <template v-else>
+          <div class="ops-verdict reveal">
+            <b>{{ ops.verdict }}</b>
+            <span v-if="ops.health" class="dim">
+              · 环境 {{ ops.health.env || '—' }} · 版本 {{ ops.health.version || '—' }}
+            </span>
+            <button class="state-action" type="button" @click="loadOps()">重新探活</button>
+          </div>
+          <p v-if="ops.healthFailed" class="msg err">
+            Python 探活失败：拿不到「进程是否可达」，其余信息仍然有效。
+          </p>
+          <p v-else-if="!ops.pythonReachable && ops.pythonReason" class="msg err">
+            Python 不可达：{{ ops.pythonReason }}
+          </p>
+
+          <div class="ops-grid">
+            <div
+              v-for="row in ops.runtimeRows" :key="row.role"
+              class="ops-card reveal" :class="`is-${row.status}`"
+            >
+              <div class="ops-head">
+                <b>{{ row.label }}</b>
+                <span class="ops-state">{{ row.statusText }}</span>
+              </div>
+              <p v-if="row.config" class="dim mono">
+                {{ row.config.model }} · {{ row.config.baseUrl }}
+                <template v-if="row.config.apiKeyMask"> · {{ row.config.apiKeyMask }}</template>
+              </p>
+              <!-- 没配会怎样：只说「未配置」等于只说了一半 -->
+              <p v-if="!row.config" class="dim">{{ row.impact }}</p>
+              <p v-else-if="row.config.lastCheckStatus && row.config.lastCheckStatus !== 'unknown'" class="dim">
+                最近自检：{{ row.config.lastCheckStatus === 'ok' ? '端点可达' : '失败' }}
+                <template v-if="row.config.lastCheckMessage"> · {{ row.config.lastCheckMessage }}</template>
+              </p>
+              <p v-else class="dim">还没自检过（自检只验证端点 TCP 可达，不验证模型名与密钥）。</p>
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- 用量与成本（第一优先）：花了多少钱、贵在哪 -->
+      <template v-if="tab === TAB_USAGE">
+        <div class="ops-verdict reveal">
+          <span class="dim">统计窗口</span>
+          <button
+            v-for="days in USAGE_DAYS" :key="days"
+            class="lab-tab" :class="{ on: ops.usageDays === days }"
+            type="button" @click="loadUsage(days)"
+          >
+            最近 {{ days }} 天
+          </button>
+          <button class="state-action" type="button" @click="loadUsage()">刷新</button>
+        </div>
+
+        <p v-if="ops.usageLoading" class="state-text">正在汇总…</p>
+        <p v-else-if="ops.usageFailed" class="state-text error-text">
+          {{ ops.usageError }}
+          <button class="state-action" type="button" @click="loadUsage()">重试</button>
+        </p>
+
+        <template v-else-if="ops.usage">
+          <div class="ops-stats reveal">
+            <div class="ops-stat"><span>调用</span><b>{{ ops.usage.calls || 0 }}</b></div>
+            <div class="ops-stat"><span>成功 / 失败</span><b>{{ ops.usage.successCalls || 0 }} / {{ ops.usage.failedCalls || 0 }}</b></div>
+            <div class="ops-stat">
+              <span>失败率</span>
+              <!-- 一次都没跑过时显示「—」而不是 0%：0/0 不是 0% -->
+              <b>{{ ops.failureRate === null ? '—' : `${(ops.failureRate * 100).toFixed(1)}%` }}</b>
+            </div>
+            <div class="ops-stat"><span>Tokens</span><b>{{ (ops.usage.totalTokens || 0).toLocaleString() }}</b></div>
+            <div class="ops-stat"><span>成本（元）</span><b>{{ Number(ops.usage.cost || 0).toFixed(4) }}</b></div>
+          </div>
+
+          <!-- 成本为 0 不等于免费：这两种「解释不了的钱」必须说出来 -->
+          <p v-for="(note, i) in ops.costCaveats" :key="i" class="msg err">{{ note }}</p>
+
+          <div v-if="ops.usage.byScene?.length" class="ops-table reveal">
+            <h4>按场景</h4>
+            <div class="ops-row ops-row-head">
+              <span>场景</span><span>调用</span><span>Tokens</span><span>成本</span>
+            </div>
+            <div v-for="item in ops.usage.byScene" :key="item.key" class="ops-row">
+              <span class="mono">{{ item.key }}</span>
+              <span>{{ item.calls }}</span>
+              <span>{{ (item.totalTokens || 0).toLocaleString() }}</span>
+              <span>{{ Number(item.cost || 0).toFixed(4) }}</span>
+            </div>
+          </div>
+
+          <div v-if="ops.usage.byModel?.length" class="ops-table reveal">
+            <h4>按模型</h4>
+            <div class="ops-row ops-row-head">
+              <span>模型</span><span>调用</span><span>Tokens</span><span>成本</span>
+            </div>
+            <div v-for="item in ops.usage.byModel" :key="item.key" class="ops-row">
+              <span class="mono">{{ item.key }}</span>
+              <span>{{ item.calls }}</span>
+              <span>{{ (item.totalTokens || 0).toLocaleString() }}</span>
+              <span>{{ Number(item.cost || 0).toFixed(4) }}</span>
+            </div>
+          </div>
+
+          <p v-if="!ops.usage.calls" class="dim reveal">
+            这段时间没有调用记录。要注意「没有记录」与「成本为 0」是两件事：
+            前者是没人用，后者可能是**没填单价**。
+          </p>
+        </template>
+      </template>
 
       <template v-if="tab === TAB_PROVIDERS">
       <p class="lab-note reveal">
@@ -991,4 +1150,26 @@ async function applyModel(item) {
 .state-text{color:var(--ink-faint); font-size:13px; line-height:1.8}
 .state-action{border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit}
 .error-text{color:var(--rose)}
+/* ---- 运行状态 · 用量（第一优先，M12-S4）：沿用全局变量，只补排版 ---- */
+.ops-verdict{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:14px 0;
+  padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface)}
+.ops-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px; margin-top:14px}
+.ops-card{border:1px solid var(--line); border-radius:var(--r-md); padding:14px; background:var(--surface)}
+.ops-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
+.ops-state{font-family:var(--font-mono); font-size:10px; letter-spacing:.1em; padding:2px 8px;
+  border-radius:99px; background:var(--primary-soft); color:var(--ink-faint)}
+/* 三种状态要有可见差异：都长一样的话，「未配置」会被当成「已停用」 */
+.ops-card.is-configured .ops-state{background:rgba(90,220,190,.16); color:var(--teal)}
+.ops-card.is-disabled .ops-state{background:rgba(255,180,84,.16); color:var(--amber)}
+.ops-card.is-missing{border-style:dashed}
+.ops-stats{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; margin:14px 0}
+.ops-stat{border:1px solid var(--line); border-radius:var(--r-md); padding:12px 14px; background:var(--surface)}
+.ops-stat span{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:.12em; color:var(--ink-faint)}
+.ops-stat b{font-size:20px; font-weight:500}
+.ops-table{margin-top:18px}
+.ops-table h4{font-family:var(--font-mono); font-size:11px; letter-spacing:.2em; color:var(--ink-faint);
+  text-transform:uppercase; margin-bottom:8px}
+.ops-row{display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:10px; padding:7px 0;
+  border-bottom:1px dashed var(--line); font-size:13px}
+.ops-row-head{color:var(--ink-faint); font-family:var(--font-mono); font-size:10px; letter-spacing:.12em}
 </style>
