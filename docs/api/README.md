@@ -974,6 +974,43 @@ curl -s http://127.0.0.1:8080/ai/admin/trace/<traceId> -H "Authorization: <ADMIN
 | GET | `/health` | 简单健康检查（common-core 提供） |
 | GET | `/actuator/health` | Spring Boot 健康端点 |
 
+## 内部接口（`/internal/**`，不经网关）
+
+这些接口**只在内网可达**：网关没有任何路由匹配 `/internal/**`，所以从外面访问是 404。
+调用方是内网服务（当前只有 ai-service → content-service），**不要**给它们配置网关路由，
+也不要指望它们经过 Sa-Token —— 一旦被网关转发，这就是一个无鉴权的数据口子。
+
+### content-service（:8102）— RAG 语料
+
+知识库的「应该包含哪些内容」由 content-service 定义（**可见性规则只有这一份**）：
+文章取 `status=1`（0 草稿 / 1 已发布）；笔记取 `status=1` **且** `visibility='PUBLIC'`。
+**草稿与私有笔记在任何情况下都不会出现在这两个接口的返回里**（私有笔记只有作者本人可读，
+不得进知识库）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/internal/corpus` | 语料清单（**不含正文**）：`{items:[{kind,id,title,docHash,updatedAt}], truncated, limit, maxUpdatedAt}` |
+| GET | `/internal/corpus/{kind}/{id}` | 单篇正文（嵌入用）：`{kind,id,title,content,tags,docHash,updatedAt}`；草稿/私有/已删除一律 404 |
+
+`/internal/corpus` 查询参数：
+
+| 参数 | 说明 |
+|---|---|
+| `since` | ISO-8601（`2026-10-04T18:00:00`）。只返回该时间**之后**修改的（**严格大于**），用于游标续拉 |
+| `ids` | 如 `?ids=1,2,3`。注意文章与笔记 id 各自自增，这里是「两种 kind 里 id 命中的都要」；要精确定位用单篇接口 |
+| `limit` | 默认 500、上限 1000；传 0 或负数按默认值处理。`truncated=true` 时用返回的 `maxUpdatedAt` 作为下次的 `since` |
+
+```bash
+# 全量清单（本机直连，不经网关）
+curl -s "http://127.0.0.1:8102/internal/corpus?limit=500"
+# 取一篇正文（嵌入前拿内容）
+curl -s "http://127.0.0.1:8102/internal/corpus/post/1"
+```
+
+⚠️ `docHash` 是**整篇**（标题+正文）的 SHA-256，用途是「这篇有没有变」；
+它与索引 payload 里**每个子块**的 `contentHash`（Python 切块时算的，用途是「索引锚点还对得上原文吗」）
+**不是一回事**，不要互换使用。
+
 ## 数据库
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
