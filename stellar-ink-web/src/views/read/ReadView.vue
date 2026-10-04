@@ -220,6 +220,9 @@ function go(target) {
 /* ---- 知识条目（LLM Wiki，E4-3）----
  * 它们是**文章的增强**，不是文章本身：取不到时整块不出现，阅读不受影响（store 已静默降级）。
  * 每条都带原文片段 —— 这是 Wiki 与「模型写一段摘要」的区别，也是读者唯一能自行核对的东西。
+ *
+ * 「本文 N 条」直接用 `claims.length`，**不**再打 `/ai/wiki/claims/count`：
+ * 那一份数据刚刚已经完整取回来了，再发一次请求只是重复取数（而且两个数还可能不一致）。
  */
 const locateMissId = ref(null)
 
@@ -526,7 +529,7 @@ onUnmounted(() => {
         >
           <template v-if="wikiStore.hasClaims">
             <div class="title-row">
-              <h3>知识条目</h3>
+              <h3>知识条目（{{ wikiStore.claims.length }}）</h3>
               <span class="kicker">WIKI · 每条都附原文片段</span>
             </div>
             <p class="wiki-hint">
