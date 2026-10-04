@@ -57,6 +57,19 @@ ENV_API_KEY = "QDRANT_API_KEY"
 ENV_COLLECTION = "QDRANT_COLLECTION"
 
 
+def _current_fingerprint() -> str | None:
+    """当前装配的嵌入模型指纹；取不到返回 None。
+
+    指纹只是护栏：它取不到（离线单测、Provider 未装配）时**不能**让存储层不可用，
+    所以这里吞掉异常并返回 None，由调用方决定「没有记录就放行」。
+    """
+    try:
+        from app.providers.runtime import fingerprint  # noqa: PLC0415 - 延迟导入避免环
+
+        return fingerprint()
+    except Exception:  # noqa: BLE001 - 护栏不该成为新的故障点
+        return None
+
 def point_id_for(chunk_id: str) -> int:
     """chunk_id → 稳定的 uint64 point id（幂等写入的基础）。"""
     if not chunk_id:
@@ -212,12 +225,57 @@ class QdrantVectorStore:
 
         payload 直接沿用 `Chunk.to_payload()`（锚点、章节路径、内容哈希都在里面），
         不在这里另写一套字段：写库与引用定位必须是同一份元数据。
+
+        另外补一个 `modelFingerprint`：**这条向量是哪个嵌入模型建的**。
+        没有它，换模型之后检索不会报错 —— 只会静静地返回错的结果
+        （向量不在同一空间，相似度毫无意义），那是「链路全对、结果全错」里最难查的一种。
+        **取不到指纹就不写这个字段**（例如离线单测里没有装配 Provider）：护栏不该
+        把「能不能写库」也一起挡掉。
         """
+        payload = dict(chunk.payload)
+        current = _current_fingerprint()
+        if current:
+            payload["modelFingerprint"] = current
         return VectorPoint(
             chunk_id=chunk.chunk_id,
             post_id=chunk.post_id,
             vector=list(vector),
-            payload=dict(chunk.payload),
+            payload=payload,
+        )
+
+    async def sample_model_fingerprint(self) -> str | None:
+        """随便取一条已索引的点，读出它的 `modelFingerprint`。
+
+        :return 指纹；**索引为空时返回 None**（那是「还没建」，不是「不一致」）。
+        """
+        payload = await self._request(
+            "POST",
+            f"{_COLLECTIONS}/{self._config.collection}{_SCROLL_PATH}",
+            json={"limit": 1, "with_payload": True, "with_vector": False},
+        )
+        points = payload.get("result", {}).get("points", [])
+        if not points:
+            return None
+        return points[0].get("payload", {}).get("modelFingerprint") or None
+
+    async def assert_model_fingerprint(self, expected: str | None = None) -> str | None:
+        """校验「库里的向量是不是当前这个嵌入模型建的」。
+
+        - 索引为空 / 旧数据没有这个字段 → 放行（`None`）：不能因为「没记录」就挡住写入；
+        - 有记录且与当前不一致 → **抛错**，让人去重建索引，而不是拿错的结果回答用户。
+
+        :raises ProviderError: 指纹不一致（换模型必须整库重建）
+        """
+        from app.providers.errors import ProviderError  # noqa: PLC0415 - 同上的延迟导入
+
+        want = expected if expected is not None else _current_fingerprint()
+        actual = await self.sample_model_fingerprint()
+        if actual is None or want is None or actual == want:
+            return actual
+        raise ProviderError(
+            f"索引里的向量是用另一个嵌入模型建的（库里 {actual} / 当前 {want}）："
+            "换嵌入模型必须整库重建，否则检索结果没有意义"
+            "（调 POST /admin/index/rebuild 全量重建，或 ai-service 的 /ai/admin/index/rebuild）"
         )
 
     async def health(self) -> dict[str, Any]:
