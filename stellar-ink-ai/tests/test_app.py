@@ -75,6 +75,8 @@ async def test_unknown_path_is_401_without_signature(client: httpx.AsyncClient) 
 #: 「它确实该暴露、且已经写进 docs/api/README.md」，而不是顺手加一个接口。
 EXPOSED_PATHS = {
     "/health",
+    # 索引重建（M4 遗留缺口补齐）：受内部签名保护，对外由 ai-service 的 ADMIN 门槛转发
+    "/index/rebuild",
     # 评测台（C 阶段）：受内部签名保护，对外由 ai-service 的 ADMIN 门槛转发
     "/eval/datasets",
     "/eval/strategies",
@@ -108,7 +110,7 @@ EXPOSED_PATHS = {
 def test_exposed_paths_are_the_intended_whitelist(app: FastAPI) -> None:
     """公开路由白名单：探活 + 评测接口（非生产另有内部签名自检）。
 
-    问答 / 写作建议 / 索引 / MCP 接口分别属于 D、B、E3 阶段，出现即说明越界开发
+    问答 / 写作建议 / 索引 / MCP 接口分别属于 D、B、E3 阶段；它们如今都已实现，
     （docs/ai/development-workflow.md §7.6：新接口先写进 docs/api 再实现）。
     用 OpenAPI schema 判断而不是遍历内部路由对象，避免绑定框架内部结构。
     """
