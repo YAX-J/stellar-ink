@@ -105,6 +105,16 @@ public interface PythonAiClient {
             produces = MediaType.APPLICATION_JSON_VALUE)
     IndexJobDTO rebuildIndex(@RequestBody IndexRebuildRequestDTO request);
 
+    /**
+     * 触发一次**对账式增量索引**：只重嵌变了的、删掉语料里已经没有的（ADMIN）。
+     *
+     * <p>返回的是各计数（不变/重嵌/删除/写入子块/嵌入调用数）。⚠️ 同步执行完才返回。
+     */
+    @PostMapping(
+            value = AiContractPaths.INDEX_RECONCILE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    Map<String, Object> reconcileIndex();
+
     /** 查询索引任务状态（ADMIN）。 */
     @GetMapping(value = AiContractPaths.INDEX_JOB, produces = MediaType.APPLICATION_JSON_VALUE)
     IndexJobDTO indexJob(@PathVariable("id") String jobId);

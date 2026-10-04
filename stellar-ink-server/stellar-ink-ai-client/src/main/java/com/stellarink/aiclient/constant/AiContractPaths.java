@@ -31,6 +31,8 @@ public final class AiContractPaths {
 
     /** 查询索引任务状态（{id} 由调用方拼接） */
     public static final String INDEX_JOB = "/admin/jobs/{id}";
+    /** 对账式增量索引（只重嵌变了的、删掉没了的）。 */
+    public static final String INDEX_RECONCILE = "/admin/index/reconcile";
 
     /** 可评测的数据集清单（评测台下拉框） */
     public static final String EVAL_DATASETS = "/eval/datasets";
