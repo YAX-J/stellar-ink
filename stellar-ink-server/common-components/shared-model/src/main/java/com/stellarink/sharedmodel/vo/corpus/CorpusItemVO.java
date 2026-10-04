@@ -23,6 +23,12 @@ public class CorpusItemVO {
 
     private String title;
 
+    /** 标签原文（逗号分隔，可能为空）。写作画像要用它，所以清单也得带。 */
+    private String tags;
+
+    /** 作者 id。写作画像是**按作者取样**的，投影必须能拿到它。 */
+    private Long authorId;
+
     /**
      * **整篇**内容哈希（标题 + 正文的 SHA-256，见 {@code com.stellarink.common.util.Hashes#docHash}）。
      *

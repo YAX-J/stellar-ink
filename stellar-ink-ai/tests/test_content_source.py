@@ -20,7 +20,7 @@ from app.rag.content_source import CorpusSourceUnavailable, SnapshotDoc
 def test_plain_keeps_markdown_verbatim() -> None:
     """正文里的 `\\n` 与单引号必须原样保留（不能像种子包那样反转义）。"""
     raw = "代码块：\n```python\nprint('a')\n```\n字面量：\\\\n 和 两个单引号 ''"
-    doc = SnapshotDoc(post_id=1, title="标题", content=raw, tags=[])
+    doc = SnapshotDoc(post_id=1, title="标题", content=raw, tags=["写作"])
 
     assert doc.plain == raw
     assert "\\\\n" in doc.plain

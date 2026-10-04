@@ -212,6 +212,9 @@ class CorpusSyncServiceImplTest {
         ArgumentCaptor<AiContentSnapshot> captor = ArgumentCaptor.forClass(AiContentSnapshot.class);
         verify(mapper).insert(captor.capture());
         assertThat(captor.getValue().getContent()).isEqualTo("正文-1");
+        // 写作画像要用 tags 与 author_id：投影漏了它们，切换来源时会在运行时炸
+        assertThat(captor.getValue().getTags()).isEqualTo("写作,效率");
+        assertThat(captor.getValue().getAuthorId()).isEqualTo(7L);
     }
 
     @Test
@@ -289,6 +292,8 @@ class CorpusSyncServiceImplTest {
         item.setId(id);
         item.setTitle(title);
         item.setDocHash(docHash);
+        item.setTags("写作,效率");
+        item.setAuthorId(7L);
         item.setUpdatedAt(LocalDateTime.of(2026, 10, 4, 10, 0));
         return item;
     }

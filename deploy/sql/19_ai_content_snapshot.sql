@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS `ai_content_snapshot`
     `content_id`  BIGINT       NOT NULL COMMENT '该种类下的主键（post.id 或 note.id）',
     `title`       VARCHAR(255) NOT NULL DEFAULT '' COMMENT '标题（清单用，避免为了显示标题再回查上游）',
     `content`     MEDIUMTEXT   NULL COMMENT '正文（Markdown 原文）。必须存：Python 只允许读 ai_* 表，没有别的途径拿到正文',
+    `tags`        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '标签原文（逗号分隔）：写作画像要用',
+    `author_id`   BIGINT       NOT NULL DEFAULT 0 COMMENT '作者 id：写作画像按作者取样要用',
     `doc_hash`    CHAR(64)     NOT NULL COMMENT '整篇（标题+正文）SHA-256：判断是否变更、是否需要重嵌',
     `word_count`  INT          NOT NULL DEFAULT 0 COMMENT '字数（上游清单暂未提供时为 0）',
     `updated_at`  DATETIME     NULL COMMENT '上游的最后修改时间（增量拉取的游标）',

@@ -109,6 +109,8 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
             if (changed) {
                 existing.setTitle(item.getTitle());
                 existing.setContent(content);
+                existing.setTags(item.getTags());
+                existing.setAuthorId(item.getAuthorId());
                 existing.setDocHash(item.getDocHash());
                 existing.setUpdatedAt(item.getUpdatedAt());
                 existing.setSyncedAt(startedAt);
@@ -227,6 +229,8 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
         row.setContentId(item.getId());
         row.setTitle(item.getTitle());
         row.setContent(content);
+        row.setTags(item.getTags());
+        row.setAuthorId(item.getAuthorId());
         row.setDocHash(item.getDocHash());
         row.setWordCount(0);
         row.setUpdatedAt(item.getUpdatedAt());

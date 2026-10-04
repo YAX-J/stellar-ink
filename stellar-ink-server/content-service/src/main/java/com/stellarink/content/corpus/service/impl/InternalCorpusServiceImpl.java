@@ -59,9 +59,9 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
 
         List<CorpusItemVO> merged = new ArrayList<>(posts.size() + notes.size());
         posts.forEach(post -> merged.add(toItem(CorpusKind.POST, post.getId(), post.getTitle(),
-                post.getContent(), post.getUpdatedAt())));
+                post.getContent(), post.getTags(), post.getUserId(), post.getUpdatedAt())));
         notes.forEach(note -> merged.add(toItem(CorpusKind.NOTE, note.getId(), note.getTitle(),
-                note.getContent(), note.getUpdatedAt())));
+                note.getContent(), note.getTags(), note.getUserId(), note.getUpdatedAt())));
         merged.sort(Comparator
                 .comparing(CorpusItemVO::getUpdatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
                 .thenComparing(CorpusItemVO::getId));
@@ -133,11 +133,13 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
     }
 
     private CorpusItemVO toItem(CorpusKind kind, Long id, String title, String content,
-                                LocalDateTime updatedAt) {
+                                String tags, Long authorId, LocalDateTime updatedAt) {
         CorpusItemVO item = new CorpusItemVO();
         item.setKind(kind);
         item.setId(id);
         item.setTitle(title);
+        item.setTags(tags);
+        item.setAuthorId(authorId);
         item.setDocHash(Hashes.docHash(title, content));
         item.setUpdatedAt(updatedAt);
         return item;
