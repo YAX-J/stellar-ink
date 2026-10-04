@@ -4,6 +4,7 @@
 -- 生产仍由 deploy/sql 下的脚本建表，这里只为让测试能真的读写配置。
 
 CREATE TABLE IF NOT EXISTS `ai_provider_config` (
+    `user_id` BIGINT NOT NULL DEFAULT 0,
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `role` VARCHAR(32) NOT NULL,
     `model_id` BIGINT DEFAULT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS `ai_provider_config` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_role` (`role`)
+    UNIQUE KEY `uk_user_role` (`user_id`, `role`)
 );
 
 CREATE TABLE IF NOT EXISTS `ai_model` (

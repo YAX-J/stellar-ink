@@ -74,4 +74,17 @@ class SaTokenConfigureTest {
         assertThat(SaTokenConfigure.aiRequiresLogin("/ai/qa")).isFalse();
         assertThat(SaTokenConfigure.aiRequiresLogin(null)).isFalse();
     }
+
+    @Test
+    void shouldRequireLoginForPersonalModelConfig() {
+        // M12：读者/作者也能配自己的模型 → 只要求登录，**不卡角色**
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers")).isTrue();
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers/chat")).isTrue();
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers/chat/check")).isTrue();
+        // 相似前缀不能误判
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/mex")).isFalse();
+        // ⚠️ 它**不能**落进 ADMIN 前缀：那条的整个意义就是「不只是站长」。
+        // 真接错的表现是「读者点保存拿 403」，而权限配置看起来完全正常
+        assertThat(SaTokenConfigure.aiRequiresAdmin("/ai/me/providers")).isFalse();
+    }
 }
