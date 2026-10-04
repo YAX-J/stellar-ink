@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { AI_CAPABILITIES, AI_ROLES, useAiStore } from '@/stores/ai'
-import { RUNTIME_CAVEAT, useAiOpsStore } from '@/stores/aiOps'
+import { AUDIT_HINT, RUNTIME_CAVEAT, useAiOpsStore } from '@/stores/aiOps'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
 
@@ -18,7 +18,8 @@ const editing = ref('')
 const saving = ref(false)
 
 /**
- * 页签：`providers` 模型配置 / `eval` 评测台 / `ops` 运行状态 / `usage` 用量与成本。
+ * 页签：`providers` 模型配置 / `eval` 评测台 / `ops` 运行状态 / `usage` 用量与成本 /
+ * `retrieval` 检索与回放。
  * 状态写进 URL（`?tab=eval`）：刷新与分享链接后仍停在同一个页签，
  * 与「我的笔记 · 复核」视图的既有做法一致。
  *
@@ -29,11 +30,17 @@ const TAB_PROVIDERS = 'providers'
 const TAB_EVAL = 'eval'
 const TAB_OPS = 'ops'
 const TAB_USAGE = 'usage'
-const TAB_KEYS = [TAB_PROVIDERS, TAB_EVAL, TAB_OPS, TAB_USAGE]
+const TAB_RETRIEVAL = 'retrieval'
+const TAB_KEYS = [TAB_PROVIDERS, TAB_EVAL, TAB_OPS, TAB_USAGE, TAB_RETRIEVAL]
 const tab = ref(TAB_KEYS.includes(String(route.query.tab)) ? String(route.query.tab) : TAB_PROVIDERS)
 
 /** 用量窗口（天）：三档够用，不做自由输入框 —— 那是让人猜该填多少 */
 const USAGE_DAYS = [1, 7, 30]
+/** 审计窗口（天）：与用量分开 —— 「拒答率」要看更长窗口才有意义 */
+const AUDIT_DAYS = [1, 7, 30]
+
+/** traceId：支持从 URL 直接带进来（`?tab=retrieval&trace=xxx`），这是「报错 → 看回放」的入口 */
+const traceInput = ref(String(route.query.trace || ''))
 
 watch(tab, (value) => {
   const query = { ...route.query }
@@ -43,6 +50,7 @@ watch(tab, (value) => {
   if (value === TAB_EVAL) ensureEvalMeta()
   if (value === TAB_OPS) loadOps()
   if (value === TAB_USAGE) loadUsage()
+  if (value === TAB_RETRIEVAL) loadRetrieval()
 })
 
 /** 运行状态：配置列表 + Python 探活。失败不弹全局 toast（面板内自己说，可重试）。 */
@@ -53,6 +61,16 @@ function loadOps() {
 /** 用量：默认 7 天窗口 */
 function loadUsage(days) {
   ops.loadUsage(days).catch(() => {})
+}
+
+/** 检索与回放：审计汇总 +（若 URL 带了 trace）那一次的回放 */
+function loadRetrieval(days) {
+  ops.loadAudit(days).catch(() => {})
+  if (traceInput.value.trim()) ops.loadTrace(traceInput.value).catch(() => {})
+}
+
+function submitTrace() {
+  ops.loadTrace(traceInput.value).catch(() => {})
 }
 
 /* 表单是「按角色」的：切换角色时把已存配置或预设填进去，避免手抄一遍端点与模型名 */
@@ -492,6 +510,12 @@ async function applyModel(item) {
         >
           用量与成本
         </button>
+        <button
+          class="lab-tab" :class="{ on: tab === TAB_RETRIEVAL }"
+          type="button" @click="tab = TAB_RETRIEVAL"
+        >
+          检索与回放
+        </button>
       </div>
 
       <!-- 运行状态（第一优先）：回答「我配的模型到底生效了没有」。
@@ -613,6 +637,107 @@ async function applyModel(item) {
             前者是没人用，后者可能是**没填单价**。
           </p>
         </template>
+      </template>
+
+      <!-- 检索与回放（第二优先）：上面是趋势（拒答率/失败率/复现问题），下面是单次回放 -->
+      <template v-if="tab === TAB_RETRIEVAL">
+        <div class="ops-verdict reveal">
+          <span class="dim">审计窗口</span>
+          <button
+            v-for="days in AUDIT_DAYS" :key="days"
+            class="lab-tab" :class="{ on: ops.auditDays === days }"
+            type="button" @click="loadRetrieval(days)"
+          >
+            最近 {{ days }} 天
+          </button>
+          <button class="state-action" type="button" @click="loadRetrieval()">刷新</button>
+        </div>
+
+        <p v-if="ops.auditLoading" class="state-text">正在汇总…</p>
+        <!-- ⚠️ 读不出来 ≠ 没人用过：审计表没建时也是「读不出来」 -->
+        <p v-else-if="ops.auditFailed" class="state-text error-text">
+          {{ ops.auditError }}
+          <button class="state-action" type="button" @click="loadRetrieval()">重试</button>
+          <br />{{ AUDIT_HINT }}
+        </p>
+
+        <template v-else-if="ops.audit">
+          <div class="ops-stats reveal">
+            <div class="ops-stat"><span>检索次数</span><b>{{ ops.audit.total || 0 }}</b></div>
+            <div class="ops-stat">
+              <span>拒答率</span>
+              <b>{{ ops.auditRefusalRate === null ? '—' : `${(ops.auditRefusalRate * 100).toFixed(1)}%` }}</b>
+            </div>
+            <div class="ops-stat">
+              <span>失败率</span>
+              <b>{{ ops.auditFailureRate === null ? '—' : `${(ops.auditFailureRate * 100).toFixed(1)}%` }}</b>
+            </div>
+          </div>
+
+          <!-- 后端把「这段时间没有记录」与「表还没建」两种可能都写在 notes 里，照实显示 -->
+          <p v-for="(note, i) in ops.audit.notes || []" :key="i" class="dim reveal">{{ note }}</p>
+
+          <div v-if="ops.auditTopPosts.length" class="ops-table reveal">
+            <h4>被引用最多的文章</h4>
+            <div v-for="item in ops.auditTopPosts" :key="item.raw" class="ops-row ops-row-two">
+              <RouterLink class="mono" :to="`/read/${item.postId}`">#{{ item.postId }}</RouterLink>
+              <span>{{ item.count }} 次</span>
+            </div>
+          </div>
+
+          <div v-if="ops.auditRepeatQuestions.length" class="ops-table reveal">
+            <h4>被反复问的问题</h4>
+            <p class="dim">
+              审计**不存问题原文**（问题里可能含个人信息），所以这里只有哈希。
+              要看他到底问了什么，用状态栏那次报错里的 traceId 到下面回放里查。
+            </p>
+            <div v-for="item in ops.auditRepeatQuestions" :key="item.hash" class="ops-row ops-row-two">
+              <span class="mono" :title="item.hash">{{ item.hash.slice(0, 16) }}…</span>
+              <span>{{ item.count }} 次</span>
+            </div>
+          </div>
+        </template>
+
+        <!-- 单次回放：调用账（数据库，跨副本）+ 检索事件（Python 进程内） -->
+        <div class="ops-table reveal" style="margin-top:28px">
+          <h4>链路回放</h4>
+          <p class="dim">
+            粘贴一条 traceId（报错提示里可以复制）。**调用账来自数据库**（跨副本、持久），
+            「检索候选」来自 Python 进程内缓冲 —— 多副本时可能落在别的副本上。
+          </p>
+          <form class="trace-form" @submit.prevent="submitTrace">
+            <input v-model.trim="traceInput" placeholder="例如 3f9a1c2b4d5e6f70" />
+            <button class="btn" type="submit" :disabled="ops.traceLoading">
+              {{ ops.traceLoading ? '查询中…' : '查看回放' }}
+            </button>
+          </form>
+          <p v-if="ops.traceError" class="msg err">{{ ops.traceError }}</p>
+
+          <template v-if="ops.trace">
+            <div v-if="ops.traceCalls.length" class="ops-table">
+              <h4>调用账（{{ ops.traceCalls.length }}）</h4>
+              <div class="ops-row ops-row-trace ops-row-head">
+                <span>场景</span><span>模型</span><span>耗时</span><span>Tokens</span><span>结果</span>
+              </div>
+              <div v-for="call in ops.traceCalls" :key="call.id" class="ops-row ops-row-trace">
+                <span class="mono">{{ call.scene }}</span>
+                <span class="mono">{{ call.model }}</span>
+                <span>{{ call.latencyMs }}ms</span>
+                <span>{{ call.totalTokens || 0 }}</span>
+                <span :class="call.success ? '' : 'error-text'">
+                  {{ call.success ? '成功' : `失败${call.errorCode ? ` · ${call.errorCode}` : ''}` }}
+                </span>
+              </div>
+            </div>
+            <p v-else class="dim">这条 traceId 在调用账里没有记录（可能不在保留期内）。</p>
+
+            <!-- ⚠️ 查不到回放**不能**说成「这次调用不存在」：回放是进程内的，多副本会落别处 -->
+            <p v-if="ops.traceHasReplay" class="dim">
+              检索候选：{{ ops.traceEvents.length }} 条事件。
+            </p>
+            <p v-else class="msg err">{{ ops.traceMissReason }}</p>
+          </template>
+        </div>
       </template>
 
       <template v-if="tab === TAB_PROVIDERS">
@@ -1172,4 +1297,9 @@ async function applyModel(item) {
 .ops-row{display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:10px; padding:7px 0;
   border-bottom:1px dashed var(--line); font-size:13px}
 .ops-row-head{color:var(--ink-faint); font-family:var(--font-mono); font-size:10px; letter-spacing:.12em}
+.ops-row-two{grid-template-columns:2fr 1fr}
+.ops-row-trace{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
+.trace-form{display:flex; gap:10px; margin:10px 0; flex-wrap:wrap}
+.trace-form input{flex:1 1 260px; min-width:0; padding:9px 12px; background:transparent;
+  border:1px solid var(--line); border-radius:var(--r-md); color:var(--ink); font:inherit}
 </style>
