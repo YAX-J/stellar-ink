@@ -5,7 +5,6 @@
 #    this machine), and the mis-decoded Chinese comments then swallow line breaks
 #    - the parser reports a bogus "unexpected }" and the script refuses to run.
 #    Measured: same bytes without BOM -> parse error at line 75; with BOM -> fine.
-#    (Kept bilingual on purpose: this warning is the thing a future editor must see.)
 #
 # 用途：start-all.bat 在 SHOW_LOGS=1 模式下结束时调用它，把 4 个 java 服务 +
 # python 的日志**汇总到同一个终端**，每行带服务前缀与颜色。
@@ -14,13 +13,20 @@
 # stdout 会变成**无前缀的交错文本**（5 个 JVM 同时启动时基本没法读）。所以走
 # 「服务写文件 + 这里 tail」这条路：既有前缀，又不丢文件日志。
 #
+# ⚠️ **按目录发现文件，不写死文件名**（这是踩过的一课）：
+#    第一版把 java 日志名写成 `user-service.log`（按 artifactId 猜），而 logback 里
+#    `APP_NAME` 是硬编码的 **`user_service`**（下划线）—— 于是它**建了 4 个空文件**
+#    在那儿盯着，真实日志在别的文件里，表现就是「跟随窗口一片空白，看起来服务没起来」，
+#    而服务其实全是 UP。现在改成：扫 logs\*_service.log（排除滚动文件）+ ai_python.log，
+#    并且**等文件出现再挂上去**，所以文件名再变也不会静默失联。
+#
 # 三条约定：
-#   1. **Ctrl+C 只停止跟随，不停服务** —— 服务是 javaw / cmd 起的独立进程，
-#      关掉这个终端它们照样跑；要停服务请用 stop-all.bat。
+#   1. **Ctrl+C 只停止跟随，不停服务** —— 服务是 start 起的独立进程；
+#      要停服务请用 stop-all.bat。
 #   2. 文件按**行**读（logback 立即刷盘、python 端设了 PYTHONUNBUFFERED），
 #      所以看到的就是实时的；用 -Encoding UTF8 读，中文不会乱码。
-#   3. 文件还不存在就**先建空文件**（服务启动需要几十秒）：否则 Get-Content -Wait
-#      会直接报错退出，而这恰恰是最需要看日志的那段时间。
+#   3. 文件还没出现就**等着**（服务启动要几十秒，那正是最需要看日志的时候），
+#      但**绝不预先创建文件** —— 造出空文件只会让「跟随成功」变成假象。
 
 param(
     [Parameter(Mandatory = $true)][string]$LogDir,
@@ -31,50 +37,76 @@ $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $OutputEncoding = [Text.Encoding]::UTF8
 
-# 顺序 = 打印顺序（网关放最前：503 这类问题先看它）
-$logs = [ordered]@{
-    'gateway' = @{ file = 'gateway-nacos-sentinel.log'; color = 'Cyan' }
-    'user'    = @{ file = 'user-service.log';           color = 'Green' }
-    'content' = @{ file = 'content-service.log';        color = 'Magenta' }
-    'ai'      = @{ file = 'ai-service.log';             color = 'Yellow' }
-    'python'  = @{ file = 'ai_python.log';              color = 'Gray' }
+# 固定颜色（前缀 -> 颜色）；没列到的服务按后面的调色板轮着来，
+# 这样将来加服务也能自动被跟随，不需要改这个脚本。
+$knownColors = @{
+    'gateway' = 'Cyan'
+    'user'    = 'Green'
+    'content' = 'Magenta'
+    'ai'      = 'Yellow'
+    'python'  = 'Gray'
+}
+$palette = @('White', 'DarkCyan', 'DarkGreen', 'DarkMagenta', 'DarkYellow', 'Blue')
+$paletteIndex = 0
+
+function Get-LogPrefix([string]$fileName) {
+    $name = $fileName -replace '\.log$', ''
+    if ($name -eq 'ai_python') { return 'python' }
+    if ($name -match '_service$') { return ($name -replace '_service$', '') }
+    return $name
+}
+
+function Get-LogColor([string]$prefix) {
+    if ($knownColors.ContainsKey($prefix)) { return $knownColors[$prefix] }
+    $script:paletteIndex = ($script:paletteIndex + 1) % $palette.Count
+    return $palette[$script:paletteIndex]
+}
+
+# 滚动归档（app.2026-09-25.0.log）不算「当前日志」：跟它会看到去年的内容
+$rolledPattern = '\d{4}-\d{2}-\d{2}\.\d+\.log$'
+
+function Find-CurrentLogs([string]$dir) {
+    if (-not (Test-Path -LiteralPath $dir)) { return @() }
+    Get-ChildItem -LiteralPath $dir -File -Filter '*.log' |
+        Where-Object { $_.Name -notmatch $rolledPattern } |
+        Where-Object { $_.Name -eq 'ai_python.log' -or $_.Name -match '_service\.log$' } |
+        Sort-Object Name |
+        Select-Object -ExpandProperty FullName
 }
 
 if (-not (Test-Path -LiteralPath $LogDir)) {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 }
-foreach ($entry in $logs.Values) {
-    $path = Join-Path $LogDir $entry.file
-    if (-not (Test-Path -LiteralPath $path)) {
-        New-Item -ItemType File -Force -Path $path | Out-Null
-    }
-}
-
-$jobs = foreach ($name in $logs.Keys) {
-    $path = Join-Path $LogDir $logs[$name].file
-    Start-Job -Name $name -ScriptBlock {
-        param($p, $n, $t)
-        Get-Content -LiteralPath $p -Encoding UTF8 -Tail $t -Wait |
-            ForEach-Object { "[$n] $_" }
-    } -ArgumentList $path, $name, $Tail
-}
 
 Write-Host ''
-Write-Host '==== following all 5 logs in this window ====' -ForegroundColor White
-Write-Host '  prefix colors: gateway=cyan user=green content=magenta ai=yellow python=gray' -ForegroundColor DarkGray
+Write-Host '==== following the service logs in this window ====' -ForegroundColor White
+Write-Host '  java: logs\*_service.log   +   python: logs\ai_python.log' -ForegroundColor DarkGray
 Write-Host '  Ctrl+C stops FOLLOWING only - the services keep running.' -ForegroundColor DarkGray
 Write-Host '  stop everything: stop-all.bat' -ForegroundColor DarkGray
 Write-Host ''
 
+$jobs = @{}   # 完整路径 -> job
 try {
     while ($true) {
-        foreach ($job in $jobs) {
+        # 1) 发现新出现的日志文件并挂上跟随（服务启动期间会陆续出现）
+        foreach ($path in Find-CurrentLogs $LogDir) {
+            if ($jobs.ContainsKey($path)) { continue }
+            $prefix = Get-LogPrefix (Split-Path $path -Leaf)
+            $jobs[$path] = Start-Job -Name $prefix -ScriptBlock {
+                param($p, $n, $t)
+                Get-Content -LiteralPath $p -Encoding UTF8 -Tail $t -Wait |
+                    ForEach-Object { "[$n] $_" }
+            } -ArgumentList $path, $prefix, $Tail
+            Write-Host "  (attached to $(Split-Path $path -Leaf))" -ForegroundColor DarkGray
+        }
+
+        # 2) 把每个 job 的新行打出来
+        foreach ($path in @($jobs.Keys)) {
+            $job = $jobs[$path]
             $lines = Receive-Job -Job $job -ErrorAction SilentlyContinue
             if ($lines) {
-                $color = $logs[$job.Name].color
-                foreach ($line in $lines) {
-                    Write-Host $line -ForegroundColor $color
-                }
+                $color = Get-LogColor $job.Name
+                foreach ($line in $lines) { Write-Host $line -ForegroundColor $color }
             }
         }
         Start-Sleep -Milliseconds 250
@@ -82,7 +114,7 @@ try {
 }
 finally {
     # Ctrl+C / 终端关闭：把后台 job 收干净，别留下隐藏的 powershell 子进程
-    foreach ($job in $jobs) {
+    foreach ($job in $jobs.Values) {
         Stop-Job -Job $job -ErrorAction SilentlyContinue
         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
