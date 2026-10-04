@@ -42,6 +42,17 @@ export const RUNTIME_CAVEAT =
   '这里显示的是「面板里配了 + Python 进程可达」。它**不证明** Python 真的装配了这份配置 —— ' +
   '那要等一次真实调用；下面的「连通性自检」也只验证端点 TCP 可达，不验证模型名与密钥。'
 
+/**
+ * 审计读不出来时给的**静态**可操作提示。
+ *
+ * ⚠️ 为什么不靠后端那句 msg：前端 `api/client.js` 对 **5xx 会丢弃后端 msg**
+ * （统一成「星笺暂时无法响应」），所以「表不存在」这类细节根本到不了界面。
+ * 而这个面板最常见的失败原因就是**审计表没建**，提示必须是界面自己带的。
+ * （原本我写了一条「断言 error.message 里有表名」的用例，那是错的假设 —— 已改。）
+ */
+export const AUDIT_HINT =
+  '读不出来最常见的原因是审计表还没建：确认 deploy/sql/17_ai_retrieval_audit.sql 是否已执行。'
+
 export const useAiOpsStore = defineStore('aiOps', {
   state: () => ({
     providers: {},
@@ -58,6 +69,20 @@ export const useAiOpsStore = defineStore('aiOps', {
     usageError: '',
     /** Python 探活失败与「面板读不到」是两件事，分开记 */
     healthFailed: false,
+
+    /* ---- 检索审计（第二优先）：趋势 ---- */
+    audit: null,
+    auditDays: 7,
+    auditLoading: false,
+    auditFailed: false,
+    auditError: '',
+
+    /* ---- 链路回放（第二优先）：单次 ---- */
+    trace: null,
+    traceId: '',
+    traceLoading: false,
+    traceFailed: false,
+    traceError: '',
   }),
 
   getters: {
@@ -120,6 +145,57 @@ export const useAiOpsStore = defineStore('aiOps', {
       const calls = state.usage?.calls || 0
       if (!calls) return null
       return (state.usage.failedCalls || 0) / calls
+    },
+
+    /* ---- 检索审计（第二优先）---- */
+
+    /** 拒答率与失败率**分开**：前者是语料没覆盖（该补文章），后者是链路坏了（该查服务） */
+    auditRefusalRate: (state) => {
+      const total = state.audit?.total || 0
+      if (!total) return null
+      return (state.audit.refused || 0) / total
+    },
+
+    auditFailureRate: (state) => {
+      const total = state.audit?.total || 0
+      if (!total) return null
+      return (state.audit.failed || 0) / total
+    },
+
+    /** 命中文章 Top：**JSON 里 Map<Long,…> 的键是字符串**，这里统一成数字并保底 */
+    auditTopPosts: (state) => {
+      const raw = state.audit?.topPosts || {}
+      return Object.entries(raw).map(([key, count]) => {
+        const id = Number(key)
+        return { postId: Number.isFinite(id) ? id : key, count, raw: key }
+      })
+    },
+
+    /** 被反复问的问题：审计**不存问题原文**，所以只有哈希 —— 界面必须解释这一点 */
+    auditRepeatQuestions: (state) => {
+      const raw = state.audit?.repeatQuestions || {}
+      return Object.entries(raw).map(([hash, count]) => ({ hash, count }))
+    },
+
+    /** 一条记录都没有：这**不能**推出「没人问过」——表还没建也会是这样（后端 notes 已说明） */
+    auditIsEmpty: (state) => Boolean(state.audit) && (state.audit.total || 0) === 0,
+
+    /* ---- 链路回放（第二优先）---- */
+
+    /** 调用账（来自数据库，跨副本、持久）——「这次到底发生过什么」的权威来源 */
+    traceCalls: (state) => state.trace?.calls || [],
+
+    /** 检索回放（来自 Python 进程内缓冲）：**查不到 ≠ 没发生过** */
+    traceEvents: (state) => state.trace?.events || [],
+
+    traceHasReplay: (state) => state.trace?.pythonFound === true,
+
+    /** 回放查不到的原因：区分「Python 不可达」与「这个副本上没有」 */
+    traceMissReason: (state) => {
+      if (!state.trace) return ''
+      if (state.trace.pythonAvailable === false) return 'Python 进程当前不可达，回放读不到'
+      // ⚠️ 措辞：不能说「这条链路不存在」—— 跨副本时它可能存在别的副本上（已知限制）
+      return '这个副本上没有这条回放（回放是进程内的，多副本时可能落在别处）—— 上面的调用账仍然有效'
     },
 
     /** 成本相关的两个「解释不了的钱」，界面必须单独提 */
@@ -198,6 +274,61 @@ export const useAiOpsStore = defineStore('aiOps', {
         return null
       } finally {
         this.usageLoading = false
+      }
+    },
+
+    /* ---- 检索审计（第二优先）：趋势 ---- */
+
+    /** 最近 N 天的审计汇总。**失败与「零记录」是两件事**：前者说「读不出来」，后者照实说。 */
+    async loadAudit(days) {
+      if (days) this.auditDays = days
+      this.auditLoading = true
+      this.auditError = ''
+      try {
+        const data = await request(`/ai/admin/retrieval-audit/summary?days=${this.auditDays}`, {
+          silent: true,
+        })
+        this.audit = data || null
+        this.auditFailed = false
+        return this.audit
+      } catch (error) {
+        // 最常见的原因就是**审计表还没建**（17_ai_retrieval_audit.sql 没执行）：
+        // 这时必须说「读不出来」，不能显示成一张「0 次检索」的空图 —— 那会被读成「没人用过」
+        this.audit = null
+        this.auditFailed = true
+        this.auditError = error.message
+        return null
+      } finally {
+        this.auditLoading = false
+      }
+    },
+
+    /* ---- 链路回放（第二优先）：单次 ---- */
+
+    /** 按 traceId 取回放：调用账（数据库）+ 检索事件（Python 进程内）。 */
+    async loadTrace(traceId) {
+      const id = String(traceId || '').trim()
+      this.traceId = id
+      if (!id) {
+        this.trace = null
+        this.traceError = '请粘贴 traceId（在报错提示里可以复制）'
+        this.traceFailed = false
+        return null
+      }
+      this.traceLoading = true
+      this.traceError = ''
+      try {
+        const data = await request(`/ai/admin/trace/${encodeURIComponent(id)}`, { silent: true })
+        this.trace = data || null
+        this.traceFailed = false
+        return this.trace
+      } catch (error) {
+        this.trace = null
+        this.traceFailed = true
+        this.traceError = error.message
+        return null
+      } finally {
+        this.traceLoading = false
       }
     },
   },

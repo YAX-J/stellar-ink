@@ -25,6 +25,8 @@ const calls = []
 let nextProviders = { status: 200, payload: { code: 0, data: [] } }
 let nextHealth = { status: 200, payload: { code: 0, data: { available: true, reason: '' } } }
 let nextUsage = { status: 200, payload: { code: 0, data: null } }
+let nextAudit = { status: 200, payload: { code: 0, data: null } }
+let nextTrace = { status: 200, payload: { code: 0, data: null } }
 
 const reply = (status, payload) => ({
   ok: status >= 200 && status < 300,
@@ -39,6 +41,8 @@ globalThis.fetch = async (url, init = {}) => {
   if (path.startsWith('/ai/admin/providers')) return reply(nextProviders.status, nextProviders.payload)
   if (path.startsWith('/ai/health')) return reply(nextHealth.status, nextHealth.payload)
   if (path.startsWith('/ai/admin/usage/summary')) return reply(nextUsage.status, nextUsage.payload)
+  if (path.startsWith('/ai/admin/retrieval-audit/summary')) return reply(nextAudit.status, nextAudit.payload)
+  if (path.startsWith('/ai/admin/trace/')) return reply(nextTrace.status, nextTrace.payload)
   return reply(404, { code: 404, msg: `自检未覆盖的接口：${path}` })
 }
 
@@ -53,7 +57,9 @@ const server = await createServer({
   appType: 'custom',
   logLevel: 'error',
 })
-const { useAiOpsStore, AI_ROLE_ORDER, RUNTIME_CAVEAT } = await server.ssrLoadModule('/src/stores/aiOps.js')
+const { useAiOpsStore, AI_ROLE_ORDER, RUNTIME_CAVEAT, AUDIT_HINT } = await server.ssrLoadModule(
+  '/src/stores/aiOps.js',
+)
 setActivePinia(createPinia())
 const ops = useAiOpsStore()
 
@@ -180,6 +186,157 @@ nextUsage = { status: 500, payload: { code: 500, msg: '服务繁忙' } }
 await ops.loadUsage()
 report(ops.usageFailed === true && ops.usage === null, '用量失败单独标记并清空')
 report(ops.usageError.length > 0, '失败原因留给界面显示与重试')
+
+/* ================= 第二优先：检索审计 + 链路回放 ================= */
+
+// —— 审计正常路径：拒答率与失败率**分开** ——
+nextAudit = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      days: 7,
+      total: 40,
+      refused: 10,
+      failed: 2,
+      refusalRate: 0.25,
+      failureRate: 0.05,
+      // ⚠️ Java 的 Map<Long,Integer> 序列化出来**键是字符串** —— 这里照真实形状给
+      topPosts: { '7': 5, '9': 2 },
+      repeatQuestions: { ['a'.repeat(64)]: 3 },
+      notes: ['10 次拒答（25.0%）—— 拒答率高说明语料没覆盖，不是链路坏了。'],
+    },
+  },
+}
+await ops.loadAudit(7)
+report(ops.audit.total === 40, '拿到审计汇总')
+report(ops.auditRefusalRate === 0.25 && ops.auditFailureRate === 0.05, '拒答率与失败率是两个数')
+report(
+  calls.some((item) => item === 'GET /ai/admin/retrieval-audit/summary?days=7'),
+  '窗口参数传下去了',
+)
+report(
+  ops.auditTopPosts.length === 2 && ops.auditTopPosts[0].postId === 7,
+  'Map 的字符串键被归一成文章 id（不归一的话 postId 会是 "7"，链接与比较都会错）',
+)
+report(
+  ops.auditRepeatQuestions[0].hash.length === 64 && ops.audit.notes.length > 0,
+  '审计不存问题原文，界面只有哈希 —— 后端那句结论原样带回来显示',
+)
+
+// —— 零记录：**不能**推出「没人问过」（表还没建也会这样）——
+nextAudit = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      days: 7,
+      total: 0,
+      refused: 0,
+      failed: 0,
+      refusalRate: 0,
+      failureRate: 0,
+      topPosts: {},
+      repeatQuestions: {},
+      notes: ['这段时间没有检索记录（要么还没人问，要么审计表还没建）。'],
+    },
+  },
+}
+await ops.loadAudit()
+report(ops.auditIsEmpty === true, '零记录被识别为「空」状态')
+report(ops.auditRefusalRate === null, '零记录时拒答率是 null（0/40 与 0/0 不是一回事）')
+report(
+  ops.audit.notes[0].includes('审计表还没建'),
+  '后端把两种可能都说了出来，界面照实显示而不是画一张「0 次」的空图',
+)
+
+// —— 审计读不到（最常见：表没建）：说「读不出来」，不是「没人用过」——
+nextAudit = {
+  status: 500,
+  payload: { code: 500, msg: "Table 'stellar_ink.ai_retrieval_audit' doesn't exist" },
+}
+await ops.loadAudit()
+report(ops.auditFailed === true && ops.audit === null, '审计读不到单独标记为失败')
+report(ops.auditError.length > 0, '失败原因留给界面显示与重试')
+// ⚠️ 这条最初写成「断言 error.message 里有表名」—— **那是错的假设**：
+// `api/client.js` 对 5xx 会丢弃后端 msg（统一成「星笺暂时无法响应」），
+// 表名根本到不了界面。所以提示必须是界面自带的一条静态指引，断言也改成盯它
+report(
+  AUDIT_HINT.includes('17_ai_retrieval_audit.sql'),
+  '审计失败时给出可操作提示（指出要执行哪个脚本），而不是只显示一句「服务繁忙」',
+)
+
+// —— 链路回放：调用账与检索回放是两份数据 ——
+nextTrace = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      traceId: 'abc123',
+      calls: [
+        { scene: 'qa', model: 'qwen-plus', latencyMs: 900, success: 1, totalTokens: 500 },
+        { scene: 'qa', model: 'text-embedding-v3', latencyMs: 40, success: 1, totalTokens: 20 },
+      ],
+      events: [{ kind: 'retrieval', candidates: 20 }],
+      pythonAvailable: true,
+      pythonFound: true,
+      notes: [],
+    },
+  },
+}
+await ops.loadTrace('abc123')
+report(ops.traceCalls.length === 2, '调用账有两条（来自数据库，跨副本、持久）')
+report(ops.traceHasReplay === true, '回放命中时标记为有')
+report(ops.traceEvents.length === 1, '检索事件单独一份')
+
+// —— pythonFound=false：**不能说「这条链路不存在」** ——
+nextTrace = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      traceId: 'abc123',
+      calls: [{ scene: 'qa', model: 'qwen-plus', success: 1 }],
+      events: [],
+      pythonAvailable: true,
+      pythonFound: false,
+      notes: [],
+    },
+  },
+}
+await ops.loadTrace('abc123')
+report(ops.traceHasReplay === false, '回放没命中')
+report(
+  ops.traceMissReason.includes('这个副本上') && !ops.traceMissReason.includes('不存在'),
+  '措辞是「这个副本上没有」而不是「不存在」—— 多副本时它可能在别处（已知限制）',
+)
+report(ops.traceCalls.length === 1, '回放没命中时调用账仍然显示（那才是权威来源）')
+
+// —— Python 不可达与「副本上没有」要分开说 ——
+nextTrace = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      traceId: 'abc123',
+      calls: [],
+      events: [],
+      pythonAvailable: false,
+      pythonFound: false,
+      notes: [],
+    },
+  },
+}
+await ops.loadTrace('abc123')
+report(ops.traceMissReason.includes('不可达'), 'Python 不可达时说的是「不可达」，不是「副本上没有」')
+
+// —— 空输入与失败 ——
+await ops.loadTrace('   ')
+report(ops.trace === null && ops.traceError.includes('traceId'), '空输入就地提示，不发请求')
+report(ops.traceFailed === false, '空输入不算「失败」')
+nextTrace = { status: 403, payload: { code: 403, msg: '没有权限' } }
+await ops.loadTrace('abc123')
+report(ops.traceFailed === true && ops.traceError.length > 0, '回放请求失败单独标记并留原因')
 
 if (failed > 0) {
   console.error(`\nAI 观测面自检失败 ${failed} 条`)
