@@ -313,6 +313,35 @@ curl -s -X POST http://127.0.0.1:8080/ai/admin/corpus/sync
 mysql -h 127.0.0.1 -uroot -p stellar_ink -e "SELECT kind, COUNT(*) FROM ai_content_snapshot GROUP BY kind"
 ```
 
+**索引重建（M4 遗留缺口的补齐）**
+
+把「语料真正嵌进向量库」这件事做成一个可调用的入口。此前契约齐全但两侧都没实现，
+所以索引从来没有被真正建过（`scripts/index_reconcile.py` 的提示还指过一个不存在的接口）。
+
+| 方法 | 路径 | 说明 | 角色 |
+|---|---|---|---|
+| POST | `/ai/admin/index/rebuild` | 重建向量索引：切块 → 嵌入 → 写 Qdrant。请求体可省略（= 全量重建），也可带 `kind=post_rebuild` + `postId`（单篇）与 `reason`（写进日志便于回溯） | ADMIN |
+
+⚠️ 三条必须知道的现实：
+
+1. **它是同步的**：Python 跑完才返回（没有任务队列）。语料几十篇时只花一次嵌入调用；
+   语料涨大后该做的是任务队列，而不是在这里加超时。
+2. **返回的 job 查不到历史**：契约里另有 `GET /admin/jobs/{id}`，本阶段未实现 ——
+   别拿这个 jobId 去查进度（查不到不等于任务丢了）。
+3. **Python 侧的内部路径是 `/admin/index/rebuild`**（不带 `/ai` 前缀）：Feign 客户端没有 path 前缀，
+   所以它请求的就是这个路径，必须与 `AiContractPaths.INDEX_REBUILD` 逐字一致 ——
+   写错一个字就是 404，而报出来的话会是「Python 不可用」。
+
+```bash
+# 全量重建（经网关，ADMIN）
+curl -s -X POST http://127.0.0.1:8080/ai/admin/index/rebuild
+# 单篇重建
+curl -s -X POST http://127.0.0.1:8080/ai/admin/index/rebuild \
+  -H "Content-Type: application/json" -d '{"kind":"post_rebuild","postId":1,"reason":"手工验证"}'
+# 看结果：测试机 Qdrant 的 dashboard
+#   http://124.221.158.32:6333/dashboard   → 集合 stellar_ink_chunks 应有点
+```
+
 **模型库与角色配置的分工（`deploy/sql/11_ai_model_library.sql`）**
 
 `ai_provider_config` 是 `UNIQUE KEY uk_role`（一个角色一行），所以「再加一个 chat 模型」
