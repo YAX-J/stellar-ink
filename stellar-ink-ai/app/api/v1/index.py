@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -137,7 +138,7 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
 
 
 @router.post("/admin/index/reconcile", summary="对账式增量索引（只重嵌变了的、删掉没了的）")
-async def reconcile_index() -> JSONResponse:
+async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断响应模型并报错
     """把「语料」与「索引里已有什么」对一次账，只做必要的事。
 
     为什么增量要靠**对账**而不是靠事件：事件会丢（服务重启、网络抖动、并发写），
@@ -188,18 +189,13 @@ async def reconcile_index() -> JSONResponse:
     finally:
         await store.aclose()
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "code": 0,
-            "message": "success",
-            "data": {
-                "unchanged": len(plan.unchanged),
-                "reembedded": report.posts,
-                "removed": len(plan.removed),
-                "chunksWritten": report.chunks,
-                "deletedPosts": report.deleted_posts,
-                "embedCalls": report.embed_calls,
-            },
-        },
-    )
+    # **裸数据**返回（与 /eval/* 等内部端点同形）：成功时不要再包一层 {code,message,data}，
+    # 否则 Java 侧拿到的是「壳里的壳」，面板与日志里都得再剥一次。
+    return {
+        "unchanged": len(plan.unchanged),
+        "reembedded": report.posts,
+        "removed": len(plan.removed),
+        "chunksWritten": report.chunks,
+        "deletedPosts": report.deleted_posts,
+        "embedCalls": report.embed_calls,
+    }

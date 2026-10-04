@@ -8,6 +8,7 @@ import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.response.Response;
 import lombok.RequiredArgsConstructor;
+import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -51,5 +52,17 @@ public class AiIndexController {
             payload.setKind(IndexTaskKind.FULL_REBUILD);
         }
         return Response.success(pythonAiClient.rebuildIndex(payload));
+    }
+
+    /**
+     * 对账式增量索引：只重嵌变了的、删掉语料里已经没有的。
+     *
+     * <p>与全量重建的区别：它按「段落哈希」比对，**没变的文章一次都不嵌** ——
+     * 所以它是「发布/删除之后自动生效」那条链路的执行体（定时任务也调它）。
+     */
+    @PostMapping("/reconcile")
+    public Response<Map<String, Object>> reconcile() {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(pythonAiClient.reconcileIndex());
     }
 }
