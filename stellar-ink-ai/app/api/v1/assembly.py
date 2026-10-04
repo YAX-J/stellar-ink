@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Sequence
 from threading import Lock
 
@@ -25,9 +26,26 @@ from app.providers.errors import ProviderError
 from app.providers.models import ProviderConfig
 from app.rag import corpus as corpus_module
 from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
+from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
 from app.schemas.common import AiErrorCode
 
 logger = logging.getLogger(__name__)
+
+#: 部署期开关：dense 走向量库（true）还是内存通路（false，默认）。
+#: 读一次、进管道缓存键 —— 一个进程只持有一个客户端（见 pipeline_for 的说明）。
+_DENSE_STORE_FLAG = (os.environ.get("AI_DENSE_STORE_ENABLED") or "").strip().lower()
+DENSE_STORE_ENABLED = _DENSE_STORE_FLAG in {"1", "true", "yes"}
+
+#: 进程内唯一的向量库句柄（惰性创建；开关关掉时永远是 None）
+_dense_store: QdrantVectorStore | None = None
+
+
+def _shared_dense_store() -> QdrantVectorStore:
+    """惰性建一个向量库句柄并复用：管道是缓存的，每次新建会漏连接。"""
+    global _dense_store  # noqa: PLW0603 - 进程级单例，就是它的用途
+    if _dense_store is None:
+        _dense_store = QdrantVectorStore(QdrantConfig.from_env())
+    return _dense_store
 
 #: 已预热的检索管道：键见模块 docstring
 _pipelines: dict[tuple[object, ...], RetrievalPipeline] = {}
@@ -65,6 +83,22 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
 
     需要的角色由开关决定：纯 Sparse 的配置**不该**因为没配嵌入模型就报错，
     否则「只跑 BM25 的评测」会被一个它根本用不到的模型卡住。
+
+    **dense 走内存还是走向量库**由部署期开关 `AI_DENSE_STORE_ENABLED` 决定：
+    默认走内存（整库嵌入一次 + 本地余弦）—— 语料几十篇时它更快、且不依赖外部组件；
+    打开后走向量库（查询只嵌问题，索引由重建/对账任务维护）。
+
+    ⚠️ 三条刻意的口径：
+    1. **开关是部署期的**：它在模块导入时读一次，并进管道缓存键。运行中改环境变量不生效 ——
+       这不是缺陷，而是为了「一个进程只持有一个向量库客户端」（管道是缓存的，
+       缓存住管道就等于缓存住客户端；能来回切的开关会漏连接）。
+    2. **索引未验收前不要打开**：⑦ 的验收门槛是「黄金集 30 题不劣化」，
+       没跑过就打开等于把一个没量过的通路接到用户面前。打开时请在评测台上标注状态。
+    3. **payload 过滤（只允许公开/已发布）还没做**，所以打开前必须确认索引里
+       确实只有公开内容 —— 今天的保证来自上游投影（`ai_content_snapshot` 只含
+       content-service 返回的已发布文章与公开笔记）。⚠️ 千万**不要**先加一个过滤：
+       若 payload 里没有对应字段，Qdrant 的过滤会**静默命中零条**，
+       问答会变成「没有依据」，而日志里一切正常。
     """
     registry = runtime.registry()
     embedder = registry.embedding_model() if config.enable_dense else None
@@ -75,8 +109,8 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
         # 空语料不会报错，只会让每次检索都「无依据地拒答」—— 看起来像模型不行
         raise CorpusError("语料为空：检索没有可查的内容（种子内容包没读到？）")
 
-    key = (corpus_module.EPOCH, config, runtime.fingerprint())
     with _lock:
+        key = (corpus_module.EPOCH, config, runtime.fingerprint(), DENSE_STORE_ENABLED)
         cached = _pipelines.get(key)
         if cached is None:
             cached = RetrievalPipeline(
@@ -84,6 +118,7 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
                 config=config,
                 embedder=embedder,
                 reranker=reranker,
+                dense_store=_shared_dense_store() if DENSE_STORE_ENABLED else None,
             )
             _pipelines[key] = cached
         return cached
