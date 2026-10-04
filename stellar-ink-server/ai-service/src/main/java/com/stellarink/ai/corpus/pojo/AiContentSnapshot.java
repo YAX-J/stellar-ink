@@ -34,6 +34,18 @@ public class AiContentSnapshot {
     private String title;
 
     /**
+     * 正文（Markdown 原文）。
+     *
+     * <p>为什么投影要存正文：Python 只允许读 `ai_*` 表（AGENTS §5 红线），
+     * 没有别的途径拿到文章正文 —— 投影不自足，索引就没法切块嵌入。
+     * 代价是正文在库里有两份（`post.content` 与这里），但它是**派生数据**、可整表重建，
+     * 且换来「索引构建不依赖 content-service 在线」这个稳定性收益。
+     *
+     * <p>同步只在**新增/变更**时才回取它（{@code docHash} 没变就沿用已存的），所以不会每轮整库重拉。
+     */
+    private String content;
+
+    /**
      * **整篇**（标题+正文）SHA-256：判断「这篇变了没有」，从而避免无谓重嵌。
      *
      * <p>⚠️ 与向量库里**每个子块**的 contentHash（Python 切块时算）不是一回事，不要互比。
