@@ -15,10 +15,12 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
+from app.core.internal_auth import InternalIdentity
+from app.core.internal_auth_middleware import require_internal_identity
 from app.providers import runtime
 from app.providers.base import ChatModel
 from app.rag.writing import FakeCopilotChat, WritingCopilot, WritingSettings
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["writing"])
 
 
-def chat_for_writing() -> ChatModel:
+def chat_for_writing(user_id: int | None = None) -> ChatModel:
     """取写作建议要用的对话模型。
 
     为什么 fake 要换成 `FakeCopilotChat` 而不是直接用 `FakeProvider`：
@@ -39,26 +41,29 @@ def chat_for_writing() -> ChatModel:
     这个替换**只发生在「显式选了 fake」这一条路上**，不是兜底：
     面板没配时这里会抛「角色 chat 尚未配置模型」，而不是悄悄用桩。
     """
-    registry = runtime.registry()
+    registry = runtime.registry_for(user_id)
     config = registry.config_of("chat")
     if config is not None and config.provider == "fake":
         return FakeCopilotChat()
     return registry.chat_model()
 
 
-def build_copilot() -> WritingCopilot:
+def build_copilot(user_id: int | None = None) -> WritingCopilot:
     """装配 Copilot。
 
     **不缓存**：真正贵的是检索管道与语料（在 `assembly` 里按配置指纹缓存），
     这里只是把模型实例套一层薄壳，按请求重建才能让「面板改了模型」立刻生效。
     """
-    return WritingCopilot(chat=chat_for_writing(), settings=WritingSettings())
+    return WritingCopilot(chat=chat_for_writing(user_id), settings=WritingSettings())
 
 
 @router.post("/writing/suggest", summary="写作建议（只给候选，不写正文）", response_model=None)
-async def suggest(request: WritingSuggestRequest) -> WritingSuggestResult | JSONResponse:
+async def suggest(
+    request: WritingSuggestRequest,
+    identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
+) -> WritingSuggestResult | JSONResponse:
     try:
-        copilot = build_copilot()
+        copilot = build_copilot(identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 

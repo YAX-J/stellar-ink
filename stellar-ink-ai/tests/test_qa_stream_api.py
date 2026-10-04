@@ -130,10 +130,14 @@ async def test_missing_corpus_gives_a_readable_error_frame(
     （流还没开始就失败了，没必要用 SSE 表达）。
     """
 
-    def boom() -> None:
+    def boom(user_id: int | None = None) -> None:
         # 语料不可用是一个**独立类型**（`CorpusError`）而不是裸 `ValueError`：
         # 后者同时也是「模型没按格式回答」的类型，混用会让「环境坏了」和「上游答歪了」
         # 被同一条 except 吞掉，报出同一个状态码
+        #
+        # ⚠️ 这个桩必须接 `user_id`：端点把它从身份里取出来传给装配层（个人模型配置，M12），
+        # 少接一个参数会让所有问答用例在这里 TypeError —— 那正是「签名变了但调用方没跟上」
+        # 的典型表现，而它恰好是本用例要防的一类问题。
         raise CorpusError("语料为空：问答没有可检索的内容")
 
     monkeypatch.setattr("app.api.v1.qa.build_qa_service", boom)
@@ -143,6 +147,28 @@ async def test_missing_corpus_gives_a_readable_error_frame(
     assert status == 400
     assert payload["code"] == "AI_BAD_REQUEST"
     assert "语料" in payload["message"]
+
+
+async def test_ask_passes_the_signed_identity_down_to_assembly(
+    app: FastAPI, secret: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """端点必须把**身份里的 user_id** 传给装配层。
+
+    这条不是形式主义：个人模型配置（M12）靠的就是这条链路，
+    一旦漏传，表现是「用户配了自己的模型，问答却还用全局的」——
+    不报错、不告警，只是「配了没用」，是最难发现的一类失效。
+    """
+    seen: list[int | None] = []
+
+    def capture(user_id: int | None = None) -> None:
+        seen.append(user_id)
+        raise CorpusError("只为记录参数，不走真实装配")
+
+    monkeypatch.setattr("app.api.v1.qa.build_qa_service", capture)
+
+    await _post_ask(app, secret, {"question": QUESTION})
+
+    assert seen == [5], "签名头里 user_id=5，装配层就该拿到 5（而不是 None）"
 
 
 async def _post_ask(app: FastAPI, secret: str, payload: dict) -> tuple[int, dict]:

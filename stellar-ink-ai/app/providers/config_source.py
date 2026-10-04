@@ -21,6 +21,7 @@ from collections.abc import Iterable, Mapping
 from app.core.config import ENV_FILE, env_source
 from app.core.crypto import decrypt, load_master_key
 from app.providers.models import ProviderCapabilities, ProviderConfig
+from app.providers.url_policy import check_base_url
 
 # ⚠️ 为什么必须 import `app.core.config`（而不是顺手删掉这行）：
 # `.env` 的加载挂在那**一个模块的 import 期**（见 `app/core/config.py` 的 `load_dotenv`），
@@ -53,7 +54,7 @@ class ProviderConfigError(RuntimeError):
 
 
 def configs_from_rows(
-    rows: Iterable[Mapping[str, object]], *, decrypt_key: bool = True
+    rows: Iterable[Mapping[str, object]], *, decrypt_key: bool = True, allow_private: bool = True
 ) -> list[ProviderConfig]:
     """把 `ai_provider_config` 的行变成 `ProviderConfig`。
 
@@ -62,6 +63,8 @@ def configs_from_rows(
 
     参数刻意叫 `decrypt_key` 而不是 `decrypt`：后者会**遮蔽**同名的解密函数，
     让函数体内再也调不到它（mypy 报的是 "Literal[True] not callable"，很好笑但很难查）。
+
+    :param allow_private: 是否允许内网/loopback 地址（**个人配置传 False**，见 `url_policy`）
     """
     configs: list[ProviderConfig] = []
     for row in rows:
@@ -77,6 +80,7 @@ def configs_from_rows(
             )
 
         api_key = _api_key_of(row, decrypt_key=decrypt_key)
+        base_url = _base_url_of(row, allow_private=allow_private)
         capabilities = ProviderCapabilities(
             chat=capability == "chat",
             embedding=capability == "embedding",
@@ -86,7 +90,7 @@ def configs_from_rows(
             ProviderConfig(
                 role=role,
                 provider=str(row.get("provider") or "openai_compatible"),
-                base_url=str(row.get("base_url") or ""),
+                base_url=base_url,
                 model=str(row.get("model") or ""),
                 api_key=api_key,
                 dimension=_as_int(row.get("dimension")),
@@ -97,6 +101,19 @@ def configs_from_rows(
             )
         )
     return configs
+
+
+def _base_url_of(row: Mapping[str, object], *, allow_private: bool) -> str:
+    """取并校验 `base_url`。
+
+    `fake` 协议不需要真实地址（它不发出站请求），所以空地址放行；
+    其余协议**当场校验**：把「地址填错」暴露在装配期，而不是等用户问一句话才报网络错。
+    """
+    raw = str(row.get("base_url") or "").strip()
+    if not raw and str(row.get("provider") or "") == "fake":
+        return raw
+    check_base_url(raw, allow_private=allow_private)
+    return raw
 
 
 def _api_key_of(row: Mapping[str, object], *, decrypt_key: bool) -> str:
@@ -146,14 +163,37 @@ def configs_from_env(raw: str | None = None) -> list[ProviderConfig]:
 MYSQL_ENV_KEYS = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DB", "MYSQL_USER", "MYSQL_PASSWORD")
 
 #: 查询语句：**只读**，且只碰 `ai_*` 表（红线 §7.2：Python 不读写 user/post）
-SELECT_ENABLED_CONFIGS = (
+#:
+#: `user_id = 0` 是**全局配置**（站长在 AI 实验室里配的那份）。
+#: ⚠️ 全局查询**必须带这个条件**：漏了会把某个用户的私人模型当成全站默认，
+#: 那是最严重的一种串号（别人问问题用的是他的 Key）。
+SELECT_GLOBAL_CONFIGS = (
+    "SELECT `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
+    "`timeout_ms`, `max_tokens`, `temperature` "
+    "FROM `ai_provider_config` WHERE `enabled` = 1 AND `user_id` = 0 ORDER BY `role`"
+)
+
+#: 某个用户的生效配置：他自己的行 + 全局行（按角色由调用方做覆盖）
+SELECT_CONFIGS_WITH_USER = (
+    "SELECT `user_id`, `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
+    "`timeout_ms`, `max_tokens`, `temperature` "
+    "FROM `ai_provider_config` WHERE `enabled` = 1 AND `user_id` IN (0, %s) "
+    "ORDER BY `user_id`"
+)
+
+#: 迁移还没执行时的兜底查询（没有 `user_id` 列）。**只在报「Unknown column」时用**。
+#: 注意它**不带 `user_id` 条件**（那列还不存在），所以它读到的就是迁移前的全局行。
+SELECT_LEGACY_CONFIGS = (
     "SELECT `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
     "`timeout_ms`, `max_tokens`, `temperature` "
     "FROM `ai_provider_config` WHERE `enabled` = 1 ORDER BY `role`"
 )
 
+#: 个人配置只放开这几个角色 —— 见 `load_provider_configs` 的说明（索引只有一份）
+USER_SCOPED_ROLES = frozenset({"chat", "fast", "reasoning"})
 
-def load_provider_configs() -> list[ProviderConfig]:
+
+def load_provider_configs(user_id: int | None = None) -> list[ProviderConfig]:
     """装配用的配置来源：**面板是唯一权威**。
 
     读取顺序（先到先用，不做合并 —— 合并会让「到底哪份生效」变成一个需要推理的问题）：
@@ -163,13 +203,59 @@ def load_provider_configs() -> list[ProviderConfig]:
 
     第 3 条是关键：没有「没配也能跑」的默认。宁可让 `/qa` 明确报「请去面板配置」，
     也不要让假模型把「没配好」伪装成「回答质量差」。
+
+    **个人配置（`user_id` 非空）**：该用户自己的行按角色**覆盖**全局行，没配的角色回落到全局。
+    但有两条硬约束：
+
+    * **只放开 `USER_SCOPED_ROLES`（chat/fast/reasoning）**：`embedding`/`rerank` 不按用户隔离。
+      原因是**向量索引只有一份** —— 索引是用某个嵌入模型建的，换一个模型去检索，
+      向量不在同一空间，结果不是「差一点」而是**错的**。要让每个用户用不同嵌入模型，
+      前提是按模型各建一份索引（成本随模型数线性增长），那是另一个决定。
+      用户行里出现这两个角色会被**忽略并警告**（不是静默生效，也不是报错挡住整个装配）。
+    * **个人地址必须过 `url_policy`（禁内网）**：`base_url` 是服务端拿去发请求的地址，
+      让普通用户填就等于开放 SSRF。
     """
     from_env = configs_from_env()
     if from_env:
+        # 环境变量注入的是**整份**配置（容器/CI）。个人配置在这种部署下没有意义：
+        # 它本来就是用来「没有库也能跑」的，返回同一份，别假装支持用户级。
         return from_env
-    if _mysql_configured():
+    if not _mysql_configured():
+        return []
+    if not user_id:
         return configs_from_rows(_fetch_rows(), decrypt_key=True)
-    return []
+
+    rows = _fetch_rows(user_id=user_id)
+    global_rows = [row for row in rows if _user_id_of(row) == 0]
+    user_rows = [row for row in rows if _user_id_of(row) == user_id]
+
+    merged: dict[str, Mapping[str, object]] = {
+        str(row.get("role") or ""): row for row in global_rows
+    }
+    for row in user_rows:
+        role = str(row.get("role") or "")
+        if role not in USER_SCOPED_ROLES:
+            logger.warning(
+                "忽略用户 %s 的个人配置：角色 %s 不按用户隔离"
+                "（向量索引只有一份，见 config_source 的说明）",
+                user_id,
+                role or "(空)",
+            )
+            continue
+        merged[role] = row
+
+    global_configs = configs_from_rows(global_rows, decrypt_key=True)
+    user_configs = configs_from_rows(user_rows, decrypt_key=True, allow_private=False)
+    user_roles = {config.role for config in user_configs} & USER_SCOPED_ROLES
+    # 全局那份允许内网（站长自建推理就在 127.0.0.1）；用户那份已按公网校验过
+    return [config for config in global_configs if config.role not in user_roles] + [
+        config for config in user_configs if config.role in user_roles
+    ]
+
+
+def _user_id_of(row: Mapping[str, object]) -> int:
+    """行归属：`0` = 全局（迁移前的所有行都是这个意思）。"""
+    return _as_int(row.get("user_id")) or 0
 
 
 def describe_sources() -> str:
@@ -208,11 +294,16 @@ def _mysql_configured() -> bool:
     return all(os.environ.get(key) for key in ("MYSQL_HOST", "MYSQL_DB", "MYSQL_USER"))
 
 
-def _fetch_rows() -> list[Mapping[str, object]]:
+def _fetch_rows(user_id: int | None = None) -> list[Mapping[str, object]]:
     """只读查询 `ai_provider_config`。
 
     刻意**不在模块顶层 import pymysql**：它是可选依赖（只有直连库的部署才需要），
     顶层 import 会让「用环境变量注入配置」的场景平白多一个依赖。
+
+    ⚠️ **迁移还没执行时的兜底**：`18_ai_user_provider_config.sql` 之前，表里没有 `user_id` 列，
+    带它的查询会报 `1054 Unknown column`。这时**退回旧查询**并记一条 warn ——
+    让整个 AI 服务因为「还没跑迁移」而起不来（或者所有用户问答一起 500）是更糟的结果。
+    表现会是「个人配置保存后不生效」，而日志里那句话直接说明原因。
     """
     try:
         import pymysql  # type: ignore[import-untyped]  # noqa: PLC0415 - 可选依赖，按需导入
@@ -238,12 +329,35 @@ def _fetch_rows() -> list[Mapping[str, object]]:
         raise _db_error("连接 MySQL", error) from error
     try:
         with connection.cursor() as cursor:
-            cursor.execute(SELECT_ENABLED_CONFIGS)
+            try:
+                if user_id:
+                    cursor.execute(SELECT_CONFIGS_WITH_USER, (user_id,))
+                else:
+                    cursor.execute(SELECT_GLOBAL_CONFIGS)
+            except Exception as error:  # noqa: BLE001 - 只为识别「列还不存在」，其余照旧抛
+                if not _looks_like_missing_user_id(error):
+                    raise
+                logger.warning(
+                    "ai_provider_config 还没有 user_id 列（迁移 18_ai_user_provider_config.sql "
+                    "尚未执行）：本次只读全局配置，个人模型配置不会生效"
+                )
+                cursor.execute(SELECT_LEGACY_CONFIGS)
             return list(cursor.fetchall())
     except Exception as error:  # noqa: BLE001 - 同上：查询期的异常统一翻成配置错误
         raise _db_error("查询 ai_provider_config", error) from error
     finally:
         connection.close()
+
+
+def _looks_like_missing_user_id(error: Exception) -> bool:
+    """是不是「user_id 列不存在」这一类错误。
+
+    只看**错误码/关键字**，不靠异常类型（PyMySQL 在不同版本里给出的类型不一致）。
+    """
+    text = str(error)
+    return (
+        "1054" in text or "Unknown column 'user_id'" in text or "Unknown column `user_id`" in text
+    )
 
 
 def _db_error(stage: str, error: Exception) -> ProviderConfigError:

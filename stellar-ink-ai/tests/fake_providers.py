@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from app.api.v1.assembly import use_provider_configs
+from app.providers import runtime
 from app.providers.models import ProviderCapabilities, ProviderConfig
 
 
@@ -51,8 +52,16 @@ def fake_provider_configs() -> list[ProviderConfig]:
 
 
 def install_fake_providers() -> None:
-    """显式注入桩配置并清空装配缓存（测试 fixture 里调一次）。"""
-    use_provider_configs(fake_provider_configs())
+    """显式注入桩配置并清空装配缓存（测试 fixture 里调一次）。
+
+    ⚠️ **个人配置那条来源也要一起装**（M12 起）：问答/ Copilot / Agent 现在会
+    `registry_for(user_id)` 取模型，只装全局那份的话，测试里会落到「按用户读数据库」——
+    而单测机器上没有库，于是所有问答用例都变成 400「角色 chat 尚未配置」。
+    桩的含义是「这次用桩」，所以两处都给同一份桩。
+    """
+    configs = fake_provider_configs()
+    use_provider_configs(configs)
+    runtime.use_user_config_source(lambda _user_id: configs)
 
 
 def install_no_providers() -> None:
@@ -62,8 +71,11 @@ def install_no_providers() -> None:
     测试会因此依赖跑测机器上有没有 `.env`（曾经真的这么错过一次）。
     """
     use_provider_configs([])
+    runtime.use_user_config_source(lambda _user_id: [])
 
 
 def install_roles(roles: Sequence[str], *, provider: str = "fake") -> None:
     """只配给定角色：用来测「缺哪个角色时错误消息对不对」。"""
-    use_provider_configs([provider_config(role, provider=provider) for role in roles])
+    configs = [provider_config(role, provider=provider) for role in roles]
+    use_provider_configs(configs)
+    runtime.use_user_config_source(lambda _user_id: configs)
