@@ -27,6 +27,8 @@ let nextHealth = { status: 200, payload: { code: 0, data: { available: true, rea
 let nextUsage = { status: 200, payload: { code: 0, data: null } }
 let nextAudit = { status: 200, payload: { code: 0, data: null } }
 let nextTrace = { status: 200, payload: { code: 0, data: null } }
+let nextStale = { status: 200, payload: { code: 0, data: null } }
+let nextBuild = { status: 200, payload: { code: 0, data: null } }
 
 const reply = (status, payload) => ({
   ok: status >= 200 && status < 300,
@@ -43,6 +45,8 @@ globalThis.fetch = async (url, init = {}) => {
   if (path.startsWith('/ai/admin/usage/summary')) return reply(nextUsage.status, nextUsage.payload)
   if (path.startsWith('/ai/admin/retrieval-audit/summary')) return reply(nextAudit.status, nextAudit.payload)
   if (path.startsWith('/ai/admin/trace/')) return reply(nextTrace.status, nextTrace.payload)
+  if (path.startsWith('/ai/admin/wiki/stale')) return reply(nextStale.status, nextStale.payload)
+  if (path.startsWith('/ai/admin/wiki/build')) return reply(nextBuild.status, nextBuild.payload)
   return reply(404, { code: 404, msg: `自检未覆盖的接口：${path}` })
 }
 
@@ -337,6 +341,121 @@ report(ops.traceFailed === false, '空输入不算「失败」')
 nextTrace = { status: 403, payload: { code: 403, msg: '没有权限' } }
 await ops.loadTrace('abc123')
 report(ops.traceFailed === true && ops.traceError.length > 0, '回放请求失败单独标记并留原因')
+
+/* ================= 第三优先：知识库维护（失效盘点 + 构建） ================= */
+
+// —— 失效盘点：三类分开 + 截断警告 ——
+nextStale = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      checked: 120,
+      current: 100,
+      stale: 15,
+      orphan: 5,
+      stalePostIds: [3, 7],
+      orphanPostIds: [9],
+      notes: [],
+      truncated: false,
+    },
+  },
+}
+await ops.loadStale()
+report(calls.some((item) => item === 'GET /ai/admin/wiki/stale'), '盘点打的是 /ai/admin/wiki/stale')
+report(ops.wikiTotals.checked === 120, '拿到盘点的条目数')
+report(
+  ops.wikiTotals.current + ops.wikiTotals.stale + ops.wikiTotals.orphan === ops.wikiTotals.checked,
+  '三类之和等于扫到的条数（current/stale/orphan 是同一批的三个去向）',
+)
+report(ops.wikiTotals.truncated === false, '没截断时不吓人')
+
+// —— 截断：**不能**当成「全站都没问题」——
+nextStale = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      checked: 5000,
+      current: 5000,
+      stale: 0,
+      orphan: 0,
+      truncated: true,
+      notes: ['⚠️ 只盘点了前 5000 条'],
+    },
+  },
+}
+await ops.loadStale()
+report(ops.wikiTotals.truncated === true, '截断被识别出来')
+report(ops.stale.notes.length > 0, '后端那句「不能当成全站都没问题」带回来给界面显示')
+
+// —— 盘点读不到（表没建）：说读不出来 ——
+nextStale = { status: 500, payload: { code: 500, msg: '服务繁忙' } }
+await ops.loadStale()
+report(ops.staleFailed === true && ops.stale === null, '盘点失败单独标记并清空')
+report(ops.wikiTotals === null, '失败时没有「0 条过期」这种误导性的零')
+
+// —— 构建：落库侧的数与模型侧的账**分开** ——
+nextBuild = {
+  status: 200,
+  payload: {
+    code: 0,
+    data: {
+      posts: 8,
+      proposed: 40,
+      kept: 35,
+      inserted: 20,
+      updated: 15,
+      skipped: 5,
+      // ⚠️ Map<String,Integer> 的键同样是字符串
+      dropped: { 引用未在原文中找到: 4, 主张为空: 1 },
+      entities: 12,
+      entityProposed: 20,
+      entityKept: 18,
+      relations: 6,
+      topics: 2,
+      usageModel: 'qwen-plus',
+      latencyMs: 4200,
+      notes: [],
+    },
+  },
+}
+await ops.buildWiki()
+report(calls.some((item) => item === 'POST /ai/admin/wiki/build'), '构建打的是 POST /ai/admin/wiki/build')
+report(ops.buildSides.stored.inserted === 20, '落库侧的数在位')
+report(ops.buildSides.modelSide.proposed === 40, '模型侧的账在位（与被保留的 35 条不是一回事）')
+report(
+  ops.buildDropped.length === 2 && ops.buildDropped[0].reason === '引用未在原文中找到',
+  '被丢弃的引用按原因分解并排序（引用必须被观察到 —— 这是它的落地账）',
+)
+
+// —— 构建表单留空：不发明「全量」，让服务端定 ——
+let lastBuildBody = null
+const rawFetch = globalThis.fetch
+globalThis.fetch = async (url, init = {}) => {
+  const path = String(url).replace(/^https?:\/\/[^/]+/, '')
+  if (path.startsWith('/ai/admin/wiki/build')) lastBuildBody = init.body
+  return rawFetch(url, init)
+}
+await ops.buildWiki()
+report(
+  lastBuildBody === '{}' || !String(lastBuildBody).includes('maxPosts'),
+  '表单留空时不带 maxPosts（由服务端默认）—— 前端不承诺「全量重建」',
+)
+ops.buildForm.maxPosts = '5'
+ops.buildForm.postIds = '3, 7，9'
+await ops.buildWiki()
+report(
+  JSON.parse(lastBuildBody).maxPosts === 5 &&
+    JSON.stringify(JSON.parse(lastBuildBody).postIds) === '[3,7,9]',
+  '填了才带上去，且中英文逗号都能分（运维习惯两种都写）',
+)
+
+// —— 构建失败：单独标记并留原因（它会花钱，失败原因必须看得见）——
+nextBuild = { status: 500, payload: { code: 500, msg: '服务繁忙' } }
+await ops.buildWiki()
+report(ops.buildFailed === true && ops.buildResult === null, '构建失败单独标记并清空上次结果')
+report(ops.building === false, '失败后清掉「构建中」，按钮恢复可点')
 
 if (failed > 0) {
   console.error(`\nAI 观测面自检失败 ${failed} 条`)

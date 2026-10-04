@@ -31,7 +31,8 @@ const TAB_EVAL = 'eval'
 const TAB_OPS = 'ops'
 const TAB_USAGE = 'usage'
 const TAB_RETRIEVAL = 'retrieval'
-const TAB_KEYS = [TAB_PROVIDERS, TAB_EVAL, TAB_OPS, TAB_USAGE, TAB_RETRIEVAL]
+const TAB_WIKI = 'wiki'
+const TAB_KEYS = [TAB_PROVIDERS, TAB_EVAL, TAB_OPS, TAB_USAGE, TAB_RETRIEVAL, TAB_WIKI]
 const tab = ref(TAB_KEYS.includes(String(route.query.tab)) ? String(route.query.tab) : TAB_PROVIDERS)
 
 /** 用量窗口（天）：三档够用，不做自由输入框 —— 那是让人猜该填多少 */
@@ -51,6 +52,7 @@ watch(tab, (value) => {
   if (value === TAB_OPS) loadOps()
   if (value === TAB_USAGE) loadUsage()
   if (value === TAB_RETRIEVAL) loadRetrieval()
+  if (value === TAB_WIKI) loadStale()
 })
 
 /** 运行状态：配置列表 + Python 探活。失败不弹全局 toast（面板内自己说，可重试）。 */
@@ -71,6 +73,15 @@ function loadRetrieval(days) {
 
 function submitTrace() {
   ops.loadTrace(traceInput.value).catch(() => {})
+}
+
+/** 知识库：盘点（只读、不花钱）与构建（花钱、显式）分开触发 —— 合成一个按钮会让人以为盘点等于修好 */
+function loadStale() {
+  ops.loadStale().catch(() => {})
+}
+
+function submitBuild() {
+  ops.buildWiki().catch(() => {})
 }
 
 /* 表单是「按角色」的：切换角色时把已存配置或预设填进去，避免手抄一遍端点与模型名 */
@@ -516,7 +527,110 @@ async function applyModel(item) {
         >
           检索与回放
         </button>
+        <button
+          class="lab-tab" :class="{ on: tab === TAB_WIKI }"
+          type="button" @click="tab = TAB_WIKI"
+        >
+          知识库
+        </button>
       </div>
+
+      <!-- 知识库（第三优先）：规模（盘点扫到多少）→ 失效盘点 → 构建。
+           顺序刻意如此：先知道有多少、再知道坏在哪、最后才动手重建。 -->
+      <template v-if="tab === TAB_WIKI">
+        <p class="lab-note reveal">
+          「盘点」只回答**哪里过期了**（文章改过 → 锚点失效；文章没了 → 孤儿），
+          <b>不会自动重建</b>：重建是下面那个会花模型调用的显式动作。
+        </p>
+
+        <div class="ops-verdict reveal">
+          <button class="btn btn-ghost" type="button" @click="loadStale()">
+            {{ ops.staleLoading ? '盘点中…' : '开始盘点' }}
+          </button>
+          <span v-if="ops.wikiTotals" class="dim">
+            扫到 {{ ops.wikiTotals.checked }} 条主张 · 有效 {{ ops.wikiTotals.current }} ·
+            待重建 {{ ops.wikiTotals.stale }} · 孤儿 {{ ops.wikiTotals.orphan }}
+          </span>
+        </div>
+
+        <p v-if="ops.staleFailed" class="state-text error-text">
+          {{ ops.staleError }}
+          <button class="state-action" type="button" @click="loadStale()">重试</button>
+          <br />读不出来最常见的两个原因：Wiki 三张表还没建（13/14/15_ai_wiki.sql），或还没构建过。
+        </p>
+
+        <template v-else-if="ops.wikiTotals">
+          <!-- ⚠️ 截断时后端会带一句「不能当成全站都没问题」，这里单独醒目 -->
+          <p v-if="ops.wikiTotals.truncated" class="msg err">
+            这次盘点被截断了 —— <b>不能</b>当成「全站都没问题」。
+          </p>
+          <p v-for="(note, i) in ops.stale?.notes || []" :key="i" class="dim reveal">{{ note }}</p>
+
+          <div v-if="ops.stale?.stalePostIds?.length" class="ops-table reveal">
+            <h4>锚点失效的文章（文章改过，条目要重建）</h4>
+            <div class="wiki-id-row">
+              <RouterLink v-for="id in ops.stale.stalePostIds" :key="id" class="mono" :to="`/read/${id}`">
+                #{{ id }}
+              </RouterLink>
+            </div>
+          </div>
+          <div v-if="ops.stale?.orphanPostIds?.length" class="ops-table reveal">
+            <h4>孤儿（文章已不存在，条目应清理）</h4>
+            <div class="wiki-id-row">
+              <span v-for="id in ops.stale.orphanPostIds" :key="id" class="mono">#{{ id }}</span>
+            </div>
+          </div>
+        </template>
+
+        <div class="ops-table reveal" style="margin-top:26px">
+          <h4>构建知识条目</h4>
+          <p class="dim">
+            构建会**花模型调用**（走调用账 `scene=wiki`，可在「用量与成本」里看到）。
+            留空表示由服务端决定范围（服务端有自己的上限），这里不写「全量重建」这种承诺。
+          </p>
+          <form class="trace-form" @submit.prevent="submitBuild">
+            <input v-model.trim="ops.buildForm.maxPosts" placeholder="最多处理多少篇（留空=服务端默认）" />
+            <input v-model.trim="ops.buildForm.postIds" placeholder="只重建这些文章 id，逗号分隔（留空=按上面的范围）" />
+            <button class="btn" type="submit" :disabled="ops.building">
+              {{ ops.building ? '构建中…' : '开始构建' }}
+            </button>
+          </form>
+          <p v-if="ops.buildError" class="msg err">{{ ops.buildError }}</p>
+
+          <template v-if="ops.buildSides">
+            <div class="ops-stats">
+              <div class="ops-stat"><span>处理文章</span><b>{{ ops.buildSides.posts }}</b></div>
+              <div class="ops-stat"><span>模型提出</span><b>{{ ops.buildSides.modelSide.proposed }}</b></div>
+              <div class="ops-stat"><span>留下（有依据）</span><b>{{ ops.buildSides.modelSide.kept }}</b></div>
+              <div class="ops-stat">
+                <span>落库：新增 / 更新</span>
+                <b>{{ ops.buildSides.stored.inserted }} / {{ ops.buildSides.stored.updated }}</b>
+              </div>
+              <div class="ops-stat">
+                <span>实体 / 关系 / 主题</span>
+                <b>{{ ops.buildSides.stored.entities }} / {{ ops.buildSides.stored.relations }} / {{ ops.buildSides.stored.topics }}</b>
+              </div>
+            </div>
+            <p class="dim">
+              「模型提出 {{ ops.buildSides.modelSide.proposed }} / 留下 {{ ops.buildSides.modelSide.kept }}」
+              是**模型侧的账**，「新增/更新」是**落库侧的数** —— 两者本来就不会相等（重复构建大多走「跳过」）。
+            </p>
+            <div v-if="ops.buildDropped.length" class="ops-table">
+              <h4>被丢弃的条目（按原因）</h4>
+              <p class="dim">
+                最主要的一条是「引用没能在原文里找到」—— 这正是这套东西与「让模型写段摘要」的根本区别。
+              </p>
+              <div v-for="item in ops.buildDropped" :key="item.reason" class="ops-row ops-row-two">
+                <span>{{ item.reason }}</span><span>{{ item.count }} 条</span>
+              </div>
+            </div>
+            <p v-for="(note, i) in ops.buildResult?.notes || []" :key="i" class="dim">{{ note }}</p>
+            <p v-if="ops.buildResult?.usageModel" class="dim mono">
+              用模型 {{ ops.buildResult.usageModel }} · 耗时 {{ ops.buildResult.latencyMs }}ms
+            </p>
+          </template>
+        </div>
+      </template>
 
       <!-- 运行状态（第一优先）：回答「我配的模型到底生效了没有」。
            ⚠️ 它证明的是「面板已配 + Python 可达」，不证明 Python 真的装配了这份配置 ——
@@ -1300,6 +1414,8 @@ async function applyModel(item) {
 .ops-row-two{grid-template-columns:2fr 1fr}
 .ops-row-trace{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
 .trace-form{display:flex; gap:10px; margin:10px 0; flex-wrap:wrap}
+.wiki-id-row{display:flex; gap:10px; flex-wrap:wrap; padding:6px 0}
+.wiki-id-row .mono{color:var(--primary); text-decoration:none}
 .trace-form input{flex:1 1 260px; min-width:0; padding:9px 12px; background:transparent;
   border:1px solid var(--line); border-radius:var(--r-md); color:var(--ink); font:inherit}
 </style>

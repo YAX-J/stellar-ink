@@ -83,6 +83,18 @@ export const useAiOpsStore = defineStore('aiOps', {
     traceLoading: false,
     traceFailed: false,
     traceError: '',
+
+    /* ---- 知识库维护（第三优先）：失效盘点 + 构建 ---- */
+    stale: null,
+    staleLoading: false,
+    staleFailed: false,
+    staleError: '',
+    buildResult: null,
+    building: false,
+    buildFailed: false,
+    buildError: '',
+    /** 构建表单：留空 = 由服务端默认（**不**在前端编一个「全量」的承诺） */
+    buildForm: { maxPosts: '', postIds: '' },
   }),
 
   getters: {
@@ -196,6 +208,59 @@ export const useAiOpsStore = defineStore('aiOps', {
       if (state.trace.pythonAvailable === false) return 'Python 进程当前不可达，回放读不到'
       // ⚠️ 措辞：不能说「这条链路不存在」—— 跨副本时它可能存在别的副本上（已知限制）
       return '这个副本上没有这条回放（回放是进程内的，多副本时可能落在别处）—— 上面的调用账仍然有效'
+    },
+
+    /* ---- 知识库维护（第三优先）---- */
+
+    /**
+     * 失效盘点的四个数。
+     *
+     * ⚠️ `checked` 是**这次盘点扫到的主张条数**，也是目前唯一能拿到的「全站知识条目数」——
+     * 没有专门的全站计数接口（`/ai/wiki/claims/count` 需要 `postId`，是**按文章**计数）。
+     * 所以界面如实写「盘点扫到 N 条」，而不是含糊地写「全站 N 条」。
+     */
+    wikiTotals: (state) => {
+      const stale = state.stale
+      if (!stale) return null
+      return {
+        checked: stale.checked || 0,
+        current: stale.current || 0,
+        stale: stale.stale || 0,
+        orphan: stale.orphan || 0,
+        // 截断了就不能说「全站没问题」—— 后端会带这句 note，界面上要醒目
+        truncated: Boolean(stale.truncated),
+      }
+    },
+
+    /** 构建结果：**落库侧的数**与**模型侧的账**分开（口径不同，混起来会误读效果） */
+    buildSides: (state) => {
+      const result = state.buildResult
+      if (!result) return null
+      return {
+        stored: {
+          inserted: result.inserted || 0,
+          updated: result.updated || 0,
+          skipped: result.skipped || 0,
+          entities: result.entities || 0,
+          relations: result.relations || 0,
+          topics: result.topics || 0,
+        },
+        modelSide: {
+          proposed: result.proposed || 0,
+          kept: result.kept || 0,
+          entityProposed: result.entityProposed || 0,
+          entityKept: result.entityKept || 0,
+        },
+        posts: result.posts || 0,
+      }
+    },
+
+    /** 被丢弃的引用按原因分解（`Map<String,Integer>` 的键同样是字符串） */
+    buildDropped: (state) => {
+      const raw = state.buildResult?.dropped || {}
+      return Object.entries(raw)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
     },
 
     /** 成本相关的两个「解释不了的钱」，界面必须单独提 */
@@ -329,6 +394,70 @@ export const useAiOpsStore = defineStore('aiOps', {
         return null
       } finally {
         this.traceLoading = false
+      }
+    },
+
+    /* ---- 知识库维护（第三优先）---- */
+
+    /**
+     * 失效盘点：`current`（段落哈希还对得上）/ `stale`（文章改过，锚点失效）/
+     * `orphan`（文章没了）。
+     *
+     * ⚠️ **盘点不自动重建**：它只回答「哪里过期了」，重建是下一个显式动作。
+     * 把两件事合成一个按钮，会让人以为「点了盘点就等于修好了」。
+     */
+    async loadStale() {
+      this.staleLoading = true
+      this.staleError = ''
+      try {
+        const data = await request('/ai/admin/wiki/stale', { silent: true })
+        this.stale = data || null
+        this.staleFailed = false
+        return this.stale
+      } catch (error) {
+        this.stale = null
+        this.staleFailed = true
+        this.staleError = error.message
+        return null
+      } finally {
+        this.staleLoading = false
+      }
+    },
+
+    /**
+     * 触发一次构建（**会花模型调用**，走调用账 `scene=wiki`）。
+     *
+     * 表单留空表示「由服务端决定」（服务端有 maxPosts 默认值）——
+     * 前端不写「全量重建」这种话：那是在承诺一件服务端不会做的事
+     * （AGENTS §4：「界面不得承诺服务端不会兑现的数字」）。
+     */
+    async buildWiki() {
+      this.building = true
+      this.buildError = ''
+      try {
+        const payload = {}
+        const maxPosts = Number(this.buildForm.maxPosts)
+        if (Number.isFinite(maxPosts) && maxPosts > 0) payload.maxPosts = maxPosts
+        const ids = String(this.buildForm.postIds || '')
+          .split(/[\s,，]+/)
+          .map((item) => Number(item))
+          .filter((item) => Number.isInteger(item) && item > 0)
+        if (ids.length) payload.postIds = ids
+        const data = await request('/ai/admin/wiki/build', {
+          method: 'POST',
+          body: payload,
+          silent: true,
+        })
+        this.buildResult = data || null
+        this.buildFailed = false
+        return this.buildResult
+      } catch (error) {
+        this.buildResult = null
+        this.buildFailed = true
+        this.buildError = error.message
+        return null
+      } finally {
+        this.building = false
       }
     },
   },
