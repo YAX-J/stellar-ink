@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLinkStore } from '@/stores/links'
@@ -10,6 +10,7 @@ import {
   statusLabel,
   evidenceLabel,
 } from '@/stores/memory'
+import { useMyModelsStore, GLOBAL_ONLY_NOTE } from '@/stores/myModels'
 import { roleLabel, ROLE_LABEL } from '@/utils/role'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -247,6 +248,70 @@ async function removeOne(id) {
 async function clearAllMemories() {
   if (!window.confirm('清除全部 AI 记忆？连同证据与派生画像一起，且不可撤销。')) return
   await memory.clearAll()
+}
+
+/* ---- 我的 AI 模型（M12）：同样是「默认收起、展开才取数」 ----
+   账号页是登录后常来的页面，不该为一份多数时候没人动的配置每次进来都发请求。 */
+const myModelsOpen = ref(false)
+const mine = useMyModelsStore()
+const mineForm = reactive({ role: '', displayName: '', baseUrl: '', model: '', apiKey: '' })
+
+async function toggleMyModels() {
+  myModelsOpen.value = !myModelsOpen.value
+  if (myModelsOpen.value) {
+    await mine.load()
+  }
+}
+
+/** 打开某个角色的表单：已配的把现值填进去，Key 一律留空（服务端只回掩码，读不回明文） */
+function openMineForm(row) {
+  mine.formError = ''
+  mineForm.role = row.key
+  mineForm.displayName = row.config?.displayName || ''
+  mineForm.baseUrl = row.config?.baseUrl || ''
+  mineForm.model = row.config?.model || ''
+  mineForm.apiKey = ''
+}
+
+function closeMineForm() {
+  mineForm.role = ''
+  mine.formError = ''
+}
+
+/** 保存：**失败不关表单**（错误留在按钮上方），成功才收起 */
+async function submitMine() {
+  const missing = []
+  if (!mineForm.displayName) missing.push('展示名')
+  if (!mineForm.baseUrl) missing.push('接口地址')
+  if (!mineForm.model) missing.push('模型名')
+  if (missing.length) {
+    mine.formError = `还差：${missing.join('、')}`
+    return
+  }
+  try {
+    await mine.save(mineForm.role, {
+      displayName: mineForm.displayName,
+      baseUrl: mineForm.baseUrl,
+      model: mineForm.model,
+      apiKey: mineForm.apiKey,
+      provider: 'openai_compatible',
+    })
+    closeMineForm()
+    emit(TOAST, { type: 'success', message: '已保存，问答将使用你自己的模型' })
+  } catch {
+    /* 原因已在 mine.formError，表单保持打开可继续改 */
+  }
+}
+
+/** 改回全局：说清后果再删（删掉后该角色立刻用站长的配置） */
+async function removeMine(row) {
+  if (!window.confirm(`改回全局配置？「${row.label}」将使用站长的模型，你自己的配置会被删除。`)) return
+  try {
+    await mine.remove(row.key)
+    emit(TOAST, { type: 'success', message: `${row.label} 已改回全局配置` })
+  } catch {
+    /* 失败时列表那条仍在（store 不改本地），错误已由全局 toast 提示 */
+  }
 }
 
 /* ---- 本机偏好（原舰桥页的「恢复本机默认偏好」搬到这里，与账号设置同处） ---- */
@@ -653,6 +718,92 @@ onMounted(async () => {
         </template>
       </div>
 
+      <!-- 我的 AI 模型（M12）：读者/作者都能配，**默认收起**（同上：按需取数） -->
+      <div class="panel reveal" style="--d:.23s">
+        <div class="row-between">
+          <h3 style="margin: 0">我的 AI 模型 · 用自己的模型回答</h3>
+          <button class="btn btn-ghost" @click="toggleMyModels">
+            {{ myModelsOpen ? '收起' : '查看' }}
+          </button>
+        </div>
+
+        <template v-if="myModelsOpen">
+          <!-- 取不到必须说出来：这里与阅读页的知识条目**刻意相反** ——
+               用户主动来看自己的配置，显示成「你还没配」会让他以为配置丢了 -->
+          <p v-if="mine.failed" class="msg err">
+            配置暂时读不出来（<b>不是</b>「你还没配」）—— 稍后再试。
+          </p>
+          <p v-else-if="mine.loading" class="dim">正在读取…</p>
+
+          <p class="dim">
+            没配的角色自动使用站长的全局配置 —— 可以只配一个。{{ GLOBAL_ONLY_NOTE }}
+          </p>
+
+          <div v-for="row in mine.rows" :key="row.key" class="mine-row">
+            <div class="mine-head">
+              <b>{{ row.label }}</b>
+              <span class="dim">{{ row.hint }}</span>
+              <span class="mine-state" :class="row.personal ? 'on' : ''">
+                {{ row.personal ? '我配的' : '用全局配置' }}
+              </span>
+            </div>
+
+            <template v-if="row.personal">
+              <p class="dim mono">
+                {{ row.config.baseUrl }} · {{ row.config.model }}
+                <template v-if="row.config.apiKeyMask"> · {{ row.config.apiKeyMask }}</template>
+              </p>
+              <p v-if="mine.checkResults[row.key]" class="msg">
+                自检：{{ mine.checkResults[row.key].ok ? '端点可达' : '不可达' }} ·
+                {{ mine.checkResults[row.key].message }}
+              </p>
+              <div class="mine-actions">
+                <button class="btn btn-ghost" @click="openMineForm(row)">修改</button>
+                <button class="btn btn-ghost" @click="mine.check(row.key)">连通性自检</button>
+                <button class="btn btn-ghost" @click="removeMine(row)">改回全局</button>
+              </div>
+            </template>
+            <div v-else class="mine-actions">
+              <button class="btn" @click="openMineForm(row)">用自己的模型</button>
+            </div>
+
+            <!-- 表单内联展开：与模型配置同一套字段，但地址只允许公网 -->
+            <form v-if="mineForm.role === row.key" class="mine-form" @submit.prevent="submitMine">
+              <label class="field">
+                <span>展示名</span>
+                <input v-model.trim="mineForm.displayName" placeholder="例如 我的 qwen-plus" />
+              </label>
+              <label class="field">
+                <span>接口地址（API 根，只允许公网）</span>
+                <input v-model.trim="mineForm.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+              </label>
+              <label class="field">
+                <span>模型名</span>
+                <input v-model.trim="mineForm.model" placeholder="qwen-plus" />
+              </label>
+              <label class="field">
+                <span>API Key</span>
+                <input
+                  v-model.trim="mineForm.apiKey"
+                  type="password"
+                  :placeholder="row.config?.apiKeyConfigured ? '留空表示沿用已存的密钥' : '首次配置必须填写'"
+                />
+              </label>
+              <p class="dim">
+                地址填到 <code>/v1</code> 为止，路径由服务端拼接；内网与本机地址会被拒绝。
+              </p>
+              <p v-if="mine.formError" class="msg err">{{ mine.formError }}</p>
+              <div class="mine-actions">
+                <button class="btn" type="submit" :disabled="mine.savingRole === row.key">
+                  {{ mine.savingRole === row.key ? '保存中…' : '保存' }}
+                </button>
+                <button class="btn btn-ghost" type="button" @click="closeMineForm">取消</button>
+              </div>
+            </form>
+          </div>
+        </template>
+      </div>
+
       <!-- 成员管理（仅站长） -->
       <div v-if="auth.isAdmin" class="panel reveal" style="--d:.24s">
         <h3>
@@ -878,5 +1029,52 @@ onMounted(async () => {
 }
 .memory-danger {
   margin-top: 18px;
+}
+/* ---- 我的 AI 模型（M12）：沿用 .panel/.btn，这里只补面板内部排版 ---- */
+.mine-row {
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.mine-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mine-state {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--primary-soft);
+  color: var(--ink-faint);
+}
+/* 「我配的」要给得出可见差异：两种状态长得一样，用户就不知道现在在用谁的模型 */
+.mine-state.on {
+  background: rgba(90, 220, 190, 0.16);
+  color: var(--teal);
+}
+.mine-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.mine-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+.mine-form .field span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
 }
 </style>
