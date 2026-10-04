@@ -76,6 +76,13 @@
             <artifactId>common-core</artifactId>
         </dependency>
 
+        <!-- Java → content-service 内部契约（RAG 语料读取：文章/笔记 → 投影表） -->
+        <dependency>
+            <groupId>com.stellarink</groupId>
+            <artifactId>stellar-ink-content-client</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Java → Python 内部客户端契约（M0 只冻结契约，M1 接线启用） -->
         <dependency>
             <groupId>com.stellarink</groupId>

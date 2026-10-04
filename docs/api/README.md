@@ -286,6 +286,33 @@ warn，表现是「个人配置保存了但不生效」—— 日志里那句话
 | POST | `/ai/admin/models/{id}/check` | 该模型端点的连通性自检，结论记回库条目 | ADMIN |
 | GET | `/ai/admin/providers/runtime` | **含解密后密钥**的运行时配置（仅内网视角）。Python 侧目前**不调用它**，而是直接读同一张 `ai_provider_config` 表并用同一把主密钥解密 —— 两条路读的是同一份数据 | ADMIN |
 
+**RAG 语料投影（`deploy/sql/19_ai_content_snapshot.sql`）**
+
+知识库的内容范围由 content-service 决定（它的 `/internal/corpus` 只返回**已发布文章**与
+**已发布且 PUBLIC 的笔记**，见上文「内部接口」），ai-service 把这份清单投影进自己的
+`ai_content_snapshot`，Python 再直读这张表 —— 于是 Python 既不碰 `post`/`note`，
+「什么算可见」的规则也只有一份。
+
+同步是**对账式**的：拉全量清单（只有 id + `docHash`，不含正文）→ 逐条比对 →
+新增/更新变更的、**删除上游不再返回的**（下架、已删、**笔记转私有**都会走到这里）。
+默认每 5 分钟一次，也可随时手动触发。
+
+| 方法 | 路径 | 说明 | 角色 |
+|---|---|---|---|
+| POST | `/ai/admin/corpus/sync` | 立刻同步一次；返回 `{upstream,inserted,updated,unchanged,removed,total,failed,reason,syncedAt}` | ADMIN |
+| GET | `/ai/admin/corpus/count` | 投影表当前行数（不触发同步） | ADMIN |
+
+⛔ 硬约束：**草稿与私有笔记永远不该出现在 `ai_content_snapshot` 里**。上游已经不返回它们，
+删除侧保证「一旦转私有/下架就从投影里消失」。拉取失败时**一行都不删**（宁可这轮什么都不做，
+也不能因为一次网络抖动清空知识库）；而上游返回空则**删除全部** —— 隐私优先于「重新嵌入」这个可恢复成本。
+
+```bash
+# 手动同步一次（经网关，ADMIN）
+curl -s -X POST http://127.0.0.1:8080/ai/admin/corpus/sync
+# 同步后应能看到 29 篇文章 + 11 篇公开笔记（本地库当前口径）
+mysql -h 127.0.0.1 -uroot -p stellar_ink -e "SELECT kind, COUNT(*) FROM ai_content_snapshot GROUP BY kind"
+```
+
 **模型库与角色配置的分工（`deploy/sql/11_ai_model_library.sql`）**
 
 `ai_provider_config` 是 `UNIQUE KEY uk_role`（一个角色一行），所以「再加一个 chat 模型」

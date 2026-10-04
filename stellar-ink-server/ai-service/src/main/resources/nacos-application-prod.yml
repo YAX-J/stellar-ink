@@ -16,6 +16,16 @@
 
 stellar:
   ink:
+    # RAG 语料来源：content-service 的内部只读接口（文章/笔记 → ai_content_snapshot 投影）
+    # ⚠️ 显式地址而不是服务发现（name=content-service）：dev/test 共用同一个 Nacos 命名空间，
+    #    服务发现可能把本机 ai-service 路由到**测试机**上的实例（另一个库、另一批文章），
+    #    表现为「同步过来的语料跟本机库对不上」且日志里没有任何异常。
+    content:
+      base-url: ${CONTENT_SERVICE_URL:http://content-service:8102}
+      # 定时对账式同步：只调 content-service 清单接口 + 写自己的 ai_* 表，不消耗模型额度
+      sync-enabled: ${AI_CORPUS_SYNC_ENABLED:true}
+      sync-interval-ms: ${AI_CORPUS_SYNC_INTERVAL_MS:300000}
+      sync-initial-delay-ms: ${AI_CORPUS_SYNC_INITIAL_DELAY_MS:30000}
     ai:
       # 编排网络内的服务名；改这里可热切换 Python 实例（不重启 ai-service）
       python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}

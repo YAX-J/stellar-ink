@@ -43,6 +43,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.stellarink.ai.corpus.service.CorpusSyncService;
 
 /**
  * Wiki 出口的两道门槛**刻意不同**，所以这个类主要验门槛，而不是验抽取：
@@ -59,6 +60,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(GlobalExceptionHandler.class)
 @ActiveProfiles("unittest")
 class AiWikiControllerTest {
+
+    /**
+     * 语料投影同步：新增 @Service 后，本模块的 @WebMvcTest 切片必须把它 mock 掉 ——
+     * 启动类显式声明了 @ComponentScan，切片会把它连同它的 Feign 客户端与 Mapper 一起装配，
+     * 而 Web 切片里没有 FeignClientFactory、也没有 SqlSessionFactory（踩过一次：12 个切片全红）。
+     */
+    @MockBean
+    private CorpusSyncService corpusSyncService;
 
     @Autowired
     private MockMvc mockMvc;
