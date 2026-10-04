@@ -5,6 +5,7 @@ import com.stellarink.ai.corpus.pojo.AiContentSnapshot;
 import com.stellarink.contentclient.client.ContentCorpusClient;
 import com.stellarink.sharedmodel.enums.CorpusKind;
 import com.stellarink.sharedmodel.response.Response;
+import com.stellarink.sharedmodel.vo.corpus.CorpusContentVO;
 import com.stellarink.sharedmodel.vo.corpus.CorpusItemVO;
 import com.stellarink.sharedmodel.vo.corpus.CorpusSliceVO;
 import com.stellarink.sharedmodel.vo.corpus.CorpusSyncResultVO;
@@ -140,6 +141,10 @@ class CorpusSyncServiceImplTest {
         when(client.slice(isNull(), isNull(), anyInt())).thenReturn(Response.success(first));
         when(client.slice(LocalDateTime.of(2026, 10, 4, 10, 0), null, 1000))
                 .thenReturn(Response.success(second));
+        when(client.content("post", 1L))
+                .thenReturn(Response.success(contentVO(CorpusKind.POST, 1L, "正文一")));
+        when(client.content("post", 2L))
+                .thenReturn(Response.success(contentVO(CorpusKind.POST, 2L, "正文二")));
         when(mapper.selectCount(any())).thenReturn(2L);
 
         CorpusSyncResultVO result = service.sync();
@@ -177,9 +182,96 @@ class CorpusSyncServiceImplTest {
         verify(mapper).deleteByIds(any());
     }
 
+    @Test
+    @DisplayName("正文只为「新增/变更」的文档回取（docHash 没变就不重复拉）")
+    void fetchesContentOnlyForChangedDocs() {
+        when(mapper.selectList(any())).thenReturn(List.of(
+                row(10L, "post", 1L, "hash-1"),
+                row(11L, "post", 2L, "hash-old")));
+        CorpusItemVO unchanged = item(CorpusKind.POST, 1L, "文章一", "hash-1");
+        CorpusItemVO changed = item(CorpusKind.POST, 2L, "文章二", "hash-new");
+        mockUpstream(List.of(unchanged, changed));
+
+        CorpusSyncResultVO result = service.sync();
+
+        assertThat(result.getUnchanged()).isEqualTo(1);
+        assertThat(result.getUpdated()).isEqualTo(1);
+        // 只对变更的那篇取正文 —— 否则每轮都要把整库正文搬一遍
+        verify(client, never()).content("post", 1L);
+        verify(client).content("post", 2L);
+    }
+
+    @Test
+    @DisplayName("新插入的行带着正文（Python 只读这张表，没有别的途径拿正文）")
+    void storesContentOnInsert() {
+        mockUpstream(List.of(item(CorpusKind.POST, 1L, "文章一", "hash-1")));
+        when(mapper.selectCount(any())).thenReturn(1L);
+
+        service.sync();
+
+        ArgumentCaptor<AiContentSnapshot> captor = ArgumentCaptor.forClass(AiContentSnapshot.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getContent()).isEqualTo("正文-1");
+    }
+
+    @Test
+    @DisplayName("清单里有、正文取不到（刚转私有/刚下架）→ 跳过且清掉旧行，绝不沿用旧正文")
+    void unavailableContentIsTreatedAsNotPublic() {
+        when(mapper.selectList(any())).thenReturn(List.of(row(11L, "note", 2L, "hash-old")));
+        CorpusItemVO item = item(CorpusKind.NOTE, 2L, "笔记二", "hash-new");
+        when(client.slice(isNull(), isNull(), anyInt()))
+                .thenReturn(Response.success(slice(List.of(item), false, null)));
+        Response<CorpusContentVO> notFound = new Response<>();
+        notFound.setCode(404);
+        notFound.setMsg("这条笔记不存在或未公开");
+        when(client.content("note", 2L)).thenReturn(notFound);
+
+        CorpusSyncResultVO result = service.sync();
+
+        assertThat(result.getSkipped()).isEqualTo(1);
+        assertThat(result.getUpdated()).isZero();
+        verify(mapper, never()).updateById(any(AiContentSnapshot.class));
+        // 旧行必须被清掉：沿用旧正文正是「私有内容继续被引用」的成因
+        verify(mapper).deleteByIds(any());
+    }
+
+    @Test
+    @DisplayName("取正文时传输层失败 → 整轮失败且不清库（不能把网络抖动当成「不可公开」）")
+    void contentFetchFailureAbortsRound() {
+        when(mapper.selectCount(any())).thenReturn(1L);
+        CorpusItemVO item = item(CorpusKind.POST, 1L, "文章一", "hash-1");
+        when(client.slice(isNull(), isNull(), anyInt()))
+                .thenReturn(Response.success(slice(List.of(item), false, null)));
+        when(client.content("post", 1L)).thenThrow(new IllegalStateException("read timed out"));
+
+        CorpusSyncResultVO result = service.sync();
+
+        assertThat(result.isFailed()).isTrue();
+        assertThat(result.getReason()).contains("read timed out");
+        verify(mapper, never()).deleteByIds(any());
+        verify(mapper, never()).insert(any(AiContentSnapshot.class));
+    }
+
     private void mockUpstream(List<CorpusItemVO> items) {
         when(client.slice(isNull(), isNull(), anyInt()))
                 .thenReturn(Response.success(slice(items, false, null)));
+        // 正文按单篇回取（清单不含正文）—— 默认给一条可用的正文
+        for (CorpusItemVO item : items) {
+            when(client.content(item.getKind().key(), item.getId()))
+                    .thenReturn(Response.success(contentVO(item.getKind(), item.getId(),
+                            "正文-" + item.getId())));
+        }
+    }
+
+    private CorpusContentVO contentVO(CorpusKind kind, Long id, String content) {
+        CorpusContentVO vo = new CorpusContentVO();
+        vo.setKind(kind);
+        vo.setId(id);
+        vo.setTitle("标题");
+        vo.setContent(content);
+        vo.setDocHash("hash");
+        vo.setUpdatedAt(LocalDateTime.of(2026, 10, 4, 10, 0));
+        return vo;
     }
 
     private CorpusSliceVO slice(List<CorpusItemVO> items, boolean truncated, LocalDateTime maxUpdatedAt) {

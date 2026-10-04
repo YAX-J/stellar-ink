@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS `ai_content_snapshot`
     `kind`        VARCHAR(16)  NOT NULL COMMENT 'post / note（与 CorpusKind 的小写字面量一致）',
     `content_id`  BIGINT       NOT NULL COMMENT '该种类下的主键（post.id 或 note.id）',
     `title`       VARCHAR(255) NOT NULL DEFAULT '' COMMENT '标题（清单用，避免为了显示标题再回查上游）',
+    `content`     MEDIUMTEXT   NULL COMMENT '正文（Markdown 原文）。必须存：Python 只允许读 ai_* 表，没有别的途径拿到正文',
     `doc_hash`    CHAR(64)     NOT NULL COMMENT '整篇（标题+正文）SHA-256：判断是否变更、是否需要重嵌',
     `word_count`  INT          NOT NULL DEFAULT 0 COMMENT '字数（上游清单暂未提供时为 0）',
     `updated_at`  DATETIME     NULL COMMENT '上游的最后修改时间（增量拉取的游标）',
@@ -41,6 +42,12 @@ CREATE TABLE IF NOT EXISTS `ai_content_snapshot`
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_general_ci COMMENT ='RAG 语料投影：已发布文章 + 已发布且公开的笔记（可整表重建）';
 
--- 正文**不进这张表**：语料正文在嵌入时按需向上游单篇取（/internal/corpus/{kind}/{id}）。
--- 理由：这张表的用途是「有哪些文档、各自什么版本」，把整库正文复制一份既占空间，
--- 又多了一处「两份正文不一致」的可能 —— 而索引只需要正文一次（嵌入那一刻）。
+-- 正文**存在这张表里**（`content` 列）—— 这一点是被 Python 的边界倒逼出来的：
+-- Python 只允许读 `ai_*` 表（AGENTS §5 红线），它没有任何别的途径拿到文章正文。
+-- 于是投影必须自足：清单（id + docHash）回答「有哪些文档、谁变了」，正文回答「拿什么去切块嵌入」。
+--
+-- 代价与取舍：正文在库里存在两份（`post.content` 与这里）。可以接受，因为
+--   ① 它是**派生数据**，随时可整表重建；
+--   ② 同步只在**新增/变更**时才回取正文（docHash 没变就沿用已存的），
+--      「两份不一致」的窗口只有「上游改了但还没同步」这一段，而那时 docHash 也会变；
+--   ③ 换来索引构建**不依赖 content-service 在线**：上游抖动时仍能重嵌索引。
