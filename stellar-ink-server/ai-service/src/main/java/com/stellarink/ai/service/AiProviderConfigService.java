@@ -35,6 +35,25 @@ public interface AiProviderConfigService {
     /** 对某个角色的端点做一次连通性自检，并把结论记进配置行。 */
     ProviderConnectivityChecker.CheckResult checkConnectivity(AiModelRole role);
 
+    // --------------------------------------------------------------- 个人配置（M12，读者/作者）
+
+    /**
+     * 列出<b>某个用户</b>的个人配置（不含全局那份：面板要能分清「这是我自己配的」）。
+     *
+     * <p>个人配置只放开 chat / fast / reasoning —— 见 {@link ProviderUrlPolicy#isUserScoped(AiModelRole)}：
+     * embedding/rerank 由 Python 侧刻意忽略用户行（向量索引只有一份，换嵌入模型检索是错的）。
+     */
+    List<AiProviderVO> listMine(Long userId);
+
+    /** 保存某个用户的个人配置：地址按「只允许公网」校验，角色必须是用户级角色。 */
+    AiProviderVO saveMine(AiProviderSaveDTO dto, Long userId);
+
+    /** 删除某个用户的个人配置（删完自动回落到全局配置）。 */
+    boolean deleteMine(Long userId, AiModelRole role);
+
+    /** 某个用户的个人配置连通性自检。 */
+    ProviderConnectivityChecker.CheckResult checkMine(Long userId, AiModelRole role);
+
     /**
      * 运行时配置：按角色给出**解密后的**调用参数，供 Python 侧取用。
      *

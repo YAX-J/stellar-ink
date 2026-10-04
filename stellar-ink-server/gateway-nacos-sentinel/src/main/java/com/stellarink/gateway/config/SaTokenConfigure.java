@@ -90,6 +90,18 @@ public class SaTokenConfigure {
      */
     private static final String AI_MEMORY_PREFIX = "/ai/memory/";
 
+    /**
+     * 个人模型配置前缀：**只要登录**（M12：读者/作者都能配自己的模型）。
+     *
+     * <p>⚠️ 同样必须放在「GET 全放行」之前：{@code GET /ai/me/providers} 返回的是
+     * 「这个人用了哪个端点、密钥掩码是什么」，匿名可读等于泄露配置情报。
+     * 角色门槛留空是对的 —— 读者也可以用问答，也可以带自己的模型。
+     *
+     * <p>⚠️ 它**不能**落在 {@link #AI_ADMIN_PREFIX} 里：那条是 ADMIN-only，
+     * 而这一条的整个意义就是「不只是站长」。
+     */
+    private static final String AI_ME_PREFIX = "/ai/me/";
+
     @Bean
     public SaReactorFilter saReactorFilter() {
         return new SaReactorFilter()
@@ -211,9 +223,14 @@ public class SaTokenConfigure {
      *
      * <p>为什么必须显式列出来：网关对 GET 是全放行的，不拦就变成匿名可读 ——
      * 而它返回的是「模型替这个人记住了什么」。
+     *
+     * <p>M12 起**个人模型配置**（{@code /ai/me/**}）走同一条口径：登录即可、不卡角色。
+     * 两者放在一个判断里，是因为它们的要求完全一样（「是谁的东西」而不是「谁能管理」），
+     * 分成两条早晚会有一条被漏在前面。
      */
     static boolean aiRequiresLogin(String path) {
-        return path != null && path.startsWith(AI_MEMORY_PREFIX);
+        return path != null
+                && (path.startsWith(AI_MEMORY_PREFIX) || path.startsWith(AI_ME_PREFIX));
     }
 
     /**

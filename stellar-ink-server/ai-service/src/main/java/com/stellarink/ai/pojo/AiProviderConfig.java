@@ -25,6 +25,11 @@ public class AiProviderConfig {
     private Long id;
 
     /** 逻辑角色键：chat / fast / reasoning / embedding / rerank */
+    /** 0 = 全局配置（站长）；其余为个人配置的 user_id（M12，见 18_ai_user_provider_config.sql）。
+     *  用 0 而不是 NULL：MySQL 唯一索引里 NULL 互不相等，(NULL, 'chat') 能插任意多行，
+     *  「一个角色一行」会静默失效。 */
+    private Long userId;
+
     private String role;
 
     /**
