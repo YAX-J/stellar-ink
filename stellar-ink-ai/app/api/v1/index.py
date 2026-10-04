@@ -1,5 +1,9 @@
 """索引重建（M4 遗留缺口的补齐）：**真嵌真写**向量库。
 
+⚠️ 路径必须与 Java 契约 `AiContractPaths.INDEX_REBUILD`（`/admin/index/rebuild`）**逐字一致**：
+Feign 客户端没有 path 前缀，所以它请求的就是 Python 的这个路径；写错一个字就是 404，
+而报出来的话会是「Python 不可用」，排查方向直接跑偏。
+
 这条链路此前整段缺失：契约（schema/DTO/`AiContractPaths.INDEX_REBUILD`/Feign）齐全，
 但 Python 没有这个路由、Java 没有 controller、`app/` 里也没有任何地方构造 `IndexPipeline` ——
 于是「索引重建」这件事从来没有真正发生过
@@ -57,7 +61,7 @@ def _job(kind: IndexTaskKind, status: IndexJobStatus, posts: int, failed: int = 
     )
 
 
-@router.post("/index/rebuild", summary="重建向量索引（真嵌真写）", response_model=None)
+@router.post("/admin/index/rebuild", summary="重建向量索引（真嵌真写）", response_model=None)
 async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse:
     """按语料重建索引；同步执行完才返回。
 

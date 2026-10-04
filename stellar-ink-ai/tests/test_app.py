@@ -76,7 +76,7 @@ async def test_unknown_path_is_401_without_signature(client: httpx.AsyncClient) 
 EXPOSED_PATHS = {
     "/health",
     # 索引重建（M4 遗留缺口补齐）：受内部签名保护，对外由 ai-service 的 ADMIN 门槛转发
-    "/index/rebuild",
+    "/admin/index/rebuild",
     # 评测台（C 阶段）：受内部签名保护，对外由 ai-service 的 ADMIN 门槛转发
     "/eval/datasets",
     "/eval/strategies",
