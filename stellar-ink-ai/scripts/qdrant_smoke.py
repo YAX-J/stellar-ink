@@ -125,8 +125,20 @@ async def _end_to_end_stage(store: QdrantVectorStore) -> bool:
 
 
 async def main() -> int:
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:6333"
-    store = QdrantVectorStore(QdrantConfig(base_url=base_url, collection=TEMP_COLLECTION))
+    # 先确保 `.env` 已被加载：`QdrantConfig.from_env()` 读的是 `os.environ`，
+    # 而 `.env` 是 `app.core.config` 在 import 期用 load_dotenv 补进去的 ——
+    # 少了这一行，`.env` 里配的 `QDRANT_BASE_URL` **静默不生效**（退回本机默认），
+    # 表现是「配了直连却还去连 127.0.0.1」。import 一下就够了，用它本身没有意义。
+    from app.core.config import ENV_FILE  # noqa: F401  # noqa: PLC0415 - 只为触发 .env 加载
+
+    # 地址优先取命令行，其次环境变量（`QDRANT_BASE_URL`），最后才是本机默认。
+    # 于是「直连测试机」既可以用 `QDRANT_BASE_URL=http://…:6333` 一次配好，
+    # 也能临时 `uv run python scripts/qdrant_smoke.py http://…:6333` 打一枪。
+    base_url = sys.argv[1] if len(sys.argv) > 1 else QdrantConfig.from_env().base_url
+    api_key = QdrantConfig.from_env().api_key
+    store = QdrantVectorStore(
+        QdrantConfig(base_url=base_url, api_key=api_key, collection=TEMP_COLLECTION)
+    )
     try:
         ok = await _protocol_stage(store)
         if ok:

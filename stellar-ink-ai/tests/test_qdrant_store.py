@@ -613,3 +613,43 @@ async def test_hashes_by_post_follows_pagination() -> None:
 
     assert set(grouped) == {1, 2}, "第二页也要读到"
     await store.aclose()
+
+
+# ----------------------------------------------------------------- 地址从环境变量来（直连远端）
+
+
+def test_from_env_keeps_the_local_default_when_unset() -> None:
+    """不配环境变量时**必须**还是本机默认：已有部署靠隧道，不能被这次改动换掉库。"""
+    config = QdrantConfig.from_env({})
+
+    assert config.base_url == "http://127.0.0.1:6333"
+    assert config.collection == "stellar_ink_chunks"
+    assert config.api_key is None
+
+
+def test_from_env_points_at_a_remote_qdrant() -> None:
+    """直连测试机（不开隧道）就靠这一行环境变量。"""
+    config = QdrantConfig.from_env(
+        {"QDRANT_BASE_URL": "http://124.221.158.32:6333", "QDRANT_API_KEY": "qdrant-cloud-key"}
+    )
+
+    assert config.base_url == "http://124.221.158.32:6333"
+    # 密钥只在内存里：describe() 只说「用了哪种认证」，不回密钥
+    assert config.describe()["auth"] == "api_key"
+    assert "qdrant-cloud-key" not in json.dumps(config.describe())
+
+
+def test_from_env_trims_trailing_slash_and_blank_values() -> None:
+    """结尾斜杠会让拼出来的 URL 变成 `//collections/...`；空白值等同没配。"""
+    config = QdrantConfig.from_env(
+        {"QDRANT_BASE_URL": " http://10.0.0.5:6333/ ", "QDRANT_API_KEY": "  "}
+    )
+
+    assert config.base_url == "http://10.0.0.5:6333"
+    assert config.api_key is None
+
+
+def test_from_env_rejects_a_bad_url_with_a_readable_reason() -> None:
+    """填错协议要当场报错（构造期），而不是等检索时报一个看不懂的网络错误。"""
+    with pytest.raises(ValueError, match="http"):
+        QdrantConfig.from_env({"QDRANT_BASE_URL": "124.221.158.32:6333"})
