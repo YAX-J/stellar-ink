@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +49,13 @@ _ID_MASK = 0x7FFF_FFFF_FFFF_FFFF
 
 _ALLOWED_DISTANCES = frozenset({"Cosine", "Euclid", "Dot", "Manhattan"})
 
+#: 环境变量名（`QdrantConfig.from_env`）。默认值一个都不变：
+#: 不配就是「本机 / SSH 隧道」，配了就可以直连测试机或 Qdrant Cloud。
+#: ⚠️ 用 `QDRANT_*` 而不是 `AI_QDRANT_*`：基础设施地址与应用设置分开更好辨认。
+ENV_BASE_URL = "QDRANT_BASE_URL"
+ENV_API_KEY = "QDRANT_API_KEY"
+ENV_COLLECTION = "QDRANT_COLLECTION"
+
 
 def point_id_for(chunk_id: str) -> int:
     """chunk_id → 稳定的 uint64 point id（幂等写入的基础）。"""
@@ -68,6 +76,24 @@ class QdrantConfig:
     api_key: str | None = None
     timeout_ms: int = 10_000
     distance: str = "Cosine"
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> QdrantConfig:
+        """按环境变量构造：`QDRANT_BASE_URL` / `QDRANT_API_KEY`。
+
+        **默认值一个都不变**（`http://127.0.0.1:6333`）：不配就还是「本机 / SSH 隧道」那条老路，
+        已有部署不会因为这次改动换库。需要直连远端（测试机的 6333）或将来用 Qdrant Cloud 时，
+        改环境变量即可，不必改代码。
+
+        ``QDRANT_API_KEY`` 只在内存里（`describe()` 也只回 `auth: api_key|none`）。
+        """
+        source = env if env is not None else os.environ
+        base_url = (source.get(ENV_BASE_URL) or "").strip() or "http://127.0.0.1:6333"
+        api_key = (source.get(ENV_API_KEY) or "").strip() or None
+        collection = (source.get(ENV_COLLECTION) or "").strip() or "stellar_ink_chunks"
+        # 结尾斜杠会让拼出来的 URL 变成 `//collections/...`（Qdrant 能容忍，但日志里难看且
+        # 与 describe() 的输出不一致）—— 这里统一去掉
+        return cls(base_url=base_url.rstrip("/"), collection=collection, api_key=api_key)
 
     def __post_init__(self) -> None:
         if not self.base_url.startswith(("http://", "https://")):

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 
+from app.providers.errors import ProviderError
 from app.rag import corpus as corpus_module
 from app.rag.index_reconcile import reconcile
 from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
@@ -32,19 +34,44 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> int:
+    # 先确保 `.env` 已加载（`app.core.config` 在 import 期 load_dotenv）：
+    # 少了这一行，.env 里的 `QDRANT_BASE_URL` 会静默不生效，退回本机 127.0.0.1
+    from app.core.config import ENV_FILE  # noqa: F401  # noqa: PLC0415 - 只为触发 .env 加载
+
     args = parse_args()
-    config = QdrantConfig(collection=args.collection) if args.collection else QdrantConfig()
+    # 地址走环境变量（`QDRANT_BASE_URL`），默认仍是本机 —— 于是「直连测试机」只改 .env 一行
+    config = QdrantConfig.from_env()
+    if args.collection:
+        config = dataclasses.replace(config, collection=args.collection)
     store = QdrantVectorStore(config)
     try:
         try:
             health = await store.health()
         except Exception as error:  # noqa: BLE001 - 连不上要给人话，不是栈
             print(f"✗ 连不上 Qdrant（{config.base_url}）：{error}")
-            print("  本机需要先开隧道；命令见 deploy/docker/.env.example 末节。")
+            print(
+                "  本机可选两条路：① 开隧道 ssh -N -L 6333:127.0.0.1:6333 <server>；"
+                "② 在 stellar-ink-ai/.env 里设 QDRANT_BASE_URL 直连（例如测试机的 6333）。"
+            )
             return 1
         print(f"Qdrant：{config.base_url} 集合 {config.collection}｜{health}")
 
-        indexed = await store.hashes_by_post()
+        try:
+            indexed = await store.hashes_by_post()
+        except ProviderError as error:
+            # 集合不存在 = **索引一篇都还没建**。这在语义上就是对账的合法输入
+            # （全部文章都要建），不是错误 —— 抛栈会让人以为脚本坏了或 Qdrant 坏了。
+            if "doesn't exist" not in str(error) and "Not found" not in str(error):
+                raise
+            print(
+                f"\n索引还没有建（集合 `{config.collection}` 不存在）："
+                "本次对账按「一篇都没索引」处理。"
+            )
+            print(
+                "  要建索引需要有重建入口 —— 目前**代码里还没有**"
+                "（契约有、路由没有：M4 遗留缺口，见 docs/ai/status.md）。"
+            )
+            indexed = {}
         chunks = corpus_module.cached_corpus()
         plan = reconcile(chunks, indexed)
     finally:
