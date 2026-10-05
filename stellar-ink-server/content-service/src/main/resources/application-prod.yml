@@ -1,5 +1,19 @@
 # 内容服务生产环境配置（敏感项走环境变量）
 spring:
+  # ⚠️ Redis 连接**必须在这里写占位符**（Spring Boot 3.2 只认 SPRING_DATA_REDIS_HOST，
+  #    **不认** REDIS_HOST）。配置里没写这一段时，它会**静默退回 localhost:6379**：
+  #    本机开发恰好 Redis 就在 localhost，所以看不出来；而容器里的 localhost 是容器自己 →
+  #    连接被拒 + Lettuce 连接池耗尽，两个业务服务直接 DOWN。
+  #    （2026-10-05 测试机真实事故；test 档早就有这段，prod/dev 当时漏了。）
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      # prod 档口径与网关一致（dev/test 用 500ms：缓存是旁路，超时到点即回源）
+      timeout: 1s
+      connect-timeout: 2s
   config:
     activate:
       on-profile: prod
