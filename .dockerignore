@@ -15,7 +15,12 @@ tools/
 docs/
 prototype/
 stellar-ink-ai/
-stellar-ink-server/stellar-ink-ai-client/
+# ⚠️ 这里**不要**排除 stellar-ink-server/stellar-ink-ai-client/：它被
+#    stellar-ink-server/pom.xml 声明为子模块（<module>stellar-ink-ai-client</module>），
+#    而 ai-service 依赖它。排除它的后果是镜像构建在第一步就失败：
+#      [ERROR] Child module /build/stellar-ink-ai-client of /build/pom.xml does not exist
+#    （2026-10-05 在测试机上真踩到过。它自己的 target/ 已被上面的 **/target 排除，
+#      不会把宿主的构建产物带进镜像。）
 deploy/sql/
 deploy/scripts/
 deploy/docker/logs/
