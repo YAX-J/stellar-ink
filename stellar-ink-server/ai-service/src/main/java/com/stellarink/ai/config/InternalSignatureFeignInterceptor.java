@@ -3,6 +3,7 @@ package com.stellarink.ai.config;
 import com.stellarink.aiclient.signature.InternalRequestSigner;
 import feign.RequestInterceptor;
 import feign.RequestTemplate;
+import feign.Target;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -34,8 +35,27 @@ public class InternalSignatureFeignInterceptor implements RequestInterceptor {
     private final InternalSecretProvider secretProvider;
     private final InternalCallerProvider callerProvider;
 
+    /**
+     * 只给 **Python 客户端**签名。
+     *
+     * <p>⚠️ 这个拦截器是全局 {@code @Component}，对上下文里**所有** Feign 客户端生效 ——
+     * 包括 Java→content-service 的 `ContentCorpusClient`（RAG 语料读取）。
+     * 而签名里的身份来自**会话**（`AuthHelper.loginId()`），语料同步却是**定时任务**：
+     * 没有登录会话 → 抛 `NotLoginException: 登录状态已失效` → 投影同步每 5 分钟失败一次，
+     * 而且看起来像「content-service 拒绝了我们」。实测（2026-10-05）就是这么发生的。
+     *
+     * <p>所以按客户端名过滤：Python 那条链路的身份是**用户身份**，必须有；
+     * content-service 那条是**服务间调用**，不该假借用户身份（它由内网可达性保证，
+     * 且 `/internal/**` 不配网关路由）。
+     */
+    private static final String PYTHON_CLIENT_NAME = "python-ai";
+
     @Override
     public void apply(RequestTemplate template) {
+        Target target = template.feignTarget();
+        if (target != null && !PYTHON_CLIENT_NAME.equals(target.name())) {
+            return;
+        }
         InternalCallerProvider.Caller caller = callerProvider.current();
         InternalRequestSigner signer = secretProvider.signer();
         Map<String, String> headers = signer.signRequest(
