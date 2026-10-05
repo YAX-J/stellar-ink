@@ -15,6 +15,11 @@ import java.io.Serializable;
  * <p>预算字段（`maxSteps` / `maxToolCalls`）**允许前端收紧**：调试时只想跑一步是合理需求。
  * 但上限被 `@Max` 卡死，且服务端还会再取一次 min —— 放宽预算这件事不能由客户端说了算，
  * 否则「预算」就只是个装饰。
+ *
+ * <p>`agent`（A1 司职）**刻意不加 `@Pattern` 白名单**：可选司职由 Python 的注册表定义，
+ * 在 Java 里再抄一份，就会出现「Python 加了岗位而 Java 还在拦」这种最难查的不一致。
+ * Java 只约束长度（挡无界输入），名字是否有效由 Python 判 —— 它给的 422 消息里带可选值，
+ * 经 `PythonErrorDecoder` 原样交给用户。
  */
 @Data
 public class AiAgentAskDTO implements Serializable {
@@ -25,6 +30,10 @@ public class AiAgentAskDTO implements Serializable {
     @NotBlank(message = "question 不能为空")
     @Size(max = 500, message = "问题不能超过 500 字")
     private String question;
+
+    /** 司职名（answerer / searcher / verifier）；留空由服务端取缺省（与今天的形态一致） */
+    @Size(max = 32, message = "agent 名字过长")
+    private String agent;
 
     /** 最多推理几步（含收尾那一步）；留空用服务端默认 */
     @Min(value = 1, message = "maxSteps 至少为 1")

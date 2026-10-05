@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.AgentVerifyRequestDTO;
+import com.stellarink.aiclient.dto.AgentVerifyResultDTO;
 import com.stellarink.aiclient.dto.AiTraceDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimDTO;
 import com.stellarink.aiclient.dto.AiWikiClaimsResultDTO;
@@ -20,6 +22,8 @@ import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.EvalStrategySpecDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
 import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
+import com.stellarink.aiclient.dto.ProviderModelsRequestDTO;
+import com.stellarink.aiclient.dto.ProviderModelsResultDTO;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
@@ -42,6 +46,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -333,6 +338,9 @@ class AiContractTest {
 
         assertEquals("一年写十八万字的方法是什么？", request.getQuestion());
         assertEquals(4, request.getMaxSteps());
+        // A1 司职：请求带名字、结果回显 —— 两侧都必须真的读这个键
+        assertEquals("searcher", request.getAgent());
+        assertEquals("searcher", result.getAgent(), "不回显司职，前端就不知道「谁答的」");
         assertEquals("length", result.getDoneReason());
         assertEquals("", result.getAnswer(), "预算触顶时答案为空是**正常**形态");
         assertEquals(2, result.getCitations().size(), "没收敛也必须带回已经查到的引用");
@@ -341,6 +349,29 @@ class AiContractTest {
         assertTrue(
                 result.getSteps().stream().anyMatch(step -> step.getError() != null && !step.getError().isEmpty()),
                 "格式不符那一步要留下原因，否则前端看不到「为什么没收敛」");
+    }
+
+    @Test
+    @DisplayName("引用核验（A2）：结论 + 可读问题 + 核对条数都要能读出来（零模型调用那条链路）")
+    void agentVerifyRoundTrips() throws IOException {
+        AgentVerifyRequestDTO request =
+                roundTrip("agent_verify_request.json", AgentVerifyRequestDTO.class);
+        AgentVerifyResultDTO result =
+                roundTrip("agent_verify_result.json", AgentVerifyResultDTO.class);
+
+        assertEquals(2, request.getCitations().size(), "请求带的就是答案后面那份引用");
+        assertEquals("把超时显式地写出来，比默认无限等要安全得多。", request.getCitations().get(1).getSnippet());
+        assertEquals("warn", result.getVerdict());
+        assertEquals(2, result.getChecked(), "checked 是 ok 的可信度分母，不能丢");
+        assertEquals(Boolean.TRUE, result.getEvidenceAvailable());
+        assertEquals(List.of(1, 2), result.getCitedIndexes());
+        assertEquals(List.of(), result.getOutOfRange());
+        assertEquals(Boolean.FALSE, result.getUncited());
+        assertEquals(1, result.getProblems().size(), "warn 必须带可读的问题");
+        assertEquals("snippetNotFound", result.getProblems().get(0).getKind());
+        assertTrue(
+                result.getProblems().get(0).getMessage().contains("找不到"),
+                "问题消息是给人看的：前端直接显示它，不自己按 kind 编文案");
     }
 
     @Test
@@ -432,6 +463,46 @@ class AiContractTest {
     }
 
     @Test
+    @DisplayName("模型清单：请求与结果都能与 Python 契约互通（清单只能来自供应商实时返回）")
+    void providerModelsRoundTrips() throws IOException {
+        ProviderModelsRequestDTO request =
+                roundTrip("provider_models_request.json", ProviderModelsRequestDTO.class);
+        ProviderModelsResultDTO result =
+                roundTrip("provider_models_result.json", ProviderModelsResultDTO.class);
+
+        assertEquals("openai_compatible", request.getProvider());
+        assertEquals("https://api.example.com/v1", request.getBaseUrl());
+        assertEquals("chat", request.getRole());
+        // apiKey 在**请求**里出现一次是契约本身；响应里绝不许有它（下一条断言盯着）
+        assertEquals("sk-fixture-not-a-real-key", request.getApiKey());
+
+        assertEquals(3, result.getModels().size());
+        assertEquals("example-chat", result.getModels().get(0).getId());
+        assertEquals(1730000000L, result.getModels().get(0).getCreated());
+        // 供应商不给 created 是**正常形态**（多数服务不返回）：可空这件事必须有样例守着
+        assertNull(result.getModels().get(2).getCreated(), "created 为空要能读出来，不能报错");
+        assertEquals(Boolean.FALSE, result.getTruncated());
+        // source = 实际请求的 baseUrl：用户据此核对自己填得对不对
+        assertEquals("https://api.example.com/v1", result.getSource());
+    }
+
+    @Test
+    @DisplayName("模型清单的响应 DTO 里没有任何密钥字段（连掩码都没有）")
+    void providerModelsResultHasNoKeyField() throws IOException {
+        ProviderModelsResultDTO result =
+                parse("provider_models_result.json", ProviderModelsResultDTO.class);
+        JsonNode node = MAPPER.valueToTree(result);
+
+        Set<String> keys = keysOf(node);
+        assertEquals(Set.of("models", "truncated", "source"), keys);
+        for (JsonNode model : node.get("models")) {
+            assertEquals(Set.of("id", "created"), keysOf(model), "条目只留 id（外加可选的 created）");
+        }
+        // 别让「顺手加个 apiKeyMask 方便用户核对」溜进契约：这条会在那一刻变红
+        assertFalse(node.toString().contains("apiKey"), "响应里不该出现 apiKey 字段");
+    }
+
+    @Test
     @DisplayName("fixture 里的键名不得出现蛇形（出现即说明某侧私自换了命名）")
     void fixtureKeysAreCamelCase() throws IOException {
         Set<String> files = Set.of(
@@ -443,8 +514,12 @@ class AiContractTest {
                 "writing_style_result.json",
                 "agent_ask_request.json",
                 "agent_ask_result.json",
+                "agent_verify_request.json",
+                "agent_verify_result.json",
                 "index_rebuild_request.json",
                 "index_job.json",
+                "provider_models_request.json",
+                "provider_models_result.json",
                 "eval_run_request.json",
                 "eval_run_response.json",
                 "trace_replay_response.json",
@@ -461,5 +536,12 @@ class AiContractTest {
 
     private static <T> Iterable<T> iterable(java.util.Iterator<T> iterator) {
         return () -> iterator;
+    }
+
+    /** 一个 JSON 对象的键集合（顺序不重要，用于「字段一个不多一个不少」的断言）。 */
+    private static Set<String> keysOf(JsonNode node) {
+        Set<String> keys = new java.util.LinkedHashSet<>();
+        node.fieldNames().forEachRemaining(keys::add);
+        return keys;
     }
 }

@@ -11,8 +11,13 @@ import com.stellarink.aiclient.dto.MemoryExtractResultDTO;
 import com.stellarink.aiclient.dto.MemoryPlanRequestDTO;
 import com.stellarink.aiclient.dto.MemoryPlanResultDTO;
 import com.stellarink.aiclient.dto.MemoryRecallRequestDTO;
-import com.stellarink.aiclient.dto.MemoryRecallResultDTO;import com.stellarink.aiclient.dto.AgentAskRequestDTO;
+import com.stellarink.aiclient.dto.MemoryRecallResultDTO;
+import com.stellarink.aiclient.dto.ProviderModelsRequestDTO;
+import com.stellarink.aiclient.dto.ProviderModelsResultDTO;
+import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
+import com.stellarink.aiclient.dto.AgentVerifyRequestDTO;
+import com.stellarink.aiclient.dto.AgentVerifyResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
@@ -97,6 +102,18 @@ public interface PythonAiClient {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     AgentAskResultDTO agentAsk(@RequestBody AgentAskRequestDTO request);
+
+    /**
+     * 确定性引用核验（A2）：编号越界 / 未标编号 / 片段与原文对不上。
+     *
+     * <p>**它不调用任何模型**：三条判定都是确定性的，原文由 Python 从自己的语料取。
+     * 因此 ai-service 转发它时**不进调用账、不占配额**（账记的是模型调用）。
+     */
+    @PostMapping(
+            value = AiContractPaths.AGENT_VERIFY,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    AgentVerifyResultDTO agentVerify(@RequestBody AgentVerifyRequestDTO request);
 
     /** 触发索引重建任务（ADMIN）。 */
     @PostMapping(
@@ -216,4 +233,21 @@ public interface PythonAiClient {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     MemoryRecallResultDTO memoryRecall(@RequestBody MemoryRecallRequestDTO request);
+
+    /**
+     * 拉取供应商的模型清单（面板「添加模型」的候选来源）。
+     *
+     * <p>它是**实时**的：Python 去请求 {@code {baseUrl}/models}，代码里没有任何预设清单
+     * （AGENTS §5）。{@code apiKey} 留空时由 Python 用该用户**自己**已保存的该角色密钥
+     * （只读他自己的行，不回落到站长那份全局 —— 地址是用户填的，借全局密钥等于泄露它）——
+     * Java 侧不解密、不落库，明文只在这一次请求里出现一次。
+     *
+     * <p><b>它不调用任何模型</b>（零 Token、零费用），因此调用方**不进调用账、不占配额** ——
+     * 与 {@code /agent/verify} 同一条口径（见 {@code AiAgentController.verify}）。
+     */
+    @PostMapping(
+            value = AiContractPaths.PROVIDER_MODELS,
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    ProviderModelsResultDTO providerModels(@RequestBody ProviderModelsRequestDTO request);
 }

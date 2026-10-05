@@ -26,6 +26,9 @@ public class AgentAskResultDTO implements Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
+    /** 本次实际生效的司职（Python 回显）：前端显示「谁答的」，审计据此对账 */
+    private String agent;
+
     /** 最终答案；预算触顶或中断时可能为空 */
     private String answer;
 

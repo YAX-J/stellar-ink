@@ -26,6 +26,14 @@ public final class AiContractPaths {
     /** 只读 Agent（E2）：预算受限的多步检索；工具全部只读 */
     public static final String AGENT_ASK = "/agent/ask";
 
+    /**
+     * 确定性引用核验（A2）：编号越界 / 未标编号 / 片段与原文对不上。
+     *
+     * <p>**零模型调用** —— 三条判定都是确定性的（原文由 Python 从自己的语料取）。
+     * 也正因此它才是独立的端点：它不产出答案，只对「已有的答案 + 引用」下判断。
+     */
+    public static final String AGENT_VERIFY = "/agent/verify";
+
     /** 触发索引重建任务 */
     public static final String INDEX_REBUILD = "/admin/index/rebuild";
 
@@ -60,6 +68,15 @@ public final class AiContractPaths {
 
     /** 可召回集合（M9）：按类型/可信度/有效期过滤，排序确定 */
     public static final String MEMORY_RECALL = "/memory/recall";
+
+    /**
+     * 拉取供应商的模型清单（面板「添加模型」的候选来源）。
+     *
+     * <p>清单**完全由供应商实时返回**（{@code GET {baseUrl}/models}），代码里没有任何
+     * 厂商或模型名的预设（AGENTS §5）。{@code apiKey} 留空时 Python 用该用户已保存的
+     * 该角色密钥（读同一张 {@code ai_provider_config} 表 + 同一把主密钥）。
+     */
+    public static final String PROVIDER_MODELS = "/provider/models";
 
     private AiContractPaths() {
     }

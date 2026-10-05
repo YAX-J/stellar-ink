@@ -4,6 +4,9 @@ import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.AgentAskRequestDTO;
 import com.stellarink.aiclient.dto.AgentAskResultDTO;
 import com.stellarink.aiclient.dto.AgentStepDTO;
+import com.stellarink.aiclient.dto.AgentVerifyProblemDTO;
+import com.stellarink.aiclient.dto.AgentVerifyRequestDTO;
+import com.stellarink.aiclient.dto.AgentVerifyResultDTO;
 import com.stellarink.aiclient.dto.CitationDTO;
 import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
@@ -32,6 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
@@ -44,11 +48,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.stellarink.ai.corpus.service.CorpusSyncService;
 
 /**
- * Agent 出口的权限、预算收紧与「预算触顶不是失败」。
+ * Agent 出口的权限、预算收紧与「预算触顶不是失败」；A2 起还有引用核验的透传与「不记账」。
  *
  * <p>三条必须钉住：门槛是登录、预算**只能被客户端收紧**、
  * 以及 `doneReason=length` 与空答案要**原样透传** ——
  * 在这层「顺手把空答案当失败」会让前端再也看不到「查到这些但没收敛」。
+ *
+ * <p>核验多一条：它**零模型调用**，因此不该进调用账、也不该被配额拦下 ——
+ * 记一笔零成本的调用会让成本看板上的「agent」不再是「模型花了多少」。
  */
 @WebMvcTest(controllers = AiAgentController.class)
 @Import(GlobalExceptionHandler.class)
@@ -110,6 +117,7 @@ class AiAgentControllerTest {
 
     private static AgentAskResultDTO budgetExhausted() {
         AgentAskResultDTO result = new AgentAskResultDTO();
+        result.setAgent("searcher");
         result.setAnswer("");
         result.setDoneReason("length");
         result.setInterruptedBy("budget");
@@ -161,11 +169,54 @@ class AiAgentControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(0))
                     // 预算触顶的形态必须原样透传
+                    .andExpect(jsonPath("$.data.agent").value("searcher"))
                     .andExpect(jsonPath("$.data.doneReason").value("length"))
                     .andExpect(jsonPath("$.data.answer").value(""))
                     .andExpect(jsonPath("$.data.citations[0].postId").value(1))
                     .andExpect(jsonPath("$.data.interruptedBy").value("budget"));
         }
+    }
+
+    @Test
+    @DisplayName("司职透传：客户端点名哪个司职就传给 Python 哪个（Java 不维护白名单）")
+    void agentNameIsPassedThrough() throws Exception {
+        when(pythonAiClient.agentAsk(any())).thenReturn(budgetExhausted());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/ask")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"question\":\"" + QUESTION + "\",\"agent\":\"answerer\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.agent").value("searcher"));
+        }
+
+        ArgumentCaptor<AgentAskRequestDTO> captor = ArgumentCaptor.forClass(AgentAskRequestDTO.class);
+        verify(pythonAiClient).agentAsk(captor.capture());
+        assertEquals(
+                "answerer",
+                captor.getValue().getAgent(),
+                "司职必须原样透传：白名单在 Python 的注册表里，Java 抄一份迟早分叉");
+    }
+
+    @Test
+    @DisplayName("司职留空：传 null 而不是空串（Python 对两者都取缺省，但契约里只该有一种「没给」）")
+    void blankAgentBecomesNull() throws Exception {
+        when(pythonAiClient.agentAsk(any())).thenReturn(budgetExhausted());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/ask")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"question\":\"" + QUESTION + "\",\"agent\":\"   \"}"))
+                    .andExpect(status().isOk());
+        }
+
+        ArgumentCaptor<AgentAskRequestDTO> captor = ArgumentCaptor.forClass(AgentAskRequestDTO.class);
+        verify(pythonAiClient).agentAsk(captor.capture());
+        assertNull(captor.getValue().getAgent(), "空白司职按「没给」处理（由 Python 取缺省）");
     }
 
     @Test
@@ -259,5 +310,120 @@ class AiAgentControllerTest {
         }
 
         assertTrue(true, "走到这里就说明审计日志没有因为 null 而炸");
+    }
+
+    // --------------------------------------------------------------- 引用核验（A2）
+
+    private static AgentVerifyResultDTO warnReport() {
+        AgentVerifyProblemDTO problem = AgentVerifyProblemDTO.builder()
+                .kind("snippetNotFound")
+                .message("第 1 条引用的片段在它标注的原文里找不到 —— 这条引用没有被观察到。")
+                .build();
+        AgentVerifyResultDTO result = new AgentVerifyResultDTO();
+        result.setVerdict("warn");
+        result.setChecked(1);
+        result.setEvidenceAvailable(true);
+        result.setCitedIndexes(List.of(1));
+        result.setOutOfRange(List.of());
+        result.setUncited(false);
+        result.setProblems(List.of(problem));
+        return result;
+    }
+
+    private static String verifyBody(String answer) {
+        return "{\"answer\":\"" + answer + "\",\"citations\":["
+                + "{\"postId\":1,\"title\":\"写作的复利\",\"chunkIndex\":0,"
+                + "\"snippet\":\"每天写五百字。\"}]}";
+    }
+
+    @Test
+    @DisplayName("核验：未登录 401，且不碰下游")
+    void verifyRequiresLogin() throws Exception {
+        mockMvc.perform(post("/ai/agent/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(verifyBody("看 [1]。")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(401));
+
+        verify(pythonAiClient, never()).agentVerify(any());
+    }
+
+    @Test
+    @DisplayName("核验：结论原样透传（verdict/checked/problems 一个都不改）")
+    void verifyPassesTheReportThrough() throws Exception {
+        when(pythonAiClient.agentVerify(any())).thenReturn(warnReport());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/verify")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(verifyBody("看 [1]。")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(0))
+                    .andExpect(jsonPath("$.data.verdict").value("warn"))
+                    .andExpect(jsonPath("$.data.checked").value(1))
+                    .andExpect(jsonPath("$.data.evidenceAvailable").value(true))
+                    // ok 只表示「没查出问题」：checked 必须一起传下去，否则前端没法说清核对了几条
+                    .andExpect(jsonPath("$.data.problems[0].kind").value("snippetNotFound"))
+                    .andExpect(jsonPath("$.data.problems[0].message").exists());
+        }
+    }
+
+    @Test
+    @DisplayName("核验：答案与引用原样传给 Python（Java 不重排、不省略引用）")
+    void verifyForwardsAnswerAndCitations() throws Exception {
+        when(pythonAiClient.agentVerify(any())).thenReturn(warnReport());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/verify")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(verifyBody("看 [1]。")))
+                    .andExpect(status().isOk());
+        }
+
+        ArgumentCaptor<AgentVerifyRequestDTO> captor =
+                ArgumentCaptor.forClass(AgentVerifyRequestDTO.class);
+        verify(pythonAiClient).agentVerify(captor.capture());
+        assertEquals("看 [1]。", captor.getValue().getAnswer());
+        assertEquals(1, captor.getValue().getCitations().size());
+        assertEquals(1L, captor.getValue().getCitations().get(0).getPostId());
+    }
+
+    @Test
+    @DisplayName("核验：引用为空在契约层拦下（没有输入的核验会返回一个会被误读成「核过了」的 ok）")
+    void verifyRejectsEmptyCitations() throws Exception {
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/verify")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"answer\":\"看 [1]。\",\"citations\":[]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(1001));
+        }
+
+        verify(pythonAiClient, never()).agentVerify(any());
+    }
+
+    @Test
+    @DisplayName("核验：**不进调用账**（它零模型调用，记一笔会让成本看板失真）")
+    void verifyIsNotRecordedAsAModelCall() throws Exception {
+        when(pythonAiClient.agentVerify(any())).thenReturn(warnReport());
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+
+            mockMvc.perform(post("/ai/agent/verify")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(verifyBody("看 [1]。")))
+                    .andExpect(status().isOk());
+        }
+
+        // 替身本身就是「真实默认实现透传」，所以这里断言的是**没被调用过**
+        verify(usageService, never()).around(any(), any(), any());
+        verify(usageService, never()).acquireQuota(any());
     }
 }

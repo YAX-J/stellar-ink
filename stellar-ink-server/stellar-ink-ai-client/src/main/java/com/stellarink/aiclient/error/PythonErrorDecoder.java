@@ -70,10 +70,12 @@ public class PythonErrorDecoder implements ErrorDecoder {
      *
      * <p>两处刻意的映射：
      * <ul>
-     *   <li><b>401/403 不映射成 {@code UNAUTHORIZED/FORBIDDEN}</b>：Python 的这两个码
-     *       只可能来自我们自己的内部签名校验（{@code AI_INTERNAL_SECRET} 两侧不一致之类），
-     *       与用户会话无关。映射成 401 会让前端 {@code isAuthError()} 判定为「登录失效」，
-     *       把用户清出登录态 —— 那是完全错误的动作。</li>
+     *   <li><b>401/403 不映射成 {@code UNAUTHORIZED/FORBIDDEN}</b>：Python 的这两个码与我们自己的
+     *       内部签名校验（{@code AI_INTERNAL_SECRET} 两侧不一致之类）无关，与用户会话也无关 ——
+     *       它现在还有一个来源：**用户填给供应商的密钥被上游拒了**（拉取模型清单那条路径，
+     *       见 {@code ProviderAuthError → 401}）。两种都映射成 {@code SERVICE_UNAVAILABLE}
+     *       并把上游那句可操作提示原样交给用户；映射成 401 会让前端 {@code isAuthError()}
+     *       判定为「登录失效」，把用户清出登录态 —— 那是完全错误的动作。</li>
      *   <li><b>429 映射成 {@code SERVICE_UNAVAILABLE}</b>：被上游限流时服务对我们就等于暂时不可用。
      *       仓库的 {@code ErrorCode} 没有「限流」档，而「稍后重试」这层意思由 Python 的消息
      *       （「模型服务限流，请稍后重试」）带给用户。</li>

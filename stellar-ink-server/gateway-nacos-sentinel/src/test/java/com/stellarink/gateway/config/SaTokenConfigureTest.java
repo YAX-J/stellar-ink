@@ -81,6 +81,8 @@ class SaTokenConfigureTest {
         assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers")).isTrue();
         assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers/chat")).isTrue();
         assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers/chat/check")).isTrue();
+        // 拉取供应商模型清单（面板「添加模型」的候选来源）：与保存我的配置同一档
+        assertThat(SaTokenConfigure.aiRequiresLogin("/ai/me/providers/models")).isTrue();
         // 相似前缀不能误判
         assertThat(SaTokenConfigure.aiRequiresLogin("/ai/mex")).isFalse();
         // ⚠️ 它**不能**落进 ADMIN 前缀：那条的整个意义就是「不只是站长」。
