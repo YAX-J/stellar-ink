@@ -7,7 +7,7 @@ Java 只需转发给前端展示与 Copilot 使用，**不参与计算、不做�
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from app.schemas.base import ContractRequest, ContractResponse
 
@@ -50,6 +50,8 @@ class WritingStyleRequest(ContractRequest):
 
     max_samples: Annotated[
         int,
+        # null = 「没给」= 用默认：Pydantic 的 default 只管字段缺失、不管 null（实测 422 的根源）
+        BeforeValidator(lambda value: 20 if value is None else value),
         Field(default=20, ge=1, le=MAX_STYLE_SAMPLES, description="最多分析多少篇"),
     ] = 20
 
