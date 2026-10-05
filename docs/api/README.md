@@ -253,6 +253,7 @@ curl -s http://127.0.0.1:8107/ai/health
 | POST | `/ai/me/providers` | 保存我的配置；`apiKey` 留空表示沿用已存密钥 | 登录 |
 | DELETE | `/ai/me/providers/{role}` | 删除我的配置 → 该角色**自动回落到全局** | 登录 |
 | POST | `/ai/me/providers/{role}/check` | 我这份配置的连通性自检（`scope` 会说明测的是哪一份） | 登录 |
+| **POST** | `/ai/me/providers/models` | **拉取供应商的模型清单**（面板「添加模型」不必再手打模型名）；`apiKey` 留空 = 用**我自己**已保存的该角色密钥（不借站长那份全局） | 登录 |
 
 四条口径（都与「不只是站长」这个前提绑定）：
 
@@ -270,6 +271,69 @@ Python 侧会忽略并警告（双保险）。
 ⚠️ 需要先执行 `deploy/sql/18_ai_user_provider_config.sql`（给 `ai_provider_config`
 加 `user_id` 并把唯一键改成 `(user_id, role)`）。**没执行时不会报错**：Python 会退回旧查询并记一条
 warn，表现是「个人配置保存了但不生效」—— 日志里那句话说明了原因。
+
+**拉取供应商的模型清单（`POST /ai/me/providers/models`）**
+
+面板里的「添加模型」表单此前要**手打模型名**（填错只有等到第一次调用才知道）。
+这个出口让它可以拿着供应商 + Key 把候选拉出来挑 —— 与 DeepSeek Harness 的体验一致。
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/me/providers/models \
+  -H "Authorization: <登录 token>" -H "Content-Type: application/json" \
+  -d '{"provider":"openai_compatible","baseUrl":"https://api.deepseek.com/v1",
+       "apiKey":"sk-xxxx","role":"chat"}'
+# => {"code":0,"data":{"models":[{"id":"deepseek-chat","created":null},
+#                              {"id":"deepseek-reasoner","created":null}],
+#                      "truncated":false,"source":"https://api.deepseek.com/v1"}}
+# apiKey 留空 => 用「我保存的该角色」那把密钥（两处都没有 => code 1001 + 可读提示）
+curl -s -X POST http://127.0.0.1:8080/ai/me/providers/models \
+  -H "Authorization: <登录 token>" -H "Content-Type: application/json" \
+  -d '{"provider":"openai_compatible","baseUrl":"https://api.deepseek.com/v1","role":"chat"}'
+```
+
+请求 `{provider, baseUrl, apiKey?, role?}`（`provider` 沿用现有取值
+`openai_compatible` / `fake`，`role` 默认 `chat`），响应 `{models, truncated, source}`：
+
+- **清单完全由供应商实时返回**：Python 去请求 `GET {baseUrl}/models`
+  （OpenAI 兼容协议的标准端点）。**代码里没有任何厂商或模型名的预设**
+  （AGENTS §5「面板是模型的唯一来源」）—— 预置一份的后果是「面板里明明有，一填就 404」。
+- `apiKey` **可为空**：为空时用**该用户自己**已保存的该角色配置里的密钥（Python 直接读同一张
+  `ai_provider_config` 表、用同一把主密钥解密，**但只读他自己那一行**）；
+  他自己没配过 → **400 + 可读提示**。
+  ⚠️ **刻意不回落到站长那份全局配置**：`baseUrl` 是用户自己填的，借出全局密钥就等于让任何
+  登录用户把站长的 Key 发往他控制的公网地址（一次请求偷一把 Key）。所以他用自己的密钥、
+  去自己填的地址；地址只允许公网（防 SSRF）与这一条是同一个理由的两面。
+- `source` = **实际请求的 `baseUrl`**（绝不含密钥），让用户核对自己填得对不对；
+  `truncated` = 是否因**条数上限（200）**被截断，界面据此提示「还有更多，请手填完整名字」。
+- **明文密钥只用一次**：它只作为这一次请求的 `Authorization` 头出现，
+  不落库、不进日志、不进审计、**不进响应（连掩码都不回）**；
+  Python 侧还会拒掉带查询串/锚点的地址（`/models` 要拼在它后面，且那可能是「密钥塞进 URL」那条路）。
+- **限条数 + 短超时 + 只取 `id`**：响应是形状未知的外部输入（可能上千条、可能是畸形结构），
+  没有 `id` 的条目丢掉、按 `id` 去重、最多留 200 条；读取超时 5 秒 / 连接 3 秒
+  （拉列表是辅助信息，用对话那档 30 秒不可接受）；响应体超过 4 MiB 在读的时候就中止。
+- **失败分档**（沿用 `provider_error_status` 的既有口径，不另造一套）：
+  **400** 参数/未配置（未知角色、未知协议、地址不合规、没有可用的密钥）；
+  **401** 密钥无效（上游 401/403）；**429** 被限流；
+  **502** 不可达 / 不支持 `/models`（含解析失败、响应过大）。
+  ⚠️ Java 侧 401/429 都翻成同一条「服务不可用」+ 上游原话（见 `PythonErrorDecoder`），
+  **不会**被前端当成「登录失效」。
+- **`fake` 协议也能走通**：回它自己那**一个**标识（`models:[{"id":"fake"}]`），
+  且 `source` 是字面量 `fake` 而不是 URL —— 我们没有向任何地址发过请求，写成地址就是替它说谎。
+- **不进调用账、不占配额**（与 `/ai/agent/verify` 同一口径）：拉清单零模型调用（零 Token、零费用），
+  记一笔零成本的调用会让成本看板上的数字不再是「模型花了多少」。
+- **辅助信息失败不得影响主流程**：拉取失败不改动任何已保存配置（这个出口一个字都不写）。
+
+⚠️ 这个出口的门槛是**登录**（挂在 `/ai/me/**` 上），因此地址按「个人配置」那一档**只允许公网**：
+站长要拉自建推理服务（`127.0.0.1`）的模型清单时，这条路径会返回 400 ——
+两者口径必须一致，否则它就成了绕过 SSRF 闸门的第二条路。
+
+Python 侧对应端点是 `POST /provider/models`（内部签名保护，不配网关路由）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8200/provider/models \
+  -H "Content-Type: application/json" -H "X-AI-Signature: <HMAC>" \
+  -d '{"provider":"openai_compatible","baseUrl":"https://api.example.com/v1","apiKey":"sk-xxxx"}'
+```
 
 **模型配置（全部 ADMIN）**
 
@@ -799,29 +863,52 @@ curl -s -X POST http://127.0.0.1:8080/ai/writing/style \
   `notes` 里带着实际篇数与字数门槛，作者一眼知道还差多少。
 - 当前端入口：执笔页侧栏 Copilot 面板里的「我的写作画像」折叠块（默认收起，只读）。
 
-**只读 Agent（E2：预算受限的多步检索）**
+**只读 Agent（E2：预算受限的多步检索；A1 起按司职可配）**
 
 | 方法 | 路径（**经网关**） | 说明 | 鉴权 |
 |---|---|---|---|
-| POST | `/ai/agent/ask` | 多步检索问答：请求体 `{question, maxSteps?, maxToolCalls?}`，响应 `{answer, citations, doneReason, steps, toolCalls, interruptedBy, usageModel, latencyMs}` | **登录** |
+| POST | `/ai/agent/ask` | 多步检索问答：请求体 `{question, agent?, maxSteps?, maxToolCalls?}`，响应 `{agent, answer, citations, doneReason, steps, toolCalls, interruptedBy, usageModel, latencyMs}` | **登录** |
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/ai/agent/ask \
   -H "Authorization: <token>" -H "Content-Type: application/json" \
   -d '{"question":"一年写十八万字的方法是什么？","maxSteps":4}'
-# => {"code":0,"data":{"answer":"","citations":[…],"doneReason":"length",
+# => {"code":0,"data":{"agent":"searcher","answer":"","citations":[…],"doneReason":"length",
 #     "steps":[{"index":0,"thought":"…","tool":"search_posts","label":"检索到 2 段","error":""}],
 #     "toolCalls":1,"interruptedBy":"budget","usageModel":"fake","latencyMs":42}}
 ```
 
+- **司职（agent/profile）**：`agent` 可选，取值由 Python 侧的注册表定义。本批三个：
+
+  | 司职 | 中文名 | 工具 | 说明 |
+  |---|---|---|---|
+  | `searcher`（**缺省**） | 检索助手 | `search_posts` | 今天 `/agent/ask` 的形态：ReAct 循环 + 只读工具 |
+  | `answerer` | 生成助手 | 无 | 无工具纯生成：检索前置 + 一次生成（`steps` 为空、`toolCalls=0`） |
+  | `verifier` | 核验员 | 无 | **不产出答案**：做的是 `/ai/agent/verify` 的确定性核验（零模型调用）；点名它走 `/ai/agent/ask` 会得到一句指路的 400 |
+
+  - `maxSteps` / `maxToolCalls` 只对**有工具**的司职有意义（当前只有 `searcher`）：
+    `answerer` 是「检索 + 一次生成」，`steps` 恒为空、`toolCalls` 恒为 0。
+  - **留空 = `searcher`**（等价于今天的形态）；写错名字返回 **422**，消息里列出可选司职 ——
+    **不猜、不回退默认**：回退会让「拼错名字」表现成「跑完了但答得不对」，账单里记的还是另一个岗位。
+  - **`agent` 回显**在响应里：前端据此显示「谁答的」，审计据此对账。
+  - 司职只在 Python 侧注册（`app/agents/registry.py`）；Java **不维护白名单**，
+    它只把名字透传并把 Python 的 422 原样交给用户 —— 在 Java 抄一份可选值，迟早与 Python 分叉。
+  - 内网还有一条 `GET /agent/profiles`（直连 Python :8200，受内部签名保护）：返回
+    `{defaultAgent, agents:[{name,title,toolNames,scene,maxSteps,maxToolCalls}]}` 供前端取清单。
+    它**不出口提示词**（提示词走 `/prompts`）。
 - **门槛是登录**，与一次问答相同：Agent 查的仍是站内已发布文章，
   不比问答多出任何权限 —— 这一点必须守住，否则「Agent」会变成绕过权限的借口。
 - **工具全部只读**，且是**装不进来**而不是运行期判断：`ToolBox` 构造时会拒绝
   `read_only=False` 的工具（红线 §7.4：第一版 Agent 工具全只读）。
+  司职只能**声明要哪几个**（白名单，`profile.toolNames`），声明了没实现的工具名会在装配期直接报错，
+  不会静默少装 —— 「提示词里说能查 X、实际没装 X」会让模型反复调用一个不存在的工具。
 - **预算是硬上限**，三个都要：步数、工具调用次数、观察字符数。任一触顶立即收尾并如实标
   `doneReason=length`。只限步数挡不住「一步里塞十个工具调用」，只限次数挡不住
   「一次观察把整篇文章灌回来」。**服务端默认 4 步 / 6 次**，比契约上限（8 / 12）更紧，
-  且客户端只能收紧（`bounded()` 取 min）—— 预算不能由每个请求自己决定。
+  且客户端只能收紧 —— 这一条现在是**两层夹取**：
+  ① Java（`AiAgentController.bounded`）取 `min(请求值, 4/6)`；
+  ② Python 再按**该司职声明的预算**取一次 min（`profile.settings`）。
+  两侧都只减不增，所以「Java 放行」不等于「真的会跑那么多步」——预算不能由每个请求自己决定。
 - **`doneReason=length` 不是失败**：此时 `answer` 可能为空，但 `citations` 往往有值 ——
   前端要显示「查到了这些，但没能在预算内收敛」。Java 侧**原样透传**，
   绝不会因为「答案为空」就改成错误。
@@ -836,15 +923,55 @@ curl -s -X POST http://127.0.0.1:8080/ai/agent/ask \
 - **前端入口**：阅读页侧栏「问星笺」面板里的**模式切换** ——「一次问答」/「深挖（多步）」；
   深挖的结果会显示**每一步做了什么**（工具名 + 短标签/错误）与预算状态。
   默认停在「一次问答」：深挖更慢也更贵，必须是用户主动切过去。
-- ⚠️ **预算只能收紧**：`maxSteps` / `maxToolCalls` 会与**服务端默认**（4 步 / 6 次）取更小值
-  （`AiAgentController.bounded`；契约上限 8 / 12）。所以界面**不能**承诺「6 步」——
-  传 6 也只会跑 4。前端两档是「快一点（3 步）」与「标准（不带该字段，由服务端决定）」。
+- ⚠️ **预算只能收紧（两层）**：`maxSteps` / `maxToolCalls` 先与 **Java 服务端默认**
+  （4 步 / 6 次，`AiAgentController.bounded`；契约上限 8 / 12）取更小值，
+  到了 Python 再与**该司职声明的预算**取一次更小值（`profile.settings`）。所以界面**不能**
+  承诺「6 步」—— 传 6 也只会跑 4。前端两档是「快一点（3 步）」与「标准（不带该字段，由服务端决定）」。
 - **`doneReason=length` 不是失败**：`answer` 可能为空但 `citations` 往往有值 ——
   前端要显示「预算内没收敛，下面是这几步查到的东西」。三种「没给出答案」的形态必须分开：
   **预算用尽 / 用户停止 / 请求失败**（只有最后一种进 `error`）。
 - **停止会真的中止请求**：`api/client.js` 的 `request()` 现在接受调用方的 `signal`
   （不接的话「停止」只是本地不再等，服务端照样跑完多步检索 —— 白烧钱）。
   服务端只在**步与步之间**检查中断，所以界面说的是「已停止等待」而不是「已取消」。
+
+**引用核验（A2：确定性的那一半，零模型调用）**
+
+| 方法 | 路径（**经网关**） | 说明 | 鉴权 |
+|---|---|---|---|
+| POST | `/ai/agent/verify` | 核对「答案 + 引用」：请求体 `{answer, citations}`，响应 `{verdict, checked, evidenceAvailable, citedIndexes, outOfRange, uncited, problems}` | **登录** |
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/ai/agent/verify \
+  -H "Authorization: <token>" -H "Content-Type: application/json" \
+  -d '{"answer":"靠的是每天五百字 [1]。","citations":[{"postId":1,"title":"写作的复利",
+       "chunkIndex":0,"snippet":"每天写五百字，一年就是十八万字。"}]}'
+# => {"code":0,"data":{"verdict":"ok","checked":1,"evidenceAvailable":true,
+#     "citedIndexes":[1],"outOfRange":[],"uncited":false,"problems":[]}}
+```
+
+- **判三件事，全都是确定性的**（所以**一个模型都不调**）：
+  ① 答案里的 `[n]` **越界**（超出引用条数）；② 答案**一个编号都没标**（有引用却没说清谁来自哪）；
+  ③ 每条引用的**片段是否真的出现在它标注的原文里**（原文由 Python 从自己的语料取）。
+- **为什么先做这一半**：核验的价值在于能判对错，而这三条不需要模型就能判，
+  可以立刻上界面、也能进单测。「语义核验」（用模型逐条判断论断有没有依据）留给下一轮 ——
+  它要以「片段确实存在」打底。
+- ⚠️ **`verdict=ok` 只表示「没查出问题」，不等于「这段答案是对的」**：
+  所以 `checked`（回查到原文的条数）与 `evidenceAvailable` 必须一起显示 ——
+  界面说「已核对 N 条引用」，**不要说**「答案已核实」。
+  `evidenceAvailable=false` 时 `checked` 必然为 0：那是「没能核对原文」，不是「引用没问题」。
+- **`problems[].kind`**：`outOfRange` / `uncited` / `snippetNotFound` / `unknownChunk`
+  （最后一种 = 引用指向的段落不在当前语料里：文章可能在检索之后被改过，或索引需要重建）；
+  `message` 是给人看的中文，前端**直接显示**，不要自己按 `kind` 再编一句文案。
+- **`uncited` 不等于「没有依据」**：没有引用（拒答）时它是 `false`；
+  它说的是「检索到了，但答案没标哪句来自哪条」——两者在界面上的措辞必须不同。
+- **引用编号的解析只有一份**（`app/rag/agent.py::parse_citation_marks`）：
+  只认 `[数字]`，`[见上文]` / `[1,2]` 不算 —— 猜它们的语义会把「没标」说成「标了」。
+- **零模型调用是有断言盯着的**：Java 侧不透传记账（**不进调用账、不占配额**），
+  Python 侧连取模型的入口都不碰。理由：它一旦偷偷多花一次模型调用，
+  账单上看到的是「问答变贵了」；而把不花钱的核验拦在配额外面，
+  会让用户以为「额度用完了，连核验都不能用」。
+- **内网原始端点**：`POST /agent/verify`（直连 Python :8200，受内部签名保护）。
+  Java 侧只做透传与日志（**不记答案原文与引用片段** —— 那些是文章正文）。
 
 **MCP 工具服务（E3-3：标准化的只读工具协议面）**
 

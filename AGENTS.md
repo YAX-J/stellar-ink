@@ -561,8 +561,13 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   例如「角色 X 尚未配置模型（请在 AI 实验室 → 模型配置里填写）」）。Java 侧由
   `PythonErrorDecoder`（全局 Bean，见 `PythonAiClientConfig`）把它翻成 `PythonApiException`，
   **消息一字不改地交给用户**；新加 Feign 方法不需要额外处理。
-  ⚠️ 两个刻意的映射：Python 的 401/403 只可能来自内部签名校验，**不能**映射成
-  `UNAUTHORIZED`（前端会据此清会话把用户踢出去）；429 映射成「服务不可用」但保留上游那句「稍后重试」。
+  ⚠️ 两个刻意的映射：Python 的 401/403 **有两个来源** —— 内部签名校验（`AI_INTERNAL_SECRET`
+  两侧不一致之类），或**上游供应商拒绝了那把密钥**（`ProviderAuthError → 401`，见
+  `app/main.py` 的 `provider_error_status`）。两种都**不能**映射成 `UNAUTHORIZED`：
+  前端 `isAuthError()` 据此清会话，会为了「你填的 Key 无效」把正在填表单的用户踢回登录页，
+  而这件事只有换一把 Key 能解决。所以 `PythonErrorDecoder` 一律翻成「服务不可用 + 上游原话」，
+  打供应商那一类请求（拉模型清单）另带前端 `ownErrors`、从会话失效链路上摘出去。
+  429 映射成「服务不可用」但保留上游那句「稍后重试」。
   契约外的错误体（网关 HTML、FastAPI 的 `{detail}`）退回默认行为，**不得回显上游原文**。
   ⚠️ 这里**没有** Feign 降级工厂：曾经有一个 `PythonAiClientFallbackFactory`，但 ai-service 没有
   circuit breaker 依赖（Spring Cloud OpenFeign 会忽略 `fallbackFactory`），它从不生效、已删除。
