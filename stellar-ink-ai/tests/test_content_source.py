@@ -48,7 +48,7 @@ def test_missing_database_config_reports_unavailable(
         monkeypatch.delenv(key, raising=False)
 
     with pytest.raises(CorpusSourceUnavailable) as error:
-        content_source.load_snapshot_posts()
+        content_source.load_snapshot_docs()
 
     assert "MYSQL_HOST" in str(error.value)
 
@@ -91,7 +91,7 @@ def test_missing_table_message_names_the_migration(monkeypatch: pytest.MonkeyPat
     monkeypatch.setitem(__import__("sys").modules, "pymysql", _Pymysql)
 
     with pytest.raises(CorpusSourceUnavailable) as error:
-        content_source.load_snapshot_posts()
+        content_source.load_snapshot_docs()
 
     message = str(error.value)
     assert "19_ai_content_snapshot.sql" in message

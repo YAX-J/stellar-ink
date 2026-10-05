@@ -35,7 +35,7 @@ def test_prompt_without_memories_has_no_memory_section() -> None:
     prompt = _user_prompt("怎么写短句", [_excerpt()])
 
     assert "长期记忆" not in prompt
-    assert "文章摘录：" in prompt
+    assert "站内摘录：" in prompt
     assert "[1]《夜里的写法》" in prompt
 
 
@@ -46,7 +46,7 @@ def test_memories_come_with_their_own_warning() -> None:
     assert "- 作者偏好短句" in prompt
     assert "- 作者不再写第二季" in prompt
     # 记忆段在摘录**之前**：先定语气，再给证据
-    assert prompt.index("长期记忆") < prompt.index("文章摘录：")
+    assert prompt.index("长期记忆") < prompt.index("站内摘录：")
     # 与摘录冲突时以摘录为准 —— 这条不能少，否则记忆会盖过语料
     assert "以摘录为准" in MEMORY_PROMPT
 

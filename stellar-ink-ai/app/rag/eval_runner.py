@@ -51,10 +51,17 @@ class RetrievedHit:
     post_id: int
     score: float
     text: str
+    #: 内容种类（`post` / `note`）。引用要按它决定跳 `/read/:id` 还是 `/note/:id`；
+    #: 默认 `post` 让「只有文章」的老数据与老用例照旧工作。
+    kind: str = "post"
 
 
 @dataclass(frozen=True, slots=True)
 class RetrievalOutcome:
+    #: 命中的**文章**数字 id（按排名去重）。**刻意不含笔记**：评测黄金集与统计口径
+    #: 至今只覆盖文章（`expectedPostIds` 是纯数字 id），而文章 3 与笔记 3 是两个文档 ——
+    #: 把笔记 id 混进来会让「命中笔记 3」被算成「命中文章 3」，评测数字静默虚高。
+    #: 笔记命中在 `hits` 里（每条带 `kind`），引用组装用的是那一份。
     posts: list[int]
     chunks: list[str] = field(default_factory=list)
     cited_chunks: list[str] = field(default_factory=list)

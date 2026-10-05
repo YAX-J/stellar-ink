@@ -1,7 +1,7 @@
 """契约共享类型：引用、用量、错误与可选值。"""
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -70,8 +70,15 @@ class AiErrorCode(StrEnum):
 class Citation(ContractModel):
     """引用：必须能定位回原文，M3 起由检索结果填充。"""
 
-    post_id: int = Field(description="引用文章 ID")
-    title: str = Field(description="引用文章标题")
+    #: 内容种类：`post`（文章，跳 ``/read/:id``）或 `note`（技术笔记，跳 ``/note/:id``）。
+    #: **文档标识是 `kind + post_id`** —— 文章 3 与笔记 3 是两篇，
+    #: 前端拿它决定跳哪个页面。默认 `post` 让「只有文章」时的老响应照旧可用。
+    kind: Literal["post", "note"] = Field(
+        default="post",
+        description="引用的是文章（post）还是技术笔记（note）",
+    )
+    post_id: int = Field(description="该 kind 下的文档 ID（文章 ID 或笔记 ID）")
+    title: str = Field(description="引用文档标题")
     chunk_index: int = Field(ge=0, description="段落序号（从 0 开始）")
     snippet: str = Field(min_length=1, description="引用的原文片段")
     score: float | None = Field(default=None, description="检索/重排得分，可空")

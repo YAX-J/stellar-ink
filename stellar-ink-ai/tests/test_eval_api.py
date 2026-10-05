@@ -66,9 +66,17 @@ async def test_default_run_returns_the_standard_comparison_table(app: FastAPI, s
 
     assert status == 200
     assert payload["dataset"] == "公开文章黄金集 v1"
-    assert payload["corpusSource"].startswith("seed-sql:")
-    assert payload["corpusPosts"] == 29
-    assert payload["corpusChunks"] == 41
+    # 语料来源**如实透出**即可：这条断言不绑定某一份语料。
+    # 曾经写死 `startswith("seed-sql:")`，而 B-5④ 把语料切到线上投影表之后就一直是红的
+    # —— 红着的测试等于没有测试（它不再保护任何东西，只是让人习惯忽略失败）。
+    assert payload["corpusSource"], "要能说出这批数字是在哪份数据上算的"
+    # 篇数与**当前**语料现算比对（同样不绑定具体数字）
+    from app.rag import corpus as corpus_module  # noqa: PLC0415 - 只有这条用例需要
+
+    assert payload["corpusPosts"] == len(
+        corpus_module.cached_posts(kinds=corpus_module.ARTICLE_KINDS)
+    ), "评测用的语料必须与问答/Agent 是同一份（只吃文章，见 corpus.ARTICLE_KINDS）"
+    assert payload["corpusChunks"] > 0
     assert payload["models"] == "fake"
     keys = [row["key"] for row in payload["strategies"]]
     assert keys == ["sparse", "dense", "hybrid", "hybrid+rerank", "sparse+floor"]

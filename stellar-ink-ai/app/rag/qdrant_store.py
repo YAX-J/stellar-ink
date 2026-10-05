@@ -137,6 +137,9 @@ class VectorPoint:
     post_id: int
     vector: list[float]
     payload: dict[str, Any] = field(default_factory=dict)
+    #: 内容种类（`post` / `note`）。写进 payload：删除与对账都要按 `(kind, id)` 来，
+    #: 否则文章 3 与笔记 3 会互相删到对方。
+    kind: str = "post"
 
     def __post_init__(self) -> None:
         if self.post_id <= 0:
@@ -149,19 +152,27 @@ class VectorPoint:
         return point_id_for(self.chunk_id)
 
     def to_body(self) -> dict[str, Any]:
-        payload = {**self.payload, "chunkId": self.chunk_id, "postId": self.post_id}
+        payload = {
+            **self.payload,
+            "chunkId": self.chunk_id,
+            "postId": self.post_id,
+            "kind": self.kind,
+        }
         return {"id": self.point_id, "vector": list(self.vector), "payload": payload}
 
 
 @dataclass(frozen=True, slots=True)
 class VectorHit:
-    """检索结果：既给排序用的分数，也给引用定位用的 chunk_id / post_id。"""
+    """检索结果：既给排序用的分数，也给引用定位用的 chunk_id / post_id / kind。"""
 
     point_id: int
     chunk_id: str
     post_id: int
     score: float
     payload: dict[str, Any] = field(default_factory=dict)
+    #: 内容种类：引用据此决定跳 `/read/:id` 还是 `/note/:id`。
+    #: 缺失按 `post`（笔记接入之前索引的点没有这个字段）。
+    kind: str = "post"
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,18 +252,25 @@ class QdrantVectorStore:
             post_id=chunk.post_id,
             vector=list(vector),
             payload=payload,
+            kind=chunk.kind,
         )
 
     async def sample_model_fingerprint(self) -> str | None:
         """随便取一条已索引的点，读出它的 `modelFingerprint`。
 
-        :return 指纹；**索引为空时返回 None**（那是「还没建」，不是「不一致」）。
+        :return 指纹；**集合还不存在、或索引为空时返回 None** —— 那是「还没建」，
+            不是「不一致」。⚠️ 集合不存在必须走"还没有索引"这条路而不是抛 404：
+            首次开向量库时索引本来就是空的，而这里的异常会一路冒成 500，
+            把「还没建索引」说成「服务坏了」。
         """
-        payload = await self._request(
+        response = await self._send(
             "POST",
             f"{_COLLECTIONS}/{self._config.collection}{_SCROLL_PATH}",
             json={"limit": 1, "with_payload": True, "with_vector": False},
         )
+        if response.status_code == 404:  # 集合不存在 = 还没建索引（与 collection_info 同口径）
+            return None
+        payload = self._decode(response)
         points = payload.get("result", {}).get("points", [])
         if not points:
             return None
@@ -385,10 +403,13 @@ class QdrantVectorStore:
             raise ProviderUnavailableError("Qdrant 检索响应缺少 result 数组")
         return [_hit_from_row(row) for row in results]
 
-    async def hashes_by_post(
+    async def hashes_by_docs(
         self, *, page_size: int = 256, max_points: int = 200_000
-    ) -> dict[int, set[str] | None]:
-        """把索引里**已有点的段落哈希**按文章读回来（增量索引对账用，M4）。
+    ) -> dict[tuple[str, int], set[str] | None]:
+        """把索引里**已有点的段落哈希**按文档读回来（增量索引对账用，M4）。
+
+        文档标识是 `(kind, id)`：文章 3 与笔记 3 是两个文档，按数字 id 归并会让
+        「重建文章」把笔记的那份哈希当成自己的，进而漏掉真正该重建的那一篇。
 
         三条设计：
 
@@ -397,10 +418,10 @@ class QdrantVectorStore:
         * **滚动分页**：Qdrant 的 scroll 用 `next_page_offset` 翻页；这里按
           `page_size` 一直翻到没有下一页，并有 `max_points` 上限防止集合大到把内存吃光
           （到上限就停，宁可这次对账不完整也不要 OOM —— 对账是幂等的，再跑一次即可）。
-        * **payload 没有 `contentHash` 的文章记成 `None`**：调用方据此判定「要重建」。
+        * **payload 没有 `contentHash` 的文档记成 `None`**：调用方据此判定「要重建」。
           这里**不猜**（比如拿 chunkId 充数），因为猜错的后果是改动永远进不了索引。
         """
-        grouped: dict[int, set[str]] = {}
+        grouped: dict[tuple[str, int], set[str]] = {}
         offset: Any = None
         scanned = 0
         while True:
@@ -433,29 +454,69 @@ class QdrantVectorStore:
                 if not isinstance(post_id, int):
                     # 连 postId 都没有的点：不知道属于哪篇，跳过（它本身就该被清理）
                     continue
+                key = (_kind_of_payload(point_payload), post_id)
                 content_hash = point_payload.get("contentHash")
                 if isinstance(content_hash, str) and content_hash:
-                    grouped.setdefault(post_id, set()).add(content_hash)
+                    grouped.setdefault(key, set()).add(content_hash)
                 else:
                     # 显式记成 None：调用方会按「要重建」处理（见方法 docstring）
-                    grouped.setdefault(post_id, set())
+                    grouped.setdefault(key, set())
             offset = result.get("next_page_offset")
             if offset is None or scanned >= max_points:
                 break
-        # 空集合的文章换成 None，让「读不到哈希」与「哈希为空」在调用方看来是同一件事
-        return {post_id: (hashes or None) for post_id, hashes in grouped.items()}
+        # 空集合的文档换成 None，让「读不到哈希」与「哈希为空」在调用方看来是同一件事
+        return {key: (hashes or None) for key, hashes in grouped.items()}
 
-    async def delete_by_post_ids(self, post_ids: Sequence[int]) -> None:
-        """按文章删点：文章改动/删除后重建索引时用，避免旧片段继续被引用。"""
-        if not post_ids:
+    async def delete_by_docs(self, keys: Sequence[tuple[str, int]]) -> None:
+        """按**文档标识** `(kind, id)` 删点：内容改动 / 删除 / 转为不可见后重建索引时用。
+
+        为什么不能只按 `postId` 删：文章 3 与笔记 3 是两个文档，只按数字 id 删，
+        重建笔记会顺手删掉同号文章，而日志里什么都看不出来。
+
+        ⚠️ 文章的过滤要**额外带上「kind 字段缺失」这一支**：笔记接入之前索引的点没有
+        `kind` 字段，而 Qdrant 对**不存在的 payload 字段做匹配是一条都不命中的** ——
+        少了这一支，升级后第一次重建就删不掉任何旧点，旧片段会继续被检索、引用指向旧正文。
+        """
+        grouped: dict[str, set[int]] = {}
+        for kind, content_id in keys:
+            grouped.setdefault(kind, set()).add(int(content_id))
+        if not grouped:
             return
-        body = {"filter": {"must": [{"key": "postId", "match": {"any": list(post_ids)}}]}}
+        clauses: list[dict[str, Any]] = []
+        for kind, ids in sorted(grouped.items()):
+            if kind == "post":
+                clauses.append(
+                    {
+                        "must": [
+                            {"key": "postId", "match": {"any": sorted(ids)}},
+                            {
+                                "should": [
+                                    {"key": "kind", "match": {"value": "post"}},
+                                    {"is_empty": {"key": "kind"}},
+                                ]
+                            },
+                        ]
+                    }
+                )
+            else:
+                clauses.append(
+                    {
+                        "must": [
+                            {"key": "kind", "match": {"value": kind}},
+                            {"key": "postId", "match": {"any": sorted(ids)}},
+                        ]
+                    }
+                )
         await self._request(
             "POST",
             f"{_COLLECTIONS}/{self._config.collection}{_DELETE_PATH}",
             params={"wait": "true"},
-            json=body,
+            json={"filter": {"should": clauses}},
         )
+
+    async def delete_by_post_ids(self, post_ids: Sequence[int]) -> None:
+        """按**文章**数字 id 删点（便捷入口，等价于 `delete_by_docs([("post", id), …])`）。"""
+        await self.delete_by_docs([("post", int(post_id)) for post_id in post_ids])
 
     async def delete_collection(self) -> None:
         """删除整个集合（重建索引、或冒烟脚本收尾时用）。
@@ -517,7 +578,20 @@ def _hit_from_row(row: Any) -> VectorHit:
         post_id=int(post_id),
         score=float(row.get("score", 0.0)),
         payload=payload,
+        kind=_kind_of_payload(payload),
     )
+
+
+def _kind_of_payload(payload: Any) -> str:
+    """payload 里的 `kind`；缺失或非法按 `post`。
+
+    缺失是**正常的**：笔记接入之前索引的点没有这个字段，而它们全是文章。
+    """
+    if isinstance(payload, dict):
+        kind = payload.get("kind")
+        if isinstance(kind, str) and kind in {"post", "note"}:
+            return kind
+    return "post"
 
 
 def _dimension_of(result: dict[str, Any]) -> int | None:

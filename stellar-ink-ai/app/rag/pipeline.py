@@ -46,6 +46,9 @@ class PostLike(Protocol):
     def post_id(self) -> int: ...
 
     @property
+    def kind(self) -> str: ...
+
+    @property
     def title(self) -> str: ...
 
     @property
@@ -75,15 +78,20 @@ class IndexedChunk:
     payload: dict[str, object] = field(default_factory=dict)
     #: 文章标题：引用与提示词都要它（`text` 里虽然有，但那是给检索用的整段，拆出来更稳）
     title: str = ""
+    #: 内容种类（`post` / `note`）：文档标识是 `kind + post_id`（见 `chunking.Chunk`）
+    kind: str = "post"
 
 
 def build_corpus(
     posts: Sequence[PostLike], config: ChunkingConfig | None = None
 ) -> list[IndexedChunk]:
-    """把文章切成检索单元：只保留子块（父块是喂上下文的，不参与召回）。"""
+    """把语料文档（文章与笔记）切成检索单元：只保留子块（父块是喂上下文的，不参与召回）。"""
     chunks: list[IndexedChunk] = []
     for post in posts:
-        document = PostDocument(post_id=post.post_id, title=post.title, content=post.plain)
+        kind = _kind_of(post)
+        document = PostDocument(
+            post_id=post.post_id, title=post.title, content=post.plain, kind=kind
+        )
         for chunk in chunk_document(document, config):
             if chunk.chunk_type != "child":
                 continue
@@ -94,9 +102,16 @@ def build_corpus(
                     text=f"{post.title}\n{chunk.text}",
                     payload=chunk.to_payload(),
                     title=post.title,
+                    kind=kind,
                 )
             )
     return chunks
+
+
+def _kind_of(post: object) -> str:
+    """文档的内容种类；缺属性按 `post`（种子包与老数据都只有文章）。"""
+    kind = getattr(post, "kind", None)
+    return kind if isinstance(kind, str) and kind else "post"
 
 
 class VectorHitLike(Protocol):
@@ -107,6 +122,9 @@ class VectorHitLike(Protocol):
 
     @property
     def post_id(self) -> int: ...
+
+    @property
+    def kind(self) -> str: ...
 
     @property
     def score(self) -> float: ...
@@ -126,6 +144,14 @@ class VectorStore(Protocol):
         top_k: int,
         score_threshold: float | None = None,
     ) -> Sequence[VectorHitLike]: ...
+
+    async def assert_model_fingerprint(self, expected: str | None = None) -> str | None:
+        """校验库里的向量是不是**当前嵌入模型**建的。
+
+        换模型之后向量不在同一空间里，检索**不会报错**、只会返回毫无意义的结果 ——
+        所以这条校验是「链路全对、结果全错」唯一能自动发现的地方。
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +235,9 @@ class RetrievalPipeline:
     _vectors: list[list[float]] | None = field(default=None, init=False)
     _positions: dict[str, int] = field(default_factory=dict, init=False)
     _embed_calls: int = field(default=0, init=False)
+    #: 指纹校验只在每个管道实例上做一次（管道本身按「语料版本 + 配置指纹」缓存，
+    #: 换模型会换一个实例，所以一次就够；每问一句都去 scroll 一次是白花的延迟）
+    _fingerprint_checked: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         if self.max_concurrency is not None and self.max_concurrency < 1:
@@ -241,7 +270,14 @@ class RetrievalPipeline:
 
         走向量库（`dense_store`）时**不需要**本地向量：嵌入交给向量库那一侧（索引时已算好），
         这样检索期只花一次「查询嵌入」的钱，也不必把整库向量塞进内存。
+
+        走向量库时另做一件事：**校验库里的向量是不是当前嵌入模型建的**。
+        换模型之后两边不在同一空间，而检索不会报错 —— 只会返回错的结果，
+        所以这层校验是那种「链路全对、结果全错」唯一能自动发现的地方。
         """
+        if self.dense_store is not None and not self._fingerprint_checked:
+            await self.dense_store.assert_model_fingerprint()
+            self._fingerprint_checked = True
         if self._sparse is None:
             self._sparse = Bm25Index(
                 min_score=self.config.min_score,
@@ -284,20 +320,26 @@ class RetrievalPipeline:
             )
 
         ranked = await self._rerank(question, candidates)
-        accepted_posts: list[int] = []
+
+        def key_of(candidate: ScoredChunk) -> tuple[str, int]:
+            """文档标识：`(kind, id)`。文章 3 与笔记 3 是两个文档。"""
+            chunk = self.corpus[candidate.chunk_index]
+            return (chunk.kind, chunk.post_id)
+
+        # 去重按文档标识而不是数字 id：只按 id 去重会把「文章 3 / 笔记 3」里的一个
+        # 悄悄丢掉，而排名看起来完全正常，引用却少了一整条。
+        accepted: list[tuple[str, int]] = []
+        accepted_set: set[tuple[str, int]] = set()
         for candidate in ranked:
-            post_id = self.corpus[candidate.chunk_index].post_id
-            if post_id not in accepted_posts:
-                accepted_posts.append(post_id)
-            if len(accepted_posts) >= top_k:
+            key = key_of(candidate)
+            if key not in accepted_set:
+                accepted_set.add(key)
+                accepted.append(key)
+            if len(accepted) >= top_k:
                 break
 
-        # 引用只算「真正送进上下文」的块：属于被接受文章的那些，顺序与排名一致
-        cited = [
-            candidate
-            for candidate in ranked
-            if self.corpus[candidate.chunk_index].post_id in accepted_posts
-        ]
+        # 引用只算「真正送进上下文」的块：属于被接受文档的那些，顺序与排名一致
+        cited = [candidate for candidate in ranked if key_of(candidate) in accepted_set]
         chunks = [self.corpus[candidate.chunk_index].chunk_id for candidate in cited]
         hits = [
             RetrievedHit(
@@ -305,6 +347,7 @@ class RetrievalPipeline:
                 post_id=self.corpus[candidate.chunk_index].post_id,
                 score=float(candidate.score),
                 text=self.corpus[candidate.chunk_index].text,
+                kind=self.corpus[candidate.chunk_index].kind,
             )
             for candidate in cited
         ]
@@ -312,9 +355,9 @@ class RetrievalPipeline:
             "retrieval",
             topK=top_k,
             candidates=len(candidates),
-            posts=len(accepted_posts),
+            posts=len(accepted),
             chunks=len(chunks),
-            refused=not accepted_posts,
+            refused=not accepted,
             latencyMs=_elapsed_ms(started),
             # 开关也记下来：排障时「这次为什么没走向量」几乎总是配置问题
             sparse=self.config.enable_sparse,
@@ -322,7 +365,9 @@ class RetrievalPipeline:
             rerank=self.config.enable_rerank,
         )
         return RetrievalOutcome(
-            posts=accepted_posts,
+            # 只放**文章**的数字 id（评测与统计口径只覆盖文章，理由见 RetrievalOutcome 的注释）；
+            # 笔记命中在 hits 里，每条带 kind —— 引用组装与提示词用的是那一份。
+            posts=[post_id for kind, post_id in accepted if kind == "post"],
             chunks=chunks,
             refused=False,
             latency_ms=_elapsed_ms(started),

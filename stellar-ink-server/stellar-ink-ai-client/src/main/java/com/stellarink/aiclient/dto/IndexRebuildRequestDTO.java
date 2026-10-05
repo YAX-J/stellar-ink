@@ -21,8 +21,16 @@ public class IndexRebuildRequestDTO implements Serializable {
 
     private IndexTaskKind kind;
 
-    /** {@code post_rebuild} 时的目标文章 ID */
+    /** {@code post_rebuild} 时的目标文档 ID（配合 {@link #contentKind} 定位） */
     private Long postId;
+
+    /**
+     * {@code post_rebuild} 时的内容种类：{@code post}（文章，默认）或 {@code note}（技术笔记）。
+     *
+     * <p>文档标识是 {@code contentKind + postId} —— 文章 3 与笔记 3 是两个文档，
+     * 只给数字 id 会一次命中两篇。全量重建忽略本字段。</p>
+     */
+    private String contentKind;
 
     /** 触发原因，写入审计日志便于回溯 */
     private String reason;

@@ -14,7 +14,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter
 
-from app.rag.corpus import cached_posts
+from app.rag.corpus import ARTICLE_KINDS, cached_posts
 from app.rag.pipeline import PostLike
 from app.rag.style import StyleSettings, build_style_profile
 from app.schemas.style import WritingStyleProfile, WritingStyleRequest, WritingStyleResult
@@ -37,11 +37,15 @@ load_corpus = cached_posts
 def _samples_for(author_id: int, max_samples: int) -> list[PostLike]:
     """取该作者的已发布文章。
 
+    **只吃文章**（`ARTICLE_KINDS`）：画像的采样与统计口径一直是「文章」，
+    而语料里现在也有笔记；混进来会改变所有既有数字，也会让「作者 3 的画像」
+    把笔记算进去 —— 那是另一个体裁。
+
     种子内容包只有已发布文章（草稿不入种子），因此这里没有额外的可见性过滤；
     **接上真实数据源时这一条必须显式写成 `status = published`** —— 草稿进画像
     等于把未发表内容泄露进提示词（红线 §7.3）。
     """
-    owned = [post for post in load_corpus() if post.author_id == author_id]
+    owned = [post for post in load_corpus(kinds=ARTICLE_KINDS) if post.author_id == author_id]
     return owned[:max_samples]
 
 

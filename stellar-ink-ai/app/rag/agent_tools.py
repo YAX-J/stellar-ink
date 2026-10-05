@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.rag.agent import ToolResult, ToolSpec
+from app.rag.chunking import kind_label
 from app.rag.pipeline import IndexedChunk, RetrievalPipeline
 from app.rag.qa import QaSettings
 from app.rag.style import StyleSettings, build_style_profile
@@ -72,10 +73,13 @@ class SearchPostsTool:
                     label="索引不一致",
                 )
             snippet = _snippet(chunk, self.snippet_chars)
-            title = chunk.title or f"文章 {chunk.post_id}"
-            lines.append(f"[{index}]《{title}》(postId={chunk.post_id})：{snippet}")
+            title = chunk.title or f"{kind_label(chunk.kind)} {chunk.post_id}"
+            # 摘录里把 kind 一起标出来：模型要给引用时得知道这是文章还是笔记
+            # （只给 postId，文章 3 与笔记 3 在它眼里是同一个数字）
+            lines.append(f"[{index}]《{title}》({chunk.kind}:{chunk.post_id})：{snippet}")
             citations.append(
                 Citation(
+                    kind=chunk.kind,
                     post_id=chunk.post_id,
                     title=title,
                     chunk_index=_chunk_index(chunk),

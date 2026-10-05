@@ -318,9 +318,10 @@ async def test_search_tool_returns_citable_snippets() -> None:
     assert result.citations, "语料里有答案却检索不到，说明接线错了"
     citation = result.citations[0]
     assert citation.post_id == 1
+    assert citation.kind == "post", "引用要带内容种类，前端才能跳对页面"
     assert citation.snippet, "引用必须带原文片段，否则无法定位"
     assert citation.score is not None, "分数要带回来（前端按相关性展示）"
-    assert "postId=1" in result.summary, "摘要里要有 postId，模型才能据此标引用"
+    assert "post:1" in result.summary, "摘要里要有文档标识（kind:id），模型才能据此标引用"
 
 
 async def test_search_tool_reports_no_evidence_as_a_result() -> None:

@@ -6,6 +6,7 @@ M0 只冻结任务对象与状态语义：ADMIN 触发全量/按文章重建，�
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field
 
@@ -40,7 +41,17 @@ class IndexRebuildRequest(ContractRequest):
     post_id: int | None = Field(
         default=None,
         ge=1,
-        description="``post_rebuild`` 时的目标文章 ID",
+        description="``post_rebuild`` 时的目标文档 ID（配合 ``content_kind`` 定位）",
+    )
+
+    content_kind: Literal["post", "note"] | None = Field(
+        default=None,
+        description="``post_rebuild`` 时的内容种类：文章（``post``）或技术笔记（``note``）。"
+        "文档标识是 ``content_kind + post_id`` —— 文章 3 与笔记 3 是两个文档，"
+        "只给数字 id 会一次命中两篇。全量重建忽略本字段。"
+        "**缺省与显式 null 都按 ``post``**：Java 侧的 DTO 字段默认是 null，"
+        "而 Jackson 默认会把 null 一起发出来 —— 这里不收 null 的话，"
+        "「全量重建」会因为一个它根本不用的字段被 422 掉。",
     )
 
     reason: str | None = Field(

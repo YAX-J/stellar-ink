@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from app.api.v1.style import load_corpus
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
+from app.rag.corpus import ARTICLE_KINDS, corpus_source, reset_corpus
 from app.rag.style import TRANSITION_WORDS
 from tests.signing import FIXED_TIMESTAMP_MS, call, load_vector, signed_headers
 
@@ -48,7 +49,8 @@ def secret() -> str:
 @pytest.fixture()
 def app(secret: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.core.internal_auth.time.time", lambda: FIXED_TIMESTAMP_MS / 1000)
-    load_corpus.cache_clear()
+    # 语料缓存有 TTL，且换代入口只有这一个（`cached_posts` 不再暴露 `cache_clear`）
+    reset_corpus()
     return create_app(verifier=InternalRequestVerifier(secret))
 
 
@@ -82,19 +84,26 @@ async def test_style_returns_the_profile_contract(app: FastAPI, secret: str) -> 
     assert payload["notes"], "口径说明要透出：前端要能告诉作者这些数字怎么来的"
 
 
-async def test_style_measures_the_seed_corpus(app: FastAPI, secret: str) -> None:
-    """种子语料里作者 1 写得够多：必须能量出画像，而不是「样本不足」。
+async def test_style_measures_the_corpus_in_use(app: FastAPI, secret: str) -> None:
+    """作者 1 写得够多：必须能量出画像，而不是「样本不足」。
 
     下面的数字是**实测值**（不是算出来的期望）：换了语料或改了统计口径就会红，
     这正是要的效果 —— 静默变化的指标比错误的指标更难发现。
+
+    ⚠️ 它们绑定的是**线上投影语料**（本机库里的已发布文章）。语料来源不可用时
+    （没有 `MYSQL_*`、回退种子包的环境）这条用例不适用：数字本来就不同，那不是回归。
+    曾经写死数字却没有这层门控，于是语料从种子包切到投影表那天起它就一直红着。
     """
+    if "ai_content_snapshot" not in corpus_source():
+        pytest.skip(f"这条用例钉的是线上投影语料的实测值，当前语料：{corpus_source()}")
+
     _, payload = await post_style(app, secret, {"authorId": SEED_AUTHOR_ID})
     profile = payload["profile"]
 
     assert profile["sampleCount"] == 20, "默认最多取 20 篇"
-    assert profile["charCount"] == 3071
-    assert profile["sentenceCount"] == 124
-    assert profile["medianSentenceChars"] == 24.0
+    assert profile["charCount"] == 2648
+    assert profile["sentenceCount"] == 108
+    assert profile["medianSentenceChars"] == 23.0
     # 短句占比与问句占比是比例：必须落在 [0,1]
     assert 0 <= profile["shortSentenceRatio"] <= 1
     assert 0 <= profile["questionRatio"] <= 1
@@ -104,7 +113,7 @@ async def test_style_measures_the_seed_corpus(app: FastAPI, secret: str) -> None
     # 而它在语料里只出现 1 次，根本进不了前 5（终端的乱码让我误判了真实内容）。
     # 取样范围必须与接口一致（**只数被取中的那 20 篇**）：作者 1 共有 25 篇，
     # 拿全部 25 篇去数会得到另一份排名，测试就会以一种「差一位」的形态红给你看。
-    sampled = [post for post in load_corpus() if post.author_id == 1][:20]
+    sampled = [post for post in load_corpus(kinds=ARTICLE_KINDS) if post.author_id == 1][:20]
     corpus = "".join(post.title + "\n" + post.plain for post in sampled)
     counted = sorted(
         ((word, corpus.count(word)) for word in TRANSITION_WORDS if corpus.count(word)),
@@ -123,7 +132,7 @@ async def test_max_samples_really_limits_the_sample(app: FastAPI, secret: str) -
 async def test_common_phrases_are_habits_not_quotes(app: FastAPI, secret: str) -> None:
     """画像进提示词，因此**不允许出现完整原句**（模型会照抄，读者一眼看得出来）。"""
     _, payload = await post_style(app, secret, {"authorId": SEED_AUTHOR_ID})
-    corpus = load_corpus()
+    corpus = load_corpus(kinds=ARTICLE_KINDS)
 
     phrases = payload["profile"]["commonPhrases"]
     assert phrases, "作者 1 的文章里应当有反复出现的字组"

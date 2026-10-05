@@ -39,6 +39,14 @@ _SENTENCE_END = re.compile(r"(?<=[。！？；!?;])|(?<=\.)\s+")
 #: 代码块围栏
 _FENCE = re.compile(r"^\s*```")
 
+#: 内容种类的中文名（引用标题的回退文案、日志与提示词都用它）
+_KIND_LABEL = {"post": "文章", "note": "笔记"}
+
+
+def kind_label(kind: str) -> str:
+    """内容种类的中文名。未知种类按「文章」—— 不会更准，但也不会更错。"""
+    return _KIND_LABEL.get(kind, "文章")
+
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
@@ -59,12 +67,16 @@ class Chunk:
     char_end: int
     content_hash: str
     version: str
+    #: 内容种类（`post` / `note`）。**文档标识是 `kind + post_id`**：
+    #: 文章 3 与笔记 3 是两篇，引用要按它跳到不同页面，删除也要按它删。
+    kind: str = "post"
 
     def to_payload(self) -> dict[str, object]:
         """转成 Qdrant payload 的键值形态（键名与 Java/Python 契约保持驼峰）。"""
         return {
             "chunkId": self.chunk_id,
             "postId": self.post_id,
+            "kind": self.kind,
             "chunkType": self.chunk_type,
             "chunkIndex": self.chunk_index,
             "parentIndex": self.parent_index,
@@ -99,7 +111,7 @@ class ChunkingConfig:
 
 @dataclass(slots=True)
 class PostDocument:
-    """待索引的文章：只带索引需要的字段，不掺业务字段。"""
+    """待索引的一篇文档（文章或笔记）：只带索引需要的字段，不掺业务字段。"""
 
     post_id: int
     title: str
@@ -107,11 +119,14 @@ class PostDocument:
     tags: list[str] = field(default_factory=list)
     published_at: datetime | None = None
     author_id: int | None = None
+    #: 内容种类（`post` / `note`），默认文章（种子包与老数据都只有文章）
+    kind: str = "post"
 
     def to_metadata(self) -> dict[str, object]:
-        """文章级元数据：写进每个 chunk 的 payload，检索时按它过滤/展示。"""
+        """文档级元数据：写进每个 chunk 的 payload，检索时按它过滤/展示。"""
         return {
             "postId": self.post_id,
+            "kind": self.kind,
             "title": self.title,
             "tags": list(self.tags),
             "publishedAt": self.published_at.isoformat() if self.published_at else None,
@@ -201,7 +216,7 @@ def _make_chunk(
     content_hash = hashlib.sha256(stripped.encode("utf-8")).hexdigest()
     return Chunk(
         # chunk_id 必须稳定且可复现：重索引时同一片段要得到同一 id（幂等的前提）
-        chunk_id=f"p{doc.post_id}:v{version}:{chunk_type[:1]}{index}",
+        chunk_id=f"{_doc_prefix(doc)}:v{version}:{chunk_type[:1]}{index}",
         post_id=doc.post_id,
         chunk_type=chunk_type,
         chunk_index=index,
@@ -212,7 +227,20 @@ def _make_chunk(
         char_end=end,
         content_hash=content_hash,
         version=version,
+        kind=doc.kind,
     )
+
+
+def _doc_prefix(doc: PostDocument) -> str:
+    """`chunk_id` 里的文档标识。
+
+    文章**刻意保持历史格式**（`p3`，不带 kind）：向量库的点 id 是 `uuid5(chunk_id)`，
+    改前缀会让所有已索引的文章变成新 id —— 那是一次没有任何收益的全量重嵌
+    （免费档每天 50 次嵌入，跑不完）。笔记是这一刀新增的内容，直接写成 `note-11`。
+
+    两种内容因此不会撞 id：文章 3 是 `p3`，笔记 3 是 `note-3`。
+    """
+    return f"p{doc.post_id}" if doc.kind == "post" else f"{doc.kind}-{doc.post_id}"
 
 
 def _split_sections(text: str) -> list[tuple[str, str, int]]:

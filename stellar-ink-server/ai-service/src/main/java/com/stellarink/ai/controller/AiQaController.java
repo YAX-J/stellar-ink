@@ -7,6 +7,7 @@ import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.service.AiMemoryService;
 import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.support.AskHistoryMapper;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
 import com.stellarink.sharedmodel.response.Response;
@@ -69,6 +70,8 @@ public class AiQaController {
                 .question(request.getQuestion().trim())
                 .topK(request.getTopK())
                 .memories(memories)
+                // 多轮：历史由浏览器回送，Java 只做形态映射（见 AskHistoryMapper）
+                .history(AskHistoryMapper.toInternal(request.getHistory()))
                 .build();
 
         QaAnswerDTO answer = usageService.around(

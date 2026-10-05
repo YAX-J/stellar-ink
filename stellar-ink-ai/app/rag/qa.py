@@ -21,10 +21,11 @@ from dataclasses import dataclass, field
 
 from app.providers.base import ChatModel, model_tag_of
 from app.providers.models import ChatMessage, ChatResponse, MessageRole, TokenUsage
+from app.rag.chunking import kind_label
 from app.rag.eval_runner import RetrievedHit
 from app.rag.pipeline import IndexedChunk, RetrievalPipeline
 from app.schemas.common import Citation, DoneReason, Usage
-from app.schemas.qa import MAX_CITATIONS, QaAnswer, QaStreamRequest
+from app.schemas.qa import MAX_CITATIONS, HistoryTurn, QaAnswer, QaStreamRequest
 from app.schemas.qa_stream import (
     StreamEvent,
     citation_event,
@@ -64,6 +65,16 @@ MEMORY_PROMPT = (
     "下面是这位作者本人的长期记忆（来自以往对话，**不是文章内容**）。"
     "只用它来调整语气与取舍，比如更贴合他的偏好；"
     "**不要**把它当作文章里的事实来陈述，也不要给它编号引用。"
+    "如果它与摘录冲突，以摘录为准。"
+)
+
+#: 历史段的说明（多轮助手）。理由与记忆段一样，但更容易被搞混：
+#: 历史里装的是**模型自己上一轮说过的话** —— 把它当证据，
+#: 等于让模型拿自己的旧答案当出处，而那段旧答案本来也可能引用错了。
+HISTORY_PROMPT = (
+    "下面是本次会话里前面的问答（**不是站内内容，也不是证据**）。"
+    "只用它理解这次追问在问什么（比如「那它呢」「上面那个报错」指的是哪件事）；"
+    "**不要**把它当作事实陈述，也不要据它编号或引用。"
     "如果它与摘录冲突，以摘录为准。"
 )
 
@@ -169,7 +180,9 @@ class QaService:
 
         excerpts = self._excerpts(outcome.hits)
         citations = [self._citation(excerpt) for excerpt in excerpts]
-        messages = self._messages(request.question, excerpts, request.memories)
+        messages = self._messages(
+            request.question, excerpts, request.memories, request.history
+        )
         response = await self.chat.chat(
             messages, temperature=self.settings.temperature, max_tokens=self.settings.max_tokens
         )
@@ -243,7 +256,9 @@ class QaService:
         for citation in citations:
             yield citation_event(citation)
 
-        messages = self._messages(request.question, excerpts, request.memories)
+        messages = self._messages(
+            request.question, excerpts, request.memories, request.history
+        )
         async for event in self._stream_answer(messages, len(citations), int(outcome.latency_ms)):
             yield event
 
@@ -336,11 +351,18 @@ class QaService:
         return model_tag_of(self.chat)
 
     def _messages(
-        self, question: str, excerpts: list[_Excerpt], memories: Sequence[str] = ()
+        self,
+        question: str,
+        excerpts: list[_Excerpt],
+        memories: Sequence[str] = (),
+        history: Sequence[HistoryTurn] = (),
     ) -> list[ChatMessage]:
         return [
             ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT),
-            ChatMessage(role=MessageRole.USER, content=_user_prompt(question, excerpts, memories)),
+            ChatMessage(
+                role=MessageRole.USER,
+                content=_user_prompt(question, excerpts, memories, history),
+            ),
         ]
 
     def _refusal(self, latency_ms: float) -> QaAnswer:
@@ -383,8 +405,10 @@ class QaService:
         chunk = excerpt.chunk
         raw_index = chunk.payload.get("chunkIndex")
         return Citation(
+            # 文档标识是 kind + post_id：前端据此跳 /read/:id 还是 /note/:id
+            kind=chunk.kind,
             post_id=chunk.post_id,
-            title=chunk.title or f"文章 {chunk.post_id}",
+            title=chunk.title or f"{kind_label(chunk.kind)} {chunk.post_id}",
             # payload 的值是 object：类型不对时回退 0，而不是让 int() 在运行期抛错
             chunk_index=raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0,
             snippet=excerpt.snippet,
@@ -402,16 +426,31 @@ def _snippet(chunk: IndexedChunk, limit: int) -> str:
     return raw if len(raw) <= limit else raw[:limit].rstrip() + "…"
 
 
-def _user_prompt(question: str, excerpts: list[_Excerpt], memories: Sequence[str] = ()) -> str:
-    """拼用户消息。记忆段放在摘录**之前**并单独标注（见 `MEMORY_PROMPT`）。"""
+def _user_prompt(
+    question: str,
+    excerpts: list[_Excerpt],
+    memories: Sequence[str] = (),
+    history: Sequence[HistoryTurn] = (),
+) -> str:
+    """拼用户消息。
+
+    记忆段与历史段都放在摘录**之前**并各自单独标注（见 `MEMORY_PROMPT` / `HISTORY_PROMPT`）：
+    先说明「哪些是可以依据的」，再给证据 —— 反过来会让模型把上下文混成一锅。
+    """
     lines: list[str] = []
     if memories:
         lines.append(MEMORY_PROMPT)
         lines.extend(f"- {item}" for item in memories)
         lines.append("")
+    if history:
+        lines.append(HISTORY_PROMPT)
+        for turn in history:
+            lines.append(f"- 问：{turn.question}")
+            lines.append(f"  答：{turn.answer}")
+        lines.append("")
     lines.append(f"问题：{question}")
     lines.append("")
-    lines.append("文章摘录：")
+    lines.append("站内摘录：")
     for excerpt in excerpts:
         title = excerpt.chunk.title or excerpt.chunk.post_id
         lines.append(f"[{excerpt.number}]《{title}》：{excerpt.snippet}")

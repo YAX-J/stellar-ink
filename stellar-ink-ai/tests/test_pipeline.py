@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from app.providers.errors import ProviderError
 from app.providers.models import (
     EmbeddingResponse,
     RerankResponse,
@@ -104,15 +105,23 @@ class _Hit:
 
 
 class _VectorStore:
-    """假向量库：只实现管道需要的 search，并记录调用参数。"""
+    """假向量库：实现管道需要的 search 与指纹校验，并记录调用参数。"""
 
-    def __init__(self, hits: list[_Hit]) -> None:
+    def __init__(self, hits: list[_Hit], *, fingerprint_error: Exception | None = None) -> None:
         self._hits = hits
+        self._fingerprint_error = fingerprint_error
         self.calls: list[tuple[list[float], int, float | None]] = []
+        self.fingerprint_checks = 0
 
     async def search(self, vector, *, top_k, score_threshold=None):
         self.calls.append((list(vector), top_k, score_threshold))
         return list(self._hits)
+
+    async def assert_model_fingerprint(self, expected=None):
+        self.fingerprint_checks += 1
+        if self._fingerprint_error is not None:
+            raise self._fingerprint_error
+        return None
 
 
 def test_corpus_keeps_child_chunks_with_title_prefix() -> None:
@@ -319,6 +328,44 @@ async def test_dense_store_drives_the_dense_path() -> None:
     assert vector == _vector_for("苹果")
     assert outcome.posts == [2, 1], "顺序以向量库返回的分数为准"
     assert pipeline.embed_calls == 1, "只花一次查询嵌入"
+
+
+async def test_dense_store_fingerprint_is_checked_once_before_search() -> None:
+    """走向量库时先校验「库里的向量是哪个模型建的」。
+
+    换嵌入模型之后两边不在同一向量空间：检索**不会报错**，只会返回错的东西 ——
+    这类「链路全对、结果全错」只能靠这层校验发现。
+    """
+    corpus = build_corpus([A, B, C])
+    store = _VectorStore([_Hit(chunk_id=corpus[0].chunk_id, post_id=1, score=0.5)])
+    pipeline = _pipeline(
+        RetrievalConfig(enable_sparse=False, enable_dense=True),
+        embedder=_Embedder(_vector_for),
+        dense_store=store,
+        corpus=corpus,
+    )
+
+    await pipeline.retrieve("苹果", top_k=2)
+    await pipeline.retrieve("苹果", top_k=2)
+
+    assert store.fingerprint_checks == 1, "每个管道实例只校验一次，不必每问一句都去 scroll"
+
+
+async def test_dense_store_fingerprint_mismatch_fails_loudly() -> None:
+    """指纹不一致要当场报错，而不是拿错的结果回答用户。"""
+    store = _VectorStore(
+        [],
+        fingerprint_error=ProviderError("索引里的向量是用另一个嵌入模型建的"),
+    )
+    pipeline = _pipeline(
+        RetrievalConfig(enable_sparse=False, enable_dense=True),
+        embedder=_Embedder(_vector_for),
+        dense_store=store,
+        corpus=build_corpus([A, B, C]),
+    )
+
+    with pytest.raises(ProviderError, match="另一个嵌入模型"):
+        await pipeline.retrieve("苹果", top_k=2)
 
 
 async def test_dense_store_without_threshold_passes_none() -> None:

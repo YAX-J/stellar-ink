@@ -19,7 +19,9 @@ Feign 客户端没有 path 前缀，所以它请求的就是 Python 的这个路
    （把 `QDRANT_BASE_URL` 与集合名打出来）。语料为空 → 建出空集合，并如实回 `total_posts=0`
    （而不是假装成功）。
 3. **只增不删的权威仍然是向量库本身**：`recreate=True` 会先重建集合（清空），
-   `removed_post_ids` 用来删掉语料里已经不存在的文档。日常增量走对账任务（⑥），不靠这条端点。
+   `removed_keys` 用来删掉语料里已经不存在的文档。日常增量走对账任务（⑥），不靠这条端点。
+4. **文档标识是 `(kind, id)`**：文章 3 与笔记 3 是两个文档，单篇重建必须同时给出
+   `contentKind`（默认 `post`），否则会一次命中两篇。
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from app.providers import runtime
 from app.providers.errors import ProviderError, ProviderQuotaExhaustedError
 from app.rag import corpus as corpus_module
 from app.rag.index_pipeline import IndexPipeline
-from app.rag.index_reconcile import reconcile
+from app.rag.index_reconcile import doc_key_of, reconcile
 from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
 from app.schemas.indexing import (
     IndexJob,
@@ -67,7 +69,8 @@ def _job(kind: IndexTaskKind, status: IndexJobStatus, posts: int, failed: int = 
 async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse:
     """按语料重建索引；同步执行完才返回。
 
-    请求体：`kind`（full_rebuild / post_rebuild）、`post_id`（单篇时必填）、`reason`（写日志）。
+    请求体：`kind`（full_rebuild / post_rebuild）、`postId` + `contentKind`（单篇时定位文档）、
+    `reason`（写日志）。
     """
     kind = request.kind
     if kind == IndexTaskKind.POST_REBUILD and not request.post_id:
@@ -78,13 +81,19 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
 
     posts = list(corpus_module.cached_posts())
     if kind == IndexTaskKind.POST_REBUILD:
-        posts = [post for post in posts if post.post_id == request.post_id]
+        # 按**文档标识**取：只按数字 id 会同时命中文章 3 与笔记 3，然后一次重建两篇。
+        # `content_kind` 可能是 null（Java 侧 DTO 默认值就是这么发过来的）→ 按 post
+        target = (request.content_kind or "post", int(request.post_id or 0))
+        posts = [post for post in posts if doc_key_of(post) == target]
         if not posts:
             return JSONResponse(
                 status_code=200,
                 content={
                     "code": 404,
-                    "message": f"语料里没有 id={request.post_id} 的文章（未发布/已删除/不可见）",
+                    "message": (
+                        f"语料里没有 {target[0]}:{target[1]} 这篇"
+                        "（未发布 / 已删除 / 不可见，或 contentKind 给错了）"
+                    ),
                 },
             )
 
@@ -128,7 +137,7 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
 
     chunks = report.chunks
     logger.info(
-        "索引重建完成：kind=%s 文章 %s 篇 / 子块 %s（reason=%s）",
+        "索引重建完成：kind=%s 文档 %s 篇 / 子块 %s（reason=%s）",
         kind,
         len(posts),
         chunks,
@@ -159,7 +168,7 @@ async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断�
     store = QdrantVectorStore(config)
     try:
         chunks = corpus_module.cached_corpus()
-        indexed = await store.hashes_by_post()
+        indexed = await store.hashes_by_docs()
         plan = reconcile(chunks, indexed)
         logger.info(
             "索引对账：语料 %s 子块 / 索引 %s 篇 → 不变 %s、变更 %s、待删 %s",
@@ -169,11 +178,11 @@ async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断�
             len(plan.changed),
             len(plan.removed),
         )
-        by_id = {post.post_id: post for post in corpus_module.cached_posts()}
-        changed_posts = [by_id[post_id] for post_id in plan.changed if post_id in by_id]
+        by_key = {doc_key_of(post): post for post in corpus_module.cached_posts()}
+        changed_docs = [by_key[key] for key in plan.changed if key in by_key]
         embedder = runtime.registry().embedding_model()
         report = await IndexPipeline(store=store, embedder=embedder, point_factory=store).index(
-            changed_posts, removed_post_ids=plan.removed
+            changed_docs, removed_keys=plan.removed
         )
     except ProviderQuotaExhaustedError as error:
         return JSONResponse(status_code=200, content={"code": 429, "message": str(error)})

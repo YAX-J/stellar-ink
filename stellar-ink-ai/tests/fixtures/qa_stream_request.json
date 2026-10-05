@@ -1,6 +1,12 @@
 {
   "question": "星笺为什么把文章比作星辰？",
   "memories": [],
+  "history": [
+    {
+      "question": "站内一共有多少篇技术笔记？",
+      "answer": "上一轮的回答：公开笔记 11 篇。"
+    }
+  ],
   "conversationId": "conv-2026-09-24-0001",
   "topK": 5
 }

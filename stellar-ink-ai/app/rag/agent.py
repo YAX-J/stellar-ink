@@ -243,13 +243,15 @@ class Agent:
     should_stop: Callable[[], bool] | None = None
 
     SYSTEM_PROMPT = (
-        "你是「星笺」的只读助手。你可以调用工具去查站内文章，但**不能修改任何东西**。"
+        "你是「星笺」的只读助手。你可以调用工具去查站内文章与笔记，但**不能修改任何东西**。"
         "每一步只输出一个 JSON：要么调用一个工具，要么给出最终答案。不要输出别的文字。"
         '调用工具：{"thought":"为什么查","tool":"工具名","arguments":{...}}。'
         '给出答案：{"thought":"…","final":"答案",'
-        '"citations":[{"postId":1,"chunkIndex":0}]}。'
-        "答案只能依据工具返回的观察，不要用观察之外的知识；查不到就直说「文章里没有找到依据」。"
-        "引用只标 postId，片段与分数由系统补齐 —— 不要自己编片段。"
+        '"citations":[{"postId":1,"kind":"post","chunkIndex":0}]}。'
+        "答案只能依据工具返回的观察，不要用观察之外的知识；查不到就直说「没有找到依据」。"
+        "引用只标 postId、kind 与 chunkIndex，片段与分数由系统补齐 —— 不要自己编片段。"
+        "kind 取 post（文章）或 note（技术笔记）：文章 3 与笔记 3 是两篇不同的内容，"
+        "标错了会指到另一篇去。"
     )
 
     async def run(self, question: str) -> AgentRun:
@@ -393,10 +395,13 @@ class Agent:
 
 @dataclass(frozen=True, slots=True)
 class _Claim:
-    """模型声称引用的一段（**未经核实**）：只有 postId 与段落号，没有片段。"""
+    """模型声称引用的一段（**未经核实**）：只有文档标识与段落号，没有片段。"""
 
     post_id: int
     chunk_index: int = 0
+    #: 内容种类（`post` / `note`）。缺省按 `post`：老提示词与模型习惯里只有 postId，
+    #: 而「文章 3 与笔记 3」是两个文档 —— 少了它，核实环节会把两者当成同一篇。
+    kind: str = "post"
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,10 +453,10 @@ def _parse_decision(raw: str) -> _Decision:
 def _parse_citations(payload: dict[str, Any]) -> list[_Claim]:
     """从模型输出里取引用**线索**。
 
-    只接受 `postId`（必需）与 `chunkIndex`（可选），而且要**先当线索而不是引用**：
-    `Citation` 契约要求 snippet 非空（引用必须能定位回原文），而模型并不提供片段 ——
-    片段与分数一律由工具结果补齐。硬要用 Citation 装线索会直接触发校验错误
-    （第一版就是这么写的，pydantic 立刻拒绝了空 snippet），
+    只接受 `postId`（必需）、`kind`（可选，`post` / `note`）与 `chunkIndex`（可选），
+    而且要**先当线索而不是引用**：`Citation` 契约要求 snippet 非空（引用必须能定位回原文），
+    而模型并不提供片段 —— 片段与分数一律由工具结果补齐。硬要用 Citation 装线索会直接触发
+    校验错误（第一版就是这么写的，pydantic 立刻拒绝了空 snippet），
     这也从侧面说明「引用不能由模型给」这条约束在类型层面就站得住。
     """
     raw = payload.get("citations")
@@ -465,10 +470,14 @@ def _parse_citations(payload: dict[str, Any]) -> list[_Claim]:
         if not isinstance(post_id, int) or post_id <= 0:
             continue
         raw_index = item.get("chunkIndex")
+        kind = item.get("kind")
         claims.append(
             _Claim(
                 post_id=post_id,
                 chunk_index=raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0,
+                # 白名单之外的 kind 按 post：模型可能写出别的词，而「猜一个种类」
+                # 比「按文章处理」更容易指错文档
+                kind=kind if kind in {"post", "note"} else "post",
             )
         )
     return claims
@@ -478,15 +487,22 @@ def _verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation])
     """只保留**工具真的返回过**的引用，并按观察顺序给出完整片段与分数。
 
     这一步是引用可信的关键：模型可能记错 postId、也可能把别的文章编进来。
-    声称但没观察到的一律丢掉 —— 宁可少一条引用，也不要给读者一个指向错误文章的链接。
+    声称但没观察到的一律丢掉 —— 宁可少一条引用，也不要给读者一个指向错误内容的链接。
+
+    核实按**文档标识** `(kind, postId, chunkIndex)` 做：只用 `postId` 的话，
+    「文章 3」与「笔记 3」会互相通过核实，而它们是完全不同的两篇。
 
     模型一条都没标对时，退化成「把观察到的引用原样带上」：答案是依据它们写的，
     一条引用都不给反而让读者无法核对。
     """
-    allowed = {(item.post_id, item.chunk_index): item for item in observed}
+    # 显式注解成 `str` 键：`Citation.kind` 是 Literal，直接拿 `claim.kind`（str）去查
+    # 会被类型检查判为不兼容 —— 而这里要表达的就是「按文本标识查」
+    allowed: dict[tuple[str, int, int], Citation] = {
+        (str(item.kind), item.post_id, item.chunk_index): item for item in observed
+    }
     kept: list[Citation] = []
     for claim in claimed:
-        real = allowed.get((claim.post_id, claim.chunk_index))
+        real = allowed.get((claim.kind, claim.post_id, claim.chunk_index))
         if real is not None and real not in kept:
             kept.append(real)
     return kept or _dedupe(observed)

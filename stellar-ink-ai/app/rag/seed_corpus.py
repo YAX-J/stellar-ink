@@ -42,6 +42,11 @@ class SeedPost:
     #: 少了它，「这个作者平时怎么说话」就无从谈起。默认 0 表示列缺失（老种子包）。
     author_id: int = 0
 
+    #: 内容种类。种子包**只解析文章**（`post` 块），所以这里恒为 `post`；
+    #: 显式给出这个字段是为了满足 `PostLike` 协议 —— 语料里的文档标识是 `kind + id`
+    #: （笔记走线上投影表，不走种子包）。
+    kind: str = "post"
+
     @property
     def plain(self) -> str:
         """把 SQL 里的转义还原成可读正文。"""

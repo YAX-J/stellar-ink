@@ -2,6 +2,7 @@
   "answer": "星笺把文章比作星辰，是因为每篇文章都对应夜空中的一个坐标，读者按坐标回访。\n\n这一设定在项目说明里有直接表述。",
   "citations": [
     {
+      "kind": "post",
       "postId": 12,
       "title": "把文章写成星图",
       "chunkIndex": 3,
@@ -9,6 +10,7 @@
       "score": 0.83
     },
     {
+      "kind": "post",
       "postId": 12,
       "title": "把文章写成星图",
       "chunkIndex": 7,

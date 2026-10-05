@@ -2,6 +2,7 @@
   "answer": "",
   "citations": [
     {
+      "kind": "post",
       "postId": 1,
       "title": "写作的复利",
       "chunkIndex": 0,
@@ -9,6 +10,7 @@
       "score": 14.28
     },
     {
+      "kind": "post",
       "postId": 16,
       "title": "一次 23 秒的请求",
       "chunkIndex": 1,

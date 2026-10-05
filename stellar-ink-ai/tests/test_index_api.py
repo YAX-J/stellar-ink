@@ -15,6 +15,7 @@ import pytest
 
 from app.api.v1 import index as index_module
 from app.providers.errors import ProviderQuotaExhaustedError
+from app.schemas.indexing import IndexRebuildRequest
 from tests.test_app import EXPOSED_PATHS
 
 REBUILD = "/admin/index/rebuild"
@@ -27,7 +28,7 @@ class _BrokenStore:
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         pass
 
-    async def hashes_by_post(self) -> dict[int, set[str]]:
+    async def hashes_by_docs(self) -> dict[tuple[str, int], set[str]]:
         raise RuntimeError("Connection refused")
 
     async def aclose(self) -> None:
@@ -45,6 +46,27 @@ def test_index_paths_match_the_java_contract() -> None:
     """两个路径都在白名单登记表里 —— 而那张表的另一个用例会断言它们**不是**公开的。"""
     assert REBUILD in EXPOSED_PATHS
     assert RECONCILE in EXPOSED_PATHS
+
+
+@pytest.mark.asyncio
+async def test_rebuild_accepts_null_content_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`contentKind` 是 null 也必须收下。
+
+    Java 侧的 `IndexRebuildRequestDTO.contentKind` 默认就是 null，而 Jackson 默认会把 null
+    一起发出来 —— 这里若把它当非法取值，**全量重建**（一个根本不用这个字段的操作）
+    会被 422 掉，而报出来的话是「Python 不可用」，排查方向直接跑偏。
+    """
+    monkeypatch.setattr(index_module, "QdrantVectorStore", _BrokenStore)
+    request = IndexRebuildRequest.model_validate(
+        {"kind": "full_rebuild", "contentKind": None, "reason": "验证 null 被收下"}
+    )
+
+    response = await index_module.rebuild_index(request)
+
+    assert response.status_code == 200
+    assert '"code": 422' not in response.body.decode(), (
+        "null 的 contentKind 被当成非法取值了（Java 默认发的就是 null）"
+    )
 
 
 @pytest.mark.asyncio

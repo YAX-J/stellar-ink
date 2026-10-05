@@ -5,7 +5,9 @@ import com.stellarink.ai.stream.QaStreamClient;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.service.AiMemoryService;
+import com.stellarink.ai.service.AiQuotaTicket;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.service.support.AskHistoryMapper;
 import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,8 +27,14 @@ import java.io.IOException;
 /**
  * 星海问答的流式出口：把 Python 的 SSE 帧**逐帧**转给浏览器。
  *
- * <p>这一层只做协议转换，三件事：转发、记账、取消。**不解析事件体、不重新编码** ——
+ * <p>这一层只做协议转换，四件事：**配额、转发、记账、取消**。**不解析事件体、不重新编码** ——
  * Python 的帧原样透传（{@link QaSseFrame#raw()}），少一层映射就少一处会与 Python 契约分叉的地方。
+ *
+ * <p>配额（E3-2）与转发在同一条线程上按序发生：这条路径的转发是**同步阻塞**的
+ * （见下面「为什么不加 @Async」），请求进来就在当前线程一路读到流结束，
+ * 因此「开流前申请、流结束后释放」不需要任何额外的线程模型或回调拼接。
+ * 在接配额之前这里**只记账、不检查**：前端默认走流式，于是调用数、token、角色、并发
+ * 四道闸门对流式用户全是空话 —— 「预算用尽」这类文案承诺了一个不存在的闸门。
  *
  * <p>取消传播是这条链路的重点，也是它唯一容易做错的地方：
  * 浏览器关掉页面 → Spring 在下一次 {@code send} 时抛 {@link IOException}
@@ -68,6 +76,10 @@ public class AiQaStreamController {
     public ResponseBodyEmitter stream(@Valid @RequestBody AiAskDTO request) {
         Long userId = AuthHelper.loginId();
 
+        // 配额先行（E3-2）：触顶时**连 emitter 都不建、一个下游调用都不发**，
+        // 异常直接交给全局处理器翻成 code=429 的 JSON —— 这条路径上还没有任何流式副作用。
+        AiQuotaTicket ticket = usageService.acquireQuota(AiCallScene.QA_STREAM);
+
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(STREAM_TIMEOUT_MS);
         emitter.onCompletion(() -> log.debug("问答流正常结束：userId={}", userId));
         emitter.onTimeout(() -> log.warn("问答流超时被回收：userId={}", userId));
@@ -79,18 +91,26 @@ public class AiQaStreamController {
                 .topK(request.getTopK())
                 // 长期记忆（M9）：与非流式同一份口径 —— 只影响语气与取舍，不进证据
                 .memories(memoryService.listRecallable(userId, 5))
+                // 多轮：与非流式同一份映射（见 AskHistoryMapper），避免两条出口分叉
+                .history(AskHistoryMapper.toInternal(request.getHistory()))
                 .build();
-        forwardFrames(emitter, internal, userId);
+        forwardFrames(emitter, internal, userId, ticket);
         return emitter;
     }
 
     /**
-     * 把下游帧逐条写进 emitter，并在任何退出路径上关掉下游。
+     * 把下游帧逐条写进 emitter，并在任何退出路径上关掉下游、放掉配额闸门。
      *
      * <p>{@code try-with-resources} 是刻意的：正常结束、上游异常、客户端断开三条路都要关；
      * 分开写三处 close 迟早漏一处，而漏掉的那处就是「关掉页面后模型继续生成」。
+     *
+     * <p>配额闸门的释放同样收在 {@code finally}（三条路一起），因为漏放的后果不是报错：
+     * 计数不会自己归零，那一天的请求会**全部**被自己的并发上限挡住，而日志里只有 429。
+     *
+     * @param ticket 开流前申请到的配额凭据；{@code null}/空票表示这次没占用闸门（配额关闭或 Redis 不可用）
      */
-    void forwardFrames(ResponseBodyEmitter emitter, QaStreamRequestDTO request, Long userId) {
+    void forwardFrames(
+            ResponseBodyEmitter emitter, QaStreamRequestDTO request, Long userId, AiQuotaTicket ticket) {
         long started = System.currentTimeMillis();
         String lastType = QaSseFrame.UNKNOWN;
         try (QaStreamClient.Handle handle = qaStreamClient.open(request)) {
@@ -102,6 +122,7 @@ public class AiQaStreamController {
             log.info("AI 流式问答完成：userId={} lastEvent={}", userId, lastType);
             // 用量记「未计量」：它写在 done 帧的 JSON 里，而按既定设计 Java **不解析事件体**
             // （解析等于再抄一份 Python 的事件契约）。缺口由看板的 untokenizedCalls 如实暴露。
+            // 调用数已在 acquireQuota 里累加，这里不重复计。
             usageService.recordSuccess(AiCallScene.QA_STREAM, null, started);
         } catch (IOException error) {
             // 浏览器断开（或 emitter 已超时）：**这里就是取消传播的落点**
@@ -114,6 +135,8 @@ public class AiQaStreamController {
             log.warn("问答流上游失败：userId={} reason={}", userId, error.getMessage());
             usageService.recordFailure(AiCallScene.QA_STREAM, error, started);
             sendErrorFrame(emitter);
+        } finally {
+            usageService.releaseQuota(ticket);
         }
     }
 

@@ -8,9 +8,9 @@
 1. 切块 → 2. 嵌入（可能因限流/超时失败）→ 3. 建集合（维度必须与嵌入一致）→
 4. 删除这批文章与「已消失的文章」的旧点 → 5. 分批写入。
 
-关于清理：Qdrant 没有「删除不在列表里的点」这种操作，所以按文章删是最实际的做法 ——
-本次要重建的文章（`posts` 里出现的 post_id）先删掉再写，`removed_post_ids`（已删除/转私密的文章）
-直接删掉，避免旧片段继续被检索到、引用指向已经不存在的文章。
+关于清理：Qdrant 没有「删除不在列表里的点」这种操作，所以**按文档**删是最实际的做法 ——
+本次要重建的文档（`posts` 里出现的 `(kind, id)`）先删掉再写，`removed_keys`（已删除 / 下架 /
+笔记转私有）直接删掉，避免旧片段继续被检索到、引用指向已经不存在的内容。
 
 用法（离线可验，不需要真 Qdrant）：
 
@@ -40,7 +40,7 @@ class IndexStore(Protocol):
 
     async def upsert(self, points: Sequence[Any]) -> int: ...
 
-    async def delete_by_post_ids(self, post_ids: Sequence[int]) -> None: ...
+    async def delete_by_docs(self, keys: Sequence[tuple[str, int]]) -> None: ...
 
 
 class VectorPointFactory(Protocol):
@@ -101,16 +101,21 @@ class IndexPipeline:
         self,
         posts: list[PostLike],
         *,
-        removed_post_ids: Sequence[int] = (),
+        removed_keys: Sequence[tuple[str, int]] = (),
         recreate: bool = False,
     ) -> IndexReport:
+        """重建这批文档的索引，并清掉 `removed_keys` 指向的旧点。
+
+        `removed_keys` 是**文档标识** `(kind, id)` 的序列（语料里已经没有的文档：
+        已删除 / 下架 / **笔记转私有**）。只给数字 id 会删错 —— 文章 3 与笔记 3 是两个文档。
+        """
         started = time.perf_counter()
-        removed = sorted({int(post_id) for post_id in removed_post_ids})
+        removed = sorted({(str(kind), int(content_id)) for kind, content_id in removed_keys})
         corpus = build_corpus(posts, self.chunking)
         if not corpus:
-            # 没有文章可索引时仍要清掉「已消失的文章」，否则删空的博客里还留着旧片段
+            # 没有文档可索引时仍要清掉「已消失的文档」，否则删空的博客里还留着旧片段
             if removed:
-                await self.store.delete_by_post_ids(removed)
+                await self.store.delete_by_docs(removed)
             return IndexReport(
                 posts=len(posts),
                 chunks=0,
@@ -127,9 +132,9 @@ class IndexPipeline:
         dimension = len(vectors[0])
         await self.store.ensure_collection(dimension=dimension, recreate=recreate)
 
-        # 本次重建的文章 + 已消失的文章：旧点先删，避免「改了文章但检索到旧片段」
-        stale = sorted(set(removed) | {chunk.post_id for chunk in corpus})
-        await self.store.delete_by_post_ids(stale)
+        # 本次重建的文档 + 已消失的文档：旧点先删，避免「改了内容但检索到旧片段」
+        stale = sorted(set(removed) | {(chunk.kind, chunk.post_id) for chunk in corpus})
+        await self.store.delete_by_docs(stale)
 
         written = 0
         batches = 0

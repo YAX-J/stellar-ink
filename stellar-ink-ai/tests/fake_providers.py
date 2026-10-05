@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.api.v1 import assembly
 from app.api.v1.assembly import use_provider_configs
 from app.providers import runtime
 from app.providers.models import ProviderCapabilities, ProviderConfig
@@ -51,6 +52,21 @@ def fake_provider_configs() -> list[ProviderConfig]:
     ]
 
 
+def _force_in_memory_retrieval() -> None:
+    """单测一律走**内存通路**，不受 `.env` 里部署开关的影响。
+
+    为什么必须显式关掉（真实踩到）：`AI_DENSE_STORE_ENABLED` 是**导入期读一次**的部署开关，
+    而 `corpus`/`assembly` 会 load_dotenv —— 于是「本机 `.env` 一改成 true」，
+    单测就悄悄开始连真实 Qdrant：跨公网、依赖外部服务，而且库里是**真实嵌入模型**的指纹，
+    与测试用的 Fake 嵌入不一致 → 指纹护栏当场抛错，一次红四条（日志里看像代码坏了）。
+
+    单测要的是**确定的输入**，不是「跑测机器上碰巧配了什么」。
+    代价是这条路径的接线不再被这些用例覆盖 —— 所以另有
+    `tests/test_assembly_dense_store.py` 用假 store 把「开关打开时真的传 dense_store」钉住。
+    """
+    assembly.DENSE_STORE_ENABLED = False
+
+
 def install_fake_providers() -> None:
     """显式注入桩配置并清空装配缓存（测试 fixture 里调一次）。
 
@@ -59,6 +75,7 @@ def install_fake_providers() -> None:
     而单测机器上没有库，于是所有问答用例都变成 400「角色 chat 尚未配置」。
     桩的含义是「这次用桩」，所以两处都给同一份桩。
     """
+    _force_in_memory_retrieval()
     configs = fake_provider_configs()
     use_provider_configs(configs)
     runtime.use_user_config_source(lambda _user_id: configs)
@@ -70,12 +87,14 @@ def install_no_providers() -> None:
     刻意不用「不注入」来测这件事：不注入会去读环境变量甚至真库，
     测试会因此依赖跑测机器上有没有 `.env`（曾经真的这么错过一次）。
     """
+    _force_in_memory_retrieval()
     use_provider_configs([])
     runtime.use_user_config_source(lambda _user_id: [])
 
 
 def install_roles(roles: Sequence[str], *, provider: str = "fake") -> None:
     """只配给定角色：用来测「缺哪个角色时错误消息对不对」。"""
+    _force_in_memory_retrieval()
     configs = [provider_config(role, provider=provider) for role in roles]
     use_provider_configs(configs)
     runtime.use_user_config_source(lambda _user_id: configs)

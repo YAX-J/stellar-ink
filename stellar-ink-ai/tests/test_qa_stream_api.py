@@ -94,7 +94,14 @@ async def test_stream_frame_shapes_match_the_non_stream_contract(app: FastAPI, s
 
     for event in events:
         if event["type"] == "citation":
-            assert set(event["citation"]) == {"postId", "title", "chunkIndex", "snippet", "score"}
+            assert set(event["citation"]) == {
+                "kind",
+                "postId",
+                "title",
+                "chunkIndex",
+                "snippet",
+                "score",
+            }
         if event["type"] == "delta":
             assert set(event) == {"type", "text"}
 

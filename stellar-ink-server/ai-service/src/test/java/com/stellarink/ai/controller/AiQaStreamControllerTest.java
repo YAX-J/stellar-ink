@@ -17,6 +17,8 @@ import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.ai.service.AiUsageService;
+import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.ai.service.AiQuotaTicket;
 import com.stellarink.ai.service.AiWikiService;
 import com.stellarink.common.redis.RedisUtils;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +49,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -226,6 +229,63 @@ class AiQaStreamControllerTest {
     }
 
     @Test
+    @DisplayName("多轮：历史原样传给下游（问句 trim、答案不改写）")
+    void forwardsHistoryTurns() throws Exception {
+        StubHandle handle = new StubHandle(List.of(frame("done", "\"answer\": \"好\"")), false);
+        when(qaStreamClient.open(any())).thenReturn(handle);
+
+        String payload = """
+                {"question": "那它呢？", "topK": 5,
+                 "history": [{"question": "  上次那个报错是怎么修的？  ",
+                              "answer": "  加 -Dfile.encoding=UTF-8。  "}]}
+                """;
+
+        MvcResult result;
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+            result = mockMvc.perform(post("/ai/qa/stream")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(payload))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+        }
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .asyncDispatch(result)).andExpect(status().isOk());
+
+        ArgumentCaptor<QaStreamRequestDTO> captor = ArgumentCaptor.forClass(QaStreamRequestDTO.class);
+        verify(qaStreamClient).open(captor.capture());
+        List<com.stellarink.aiclient.dto.QaHistoryTurnDTO> history = captor.getValue().getHistory();
+        assertEquals(1, history.size());
+        assertEquals("上次那个报错是怎么修的？", history.get(0).getQuestion(),
+                "历史问句要与当前问题同口径 trim，否则同一句在两条出口里文本不同");
+        assertEquals("  加 -Dfile.encoding=UTF-8。  ", history.get(0).getAnswer(),
+                "历史答案是我们上一轮发出去的文本，必须原样透传");
+    }
+
+    @Test
+    @DisplayName("多轮：不带历史时传空表（Python 侧据此当一次性提问）")
+    void sendsEmptyHistoryWhenAbsent() throws Exception {
+        StubHandle handle = new StubHandle(List.of(frame("done", "\"answer\": \"好\"")), false);
+        when(qaStreamClient.open(any())).thenReturn(handle);
+
+        MvcResult result;
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+            result = mockMvc.perform(post("/ai/qa/stream")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body(QUESTION)))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+        }
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .asyncDispatch(result)).andExpect(status().isOk());
+
+        ArgumentCaptor<QaStreamRequestDTO> captor = ArgumentCaptor.forClass(QaStreamRequestDTO.class);
+        verify(qaStreamClient).open(captor.capture());
+        assertTrue(captor.getValue().getHistory().isEmpty());
+    }
+
+    @Test
     @DisplayName("写失败（浏览器断开）：必须关掉下游，否则模型继续生成")
     void sendFailureCancelsUpstream() {
         AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
@@ -241,7 +301,8 @@ class AiQaStreamControllerTest {
             throw new AssertionError(impossible);
         }
 
-        controller.forwardFrames(emitter, QaStreamRequestDTO.builder().question(QUESTION).build(), 9L);
+        controller.forwardFrames(emitter, QaStreamRequestDTO.builder().question(QUESTION).build(), 9L,
+                AiQuotaTicket.NONE);
 
         assertTrue(handle.closed, "写失败时没有关闭下游：关掉页面后模型还会继续烧 token");
     }
@@ -254,9 +315,69 @@ class AiQaStreamControllerTest {
         when(qaStreamClient.open(any())).thenReturn(handle);
 
         ResponseBodyEmitter emitter = new ResponseBodyEmitter();
-        controller.forwardFrames(emitter, QaStreamRequestDTO.builder().question(QUESTION).build(), 9L);
+        controller.forwardFrames(emitter, QaStreamRequestDTO.builder().question(QUESTION).build(), 9L,
+                AiQuotaTicket.NONE);
 
         assertTrue(handle.closed, "失败路径同样要关掉下游");
+    }
+
+    @Test
+    @DisplayName("配额触顶：429，且一个下游调用都不发（流式不再绕过闸门）")
+    void quotaExceededRejectsBeforeOpeningUpstream() throws Exception {
+        when(usageService.acquireQuota(AiCallScene.QA_STREAM))
+                .thenThrow(new BusinessException(ErrorCode.TOO_MANY_REQUESTS,
+                        "今天的 AI 调用次数已用完（上限 30 次）。"));
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+            mockMvc.perform(post("/ai/qa/stream")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body(QUESTION)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(429));
+        }
+
+        verify(qaStreamClient, never()).open(any());
+    }
+
+    @Test
+    @DisplayName("流正常结束后释放并发闸门")
+    void releasesInflightTicketAfterStreamEnds() {
+        AiQuotaTicket ticket = new AiQuotaTicket(9L, "stellar-ink:ai:quota:inflight:user:9");
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        when(qaStreamClient.open(any()))
+                .thenReturn(new StubHandle(List.of(frame("done", "\"answer\": \"好\"")), false));
+
+        controller.forwardFrames(new ResponseBodyEmitter(),
+                QaStreamRequestDTO.builder().question(QUESTION).build(), 9L, ticket);
+
+        verify(usageService).releaseQuota(ticket);
+    }
+
+    @Test
+    @DisplayName("上游失败与客户端断开两条路也释放闸门（漏放会把当天的并发额度耗光）")
+    void releasesInflightTicketOnFailurePaths() {
+        AiQuotaTicket ticket = new AiQuotaTicket(9L, "stellar-ink:ai:quota:inflight:user:9");
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        QaStreamRequestDTO request = QaStreamRequestDTO.builder().question(QUESTION).build();
+
+        // 上游失败
+        when(qaStreamClient.open(any())).thenReturn(new StubHandle(List.of(), true));
+        controller.forwardFrames(new ResponseBodyEmitter(), request, 9L, ticket);
+
+        // 客户端断开
+        when(qaStreamClient.open(any()))
+                .thenReturn(new StubHandle(List.of(frame("delta", "\"text\": \"好\"")), false));
+        ResponseBodyEmitter broken = mock(ResponseBodyEmitter.class);
+        try {
+            org.mockito.Mockito.doThrow(new IOException("Broken pipe"))
+                    .when(broken).send(any(), any(MediaType.class));
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        }
+        controller.forwardFrames(broken, request, 9L, ticket);
+
+        verify(usageService, times(2)).releaseQuota(ticket);
     }
 
     @Test

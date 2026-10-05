@@ -19,7 +19,7 @@ import dataclasses
 
 from app.providers.errors import ProviderError
 from app.rag import corpus as corpus_module
-from app.rag.index_reconcile import reconcile
+from app.rag.index_reconcile import key_text, reconcile
 from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
 
 # 控制台编码助手与本文件同目录
@@ -57,7 +57,7 @@ async def main() -> int:
         print(f"Qdrant：{config.base_url} 集合 {config.collection}｜{health}")
 
         try:
-            indexed = await store.hashes_by_post()
+            indexed = await store.hashes_by_docs()
         except ProviderError as error:
             # 集合不存在 = **索引一篇都还没建**。这在语义上就是对账的合法输入
             # （全部文章都要建），不是错误 —— 抛栈会让人以为脚本坏了或 Qdrant 坏了。
@@ -77,11 +77,11 @@ async def main() -> int:
     finally:
         await store.aclose()
 
-    print(f"\n语料 {len(chunks)} 个子块；索引里有 {len(indexed)} 篇文章的哈希")
+    print(f"\n语料 {len(chunks)} 个子块；索引里有 {len(indexed)} 篇文档的哈希")
 
-    def preview(label: str, ids: list[int]) -> str:
-        shown = f"{ids[:10]}{' …' if len(ids) > 10 else ''}"
-        return f"  {label}{len(ids)}：{shown}"
+    def preview(label: str, keys: list[tuple[str, int]]) -> str:
+        shown = " ".join(key_text(key) for key in keys[:10])
+        return f"  {label}{len(keys)}：{shown}{' …' if len(keys) > 10 else ''}"
 
     print(preview("不变（跳过）", plan.unchanged))
     print(preview("要重建     ", plan.changed))
@@ -89,7 +89,7 @@ async def main() -> int:
     if plan.unverifiable:
         print(
             f"  ⚠️ 其中 {len(plan.unverifiable)} 篇在索引里读不到哈希"
-            f"（按要重建处理）：{plan.unverifiable[:10]}"
+            f"（按要重建处理）：{' '.join(key_text(k) for k in plan.unverifiable[:10])}"
         )
     for note in plan.notes:
         print(f"  [i] {note}")
@@ -103,8 +103,8 @@ async def main() -> int:
     print(
         "\n[!] --apply 需要重建管道（嵌入 + 写库）；请用 POST /admin/index/rebuild 走既有任务链路："
     )
-    print(f"    postIds={plan.changed}")
-    print(f"    removed（重建时由 delete_by_post_ids 一并清理）：{plan.removed}")
+    print(f"    changed={[key_text(k) for k in plan.changed]}")
+    print(f"    removed（重建时由 delete_by_docs 一并清理）：{[key_text(k) for k in plan.removed]}")
     print(
         "    刻意不在这里直接重建：那条链路有任务状态与调用账（scene=index），"
         "自己写一遍会绕过它们。"

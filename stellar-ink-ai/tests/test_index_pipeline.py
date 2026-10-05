@@ -55,8 +55,8 @@ class _Store:
         self.batches.append(len(points))
         return len(points)
 
-    async def delete_by_post_ids(self, post_ids: list[int]) -> None:
-        self.calls.append(("delete", list(post_ids)))
+    async def delete_by_docs(self, keys: list[tuple[str, int]]) -> None:
+        self.calls.append(("delete", list(keys)))
 
     @property
     def order(self) -> list[str]:
@@ -131,15 +131,17 @@ async def test_collection_is_ensured_before_any_write() -> None:
 
 
 async def test_stale_points_are_deleted_before_insert() -> None:
-    """本次重建的文章 + 已消失的文章都要删：否则改了文章还能检索到旧片段。"""
+    """本次重建的文档 + 已消失的文档都要删：否则改了内容还能检索到旧片段。"""
     posts = _posts(2)
     store = _Store()
     pipeline = _pipeline(store, _Embedder())
 
-    report = await pipeline.index(posts, removed_post_ids=[99])
+    report = await pipeline.index(posts, removed_keys=[("post", 99)])
 
     deleted = next(payload for name, payload in store.calls if name == "delete")
-    assert deleted == [1, 2, 99], "要按 post_id 排序后再删（结果可复现）"
+    assert deleted == [("post", 1), ("post", 2), ("post", 99)], (
+        "要按文档标识排序后再删（结果可复现）"
+    )
     assert report.deleted_posts == 3
 
 
@@ -170,16 +172,16 @@ async def test_mixed_dimensions_in_one_response_are_rejected() -> None:
     assert store.calls == []
 
 
-async def test_empty_corpus_is_reported_and_still_purges_removed_posts() -> None:
+async def test_empty_corpus_is_reported_and_still_purges_removed_docs() -> None:
     store = _Store()
     pipeline = _pipeline(store, _Embedder())
 
-    report = await pipeline.index([], removed_post_ids=[7])
+    report = await pipeline.index([], removed_keys=[("post", 7)])
 
     assert report.skipped == "没有可索引的子块"
     assert report.written == 0
     assert report.dimension == 0
-    assert store.calls == [("delete", [7])], "删空的博客里不该留着旧片段"
+    assert store.calls == [("delete", [("post", 7)])], "删空的博客里不该留着旧片段"
 
 
 async def test_empty_corpus_without_removals_touches_nothing() -> None:

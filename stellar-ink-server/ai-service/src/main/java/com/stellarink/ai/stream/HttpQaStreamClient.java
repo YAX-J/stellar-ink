@@ -68,6 +68,17 @@ public class HttpQaStreamClient implements QaStreamClient {
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.httpClient = HttpClient.newBuilder()
+                // ⚠️ **必须显式 HTTP/1.1**（2026-10-05 实测定位）：JDK 的默认版本是 HTTP/2，
+                // 而对明文 http:// 的内网 uvicorn，它会先做 **h2c 升级协商**（先发头、等 101），
+                // 而 uvicorn(h11) 不支持升级（日志里是 `Unsupported upgrade request.` +
+                // `Invalid HTTP request received.`）—— 结果是**请求体在协商中丢掉**：
+                // Python 侧算出的 body hash 与签名时用的不同 → 「内部验签失败：签名不匹配」→ 401
+                // → 前端只看到「回答中断了，内容可能不完整」。
+                // 非流式那条路走 Feign(HttpURLConnection)，本来就是 HTTP/1.1，所以一直正常 ——
+                // 这就是「只有流式坏」的全部原因。
+                // A/B 实测（同一个 Java 程序、同一份密钥、同一个请求体）：
+                //   默认版 → 401「签名不匹配」0 帧；显式 HTTP/1.1 → 200，93 帧。
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 // 内网直连，重定向一定是配置错误：跟随只会把问题藏起来
                 .followRedirects(HttpClient.Redirect.NEVER)

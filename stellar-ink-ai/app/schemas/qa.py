@@ -8,7 +8,7 @@ from typing import Annotated
 
 from pydantic import Field, field_validator
 
-from app.schemas.base import ContractRequest, ContractResponse
+from app.schemas.base import ContractModel, ContractRequest, ContractResponse
 from app.schemas.common import (
     MAX_QUESTION_LENGTH,
     Citation,
@@ -35,6 +35,29 @@ CitationList = Annotated[list[Citation], Field(max_length=MAX_CITATIONS)]
 #: 堆多了会挤掉真正要引用的摘录。
 MAX_MEMORIES = 5
 
+#: 一次问答最多带几轮历史进提示词（多轮会话）。
+#: 与记忆同理：历史是**语境的参考**（用来理解「那它呢」「上面那个报错」指什么），
+#: 不是内容来源。堆多了同样是挤掉摘录，而不是让回答更准。
+MAX_HISTORY_TURNS = 6
+
+#: 单轮历史里回答的字符上限：前端只回送自己渲染过的那一份，这里再收一道
+MAX_HISTORY_ANSWER = 2000
+
+
+class HistoryTurn(ContractModel):
+    """多轮会话里的一轮问答。
+
+    ⚠️ **它不是证据**：提示词里明确要求只用它理解「他在追问什么」，
+    不得当事实陈述、更不得据它编号引用（与 M9 记忆同一口径）。
+    """
+
+    question: QuestionText
+    answer: str = Field(
+        min_length=1,
+        max_length=MAX_HISTORY_ANSWER,
+        description="上一轮的回答（前端原样回送，供模型理解追问里的指代）",
+    )
+
 
 class QaStreamRequest(ContractRequest):
     """``POST /ai/qa/stream`` 的请求体。"""
@@ -47,6 +70,14 @@ class QaStreamRequest(ContractRequest):
         description="这位作者的长期记忆（M9，由 Java 按登录身份取好并过滤后传入）。"
         "**它不是文章内容**：提示词里明确要求只用它调整语气与取舍，"
         "不得当事实陈述、不得编号引用 —— 否则「作者喜欢短句」会被写成「文章里说他喜欢短句」",
+    )
+
+    history: list[HistoryTurn] = Field(
+        default_factory=list,
+        max_length=MAX_HISTORY_TURNS,
+        description="最近几轮问答（**不是证据**，只用来理解追问里的指代）。"
+        "为空表示一次性提问 —— 单轮问答（深读页的「问星笺」）不带它，"
+        "而助手浮层会把本次会话的前几轮带上。",
     )
 
     conversation_id: str | None = Field(

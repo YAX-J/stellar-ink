@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.providers import runtime
-from app.rag.corpus import cached_corpus
+from app.rag.corpus import ARTICLE_KINDS, cached_corpus
 from app.rag.staleness import stale_claims
 from app.rag.wiki import ExtractionResult, extract_claims_async
 from app.schemas.wiki import (
@@ -52,7 +52,8 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
         return assembly_error(error)
 
     result: ExtractionResult = await extract_claims_async(
-        cached_corpus(),
+        # **只吃文章**：主张表存的是裸 `post_id`，笔记混进来会与同号文章互指
+        cached_corpus(kinds=ARTICLE_KINDS),
         chat,
         max_posts=request.max_posts,
         max_claims_per_chunk=request.max_claims_per_chunk,
@@ -92,7 +93,9 @@ async def stale(request: WikiStaleRequest) -> WikiStaleResult:
     由调用方（ADMIN）看着报告决定。
     """
     report = stale_claims(
-        cached_corpus(),
+        # 必须与 build 用**同一份**语料（只吃文章）：盘点靠块下标比对哈希，
+        # 两边取的内容种类不一致时，一切都会「看起来变了」
+        cached_corpus(kinds=ARTICLE_KINDS),
         [
             _StoredAnchor(
                 post_id=item.post_id,

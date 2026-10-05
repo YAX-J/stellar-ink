@@ -76,6 +76,11 @@ public final class InternalAuthSmoke {
             });
         }
         HttpResponse<String> response = HttpClient.newBuilder()
+                // 与生产侧的 `HttpQaStreamClient` 保持同构：**必须显式 HTTP/1.1**。
+                // 默认的 HTTP/2 会对明文 http:// 做 h2c 升级协商，而 uvicorn 不支持升级
+                // （2026-10-05 实测：带 body 的 POST 会因此丢失请求体、签名对不上 → 401）。
+                // 本文件只发 GET（无 body），所以它没有因此失败过 —— 但别让它成为反例。
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(3))
                 // 本机可能配了代理环境变量：冒烟要直连 loopback，避免被代理劫持成 502
                 .proxy(java.net.ProxySelector.of(null))

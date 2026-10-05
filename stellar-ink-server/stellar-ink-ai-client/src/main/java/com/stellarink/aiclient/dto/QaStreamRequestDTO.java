@@ -39,6 +39,15 @@ public class QaStreamRequestDTO implements Serializable {
     /** 多轮会话标识；为空表示一次性提问 */
     private String conversationId;
 
+    /**
+     * 最近几轮问答（多轮助手用；单轮问答为空）。
+     *
+     * <p><b>它不是证据</b>：Python 的提示词明确要求只用它理解追问里的指代，
+     * 不得当事实陈述、不得据它编号引用 —— 历史里装的是模型自己上一轮说过的话，
+     * 当证据用等于让它拿自己的旧答案当出处。</p>
+     */
+    private java.util.List<QaHistoryTurnDTO> history;
+
     /** 召回候选数上限（1-20） */
     private Integer topK;
 }

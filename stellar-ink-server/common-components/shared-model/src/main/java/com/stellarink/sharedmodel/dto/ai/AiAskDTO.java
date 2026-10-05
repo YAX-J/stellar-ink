@@ -1,5 +1,6 @@
 package com.stellarink.sharedmodel.dto.ai;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -8,6 +9,7 @@ import lombok.Data;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * 面向浏览器的问答请求（{@code POST /ai/qa}）。
@@ -31,4 +33,14 @@ public class AiAskDTO implements Serializable {
     @Min(value = 1, message = "topK 至少为 1")
     @Max(value = 20, message = "topK 最多为 20")
     private Integer topK;
+
+    /**
+     * 最近几轮问答（多轮助手用；单轮问答留空）。
+     *
+     * <p>上限 6 轮：历史是**语境的参考**，不是内容来源 —— 堆多了会挤掉真正要引用的摘录，
+     * 而不是让回答更准。Python 侧另有同口径的上限（两道都要，见 AGENTS §5）。</p>
+     */
+    @Size(max = 6, message = "最多带 6 轮历史")
+    @Valid
+    private List<AiHistoryTurnDTO> history;
 }

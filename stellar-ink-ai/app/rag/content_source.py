@@ -10,28 +10,13 @@
 所以本模块**只读** `ai_*` 表；表里出现什么，语料就是什么（私有笔记与草稿在上游就被排除了，
 投影的删除侧还会把「转为私有/下架」的行清掉）。
 
-⚠️ **为什么暂时只取 `kind='post'`**：文章与笔记的 id 各自自增（文章 3 与笔记 3 是两篇），
-而整条引用链路（本服务的 `postId`、向量库 payload、Java 的引用 DTO、前端 `/posts/{id}` 跳转）
-目前只认一个 `postId`。把 `kind + id` 打通是跨语言契约改动，要单独一刀做
-（Python 模型 + 契约 fixture + Java DTO + docs/api 同时改，按仓库规矩）。
-在那之前，公开笔记留在投影表里、**只是还没被索引** —— 这不会泄漏任何私有内容，
-因为私有笔记根本没进这张表。
+**两种内容都在这里取**（文章 `post` 与笔记 `note`）：投影表的文档标识是
+`kind + content_id`，因为文章与笔记的 id **各自自增**（文章 3 与笔记 3 是两篇）。
+这个 `kind` 必须一路带上：引用要按它跳 `/read/:id` 还是 `/note/:id`，
+索引删除也要按 `(kind, id)` 删 —— 只按数字 id 删，重建笔记会顺手删掉同号文章。
 
-⚠️ **本模块目前尚未接线**（`corpus.py` 仍只用种子包）。原因是接线前必须先让投影带上
-两个字段，否则写作画像会在运行时炸掉：
-
-* `tags`：`app/api/v1/style.py` 用 `post.tags`（`tags_per_title`）；
-* `author_id`：写作画像是**按作者取样**的（`post.author_id == author_id`），
-  而投影表里没有作者列。
-
-也就是说，⑧ 这一步的完整前置是：`/internal/corpus` 的**清单**补 `tags` 与 `authorId`
-（现在只有单篇正文接口带 `tags`，两个都不带作者）→ `ai_content_snapshot` 加两列 →
-同步写入 → 才轮到这里的切换。在那之前保持种子包，不动生产行为。
-
-⚠️ **种子包回退只用于「离线/单测/迁移还没跑」**：表不存在或库连不上时回退
-`deploy/sql/02_init-data.sql`（今天的现状），并且 `corpus_source()` 会**如实说明**是哪一种。
-表存在但没有行时**不回退** —— 那可能是站内真的没有公开内容，
-回退会把早先删掉的文章重新拿来回答（宁可没依据，也不复活已删内容）。
+⚠️ 与 `kind` 无关的一条既有保证：**投影表里没有的东西，本模块不会变出来**
+（种子包回退只用于「迁移没跑 / 连不上库」，详见 `corpus.py`）。
 """
 
 from __future__ import annotations
@@ -50,12 +35,13 @@ logger = logging.getLogger(__name__)
 #: 单篇正文的读取上限（防止一行异常巨大的内容把内存吃光；正常文章远小于此）
 MAX_DOC_CHARS = 200_000
 
-#: 只读查询：**只碰 ai_* 表**，且只要文章（笔记见模块开头的说明）。
+#: 只读查询：**只碰 ai_* 表**，且文章与笔记都取（可见性已在上游判定）。
 #: `content IS NOT NULL` 是必要的：没有正文的行切不出任何块，读进来只会变成噪声。
-SELECT_PUBLISHED_POSTS = (
-    "SELECT `content_id`, `title`, `content`, `tags`, `author_id` FROM `ai_content_snapshot` "
-    "WHERE `kind` = 'post' AND `content` IS NOT NULL AND `content` <> '' "
-    "ORDER BY `content_id`"
+SELECT_PUBLISHED_DOCS = (
+    "SELECT `kind`, `content_id`, `title`, `content`, `tags`, `author_id` "
+    "FROM `ai_content_snapshot` "
+    "WHERE `kind` IN ('post', 'note') AND `content` IS NOT NULL AND `content` <> '' "
+    "ORDER BY `kind`, `content_id`"
 )
 
 
@@ -65,7 +51,7 @@ class CorpusSourceUnavailable(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class SnapshotDoc:
-    """投影表里的一篇文档。
+    """投影表里的一篇文档（文章或笔记）。
 
     **刻意不复用 `SeedPost`**：那个类型的 `plain` 会做 SQL 反转义（`\\n` → 换行、`''` → `'`），
     因为种子里存的是被 SQL 转义过的文本；而库里的 `content` 本来就是明文 Markdown。
@@ -73,16 +59,17 @@ class SnapshotDoc:
     检索出来的原文与读者看到的原文不一致。
 
     字段与 `SeedPost` **对齐**（`post_id` / `title` / `plain` / `tags` / `author_id`），
-    这样将来切换来源时，下游（写作画像、检索管道、评测）一行都不用改。
+    这样下游（写作画像、检索管道、评测）一行都不用改；`kind` 是投影表带来的新维度
+    （`post` / `note`），默认 `post` 让「只有文章」的老数据与老用例照旧工作。
     """
 
     post_id: int
     title: str
     content: str
-    #: 标签。**投影表目前没有这一列**，所以这里先是空表；补列后由同步写入（见模块开头的说明）
     tags: list[str]
-    #: 作者 id。**投影表目前没有这一列**（写作画像按作者取样需要它）
     author_id: int = 0
+    #: 内容种类：`post`（文章）或 `note`（技术笔记）。**文档标识是 `kind + post_id`**
+    kind: str = "post"
 
     @property
     def plain(self) -> str:
@@ -95,8 +82,8 @@ def mysql_configured() -> bool:
     return all(os.environ.get(key) for key in ("MYSQL_HOST", "MYSQL_DB", "MYSQL_USER"))
 
 
-def load_snapshot_posts() -> list[SnapshotDoc]:
-    """读投影表里的已发布文章。
+def load_snapshot_docs() -> list[SnapshotDoc]:
+    """读投影表里的已发布文档（文章 + 公开笔记）。
 
     :raises CorpusSourceUnavailable: 表不存在 / 连不上库 / 没装 PyMySQL
         —— 都表示「这次读不到线上语料」（调用方据此回退种子包）
@@ -132,7 +119,7 @@ def load_snapshot_posts() -> list[SnapshotDoc]:
 
     try:
         with connection.cursor() as cursor:
-            cursor.execute(SELECT_PUBLISHED_POSTS)
+            cursor.execute(SELECT_PUBLISHED_DOCS)
             rows = list(cursor.fetchall())
     except Exception as error:  # noqa: BLE001 - 同上
         text = str(error)
@@ -150,13 +137,18 @@ def load_snapshot_posts() -> list[SnapshotDoc]:
 
     docs: list[SnapshotDoc] = []
     for row in rows:
+        kind = _normalize_kind(row.get("kind"))
+        if not kind:
+            # 未知 kind：整篇跳过（见 `_normalize_kind` 的说明），不猜成 post
+            continue
         content = str(row.get("content") or "")
         if not content:
             continue
         if len(content) > MAX_DOC_CHARS:
             # 截断会让「引用指向一段被切掉一半的文字」，所以宁可整篇跳过并留痕
             logger.warning(
-                "跳过 ai_content_snapshot 中过长的一篇（content_id=%s，%s 字符 > %s）",
+                "跳过 ai_content_snapshot 中过长的一篇（kind=%s content_id=%s，%s 字符 > %s）",
+                row.get("kind"),
                 row.get("content_id"),
                 len(content),
                 MAX_DOC_CHARS,
@@ -167,14 +159,26 @@ def load_snapshot_posts() -> list[SnapshotDoc]:
                 post_id=int(row.get("content_id") or 0),
                 title=str(row.get("title") or ""),
                 content=content,
-                # tags / author_id 投影表暂时没有：等补列后在这里取值（`row.get("tags")` 需要
-                # 按逗号拆分，`author_id` 直接转 int）。现在给空值而不是伪造，是为了让
-                # 「界面上标签为空、画像取不到样本」表现成显而易见的缺数据，而不是错数据。
                 tags=[part.strip() for part in str(row.get("tags") or "").split(",") if part.strip()],  # noqa: E501 - 拆开反而不易读
                 author_id=int(row.get("author_id") or 0),
+                kind=kind,
             )
         )
     return docs
+
+
+def _normalize_kind(raw: object) -> str:
+    """把投影表里的 `kind` 收敛成两个允许值。
+
+    未知值**不当成 `post`**：那会让一篇笔记被当成同号文章（引用跳错页面、删除删错文档）。
+    上游只有 post/note 两种（`CorpusKind` 枚举），真出现别的值说明契约变了，
+    这时宁可整篇跳过 —— 但要在日志里说出来，别静默丢内容。
+    """
+    kind = str(raw or "").strip().lower()
+    if kind in {"post", "note"}:
+        return kind
+    logger.warning("投影表里出现了未知的 kind=%r，已跳过这一篇（上游契约可能变了）", raw)
+    return ""
 
 
 def describe_source() -> str:

@@ -415,7 +415,42 @@ async def test_search_result_without_payload_fails_loudly() -> None:
     await store.aclose()
 
 
-async def test_delete_by_post_ids_uses_post_filter() -> None:
+async def test_delete_by_docs_filters_by_kind_and_id() -> None:
+    """删除必须按**文档标识** `(kind, id)`：文章 3 与笔记 3 是两个文档。
+
+    文章的过滤还要额外带上「kind 字段缺失」这一支 —— 笔记接入之前索引的点没有这个字段，
+    而 Qdrant 对**不存在的字段做匹配是一条都不命中的**：漏了它，升级后第一次重建
+    一条旧点都删不掉（旧片段继续被检索、引用指向旧正文）。
+    """
+    recorder = _Recorder(
+        {
+            ("POST", f"/collections/{COLLECTION}/points/delete"): httpx.Response(
+                200, json={"result": {}}
+            )
+        }
+    )
+    store = _store(recorder)
+
+    await store.delete_by_docs([("post", 3), ("note", 9)])
+
+    request = recorder.requests[-1]
+    assert request.url.params["wait"] == "true"
+    clauses = json.loads(request.content)["filter"]["should"]
+
+    note_clause = next(c for c in clauses if c["must"][0]["key"] == "kind")
+    assert note_clause["must"][0]["match"]["value"] == "note"
+    assert note_clause["must"][1]["match"]["any"] == [9]
+
+    post_clause = next(c for c in clauses if c["must"][0]["key"] == "postId")
+    assert post_clause["must"][0]["match"]["any"] == [3]
+    either = post_clause["must"][1]["should"]
+    assert {"key": "kind", "match": {"value": "post"}} in either
+    assert {"is_empty": {"key": "kind"}} in either, "老点没有 kind 字段，漏了这一支一条都删不掉"
+    await store.aclose()
+
+
+async def test_delete_by_post_ids_still_means_articles_only() -> None:
+    """便捷入口（只删文章）语义不变：冒烟脚本与旧调用还在用它。"""
     recorder = _Recorder(
         {
             ("POST", f"/collections/{COLLECTION}/points/delete"): httpx.Response(
@@ -427,11 +462,9 @@ async def test_delete_by_post_ids_uses_post_filter() -> None:
 
     await store.delete_by_post_ids([3, 9])
 
-    request = recorder.requests[-1]
-    assert request.url.params["wait"] == "true"
-    body = json.loads(request.content)
-    assert body["filter"]["must"][0]["key"] == "postId"
-    assert body["filter"]["must"][0]["match"]["any"] == [3, 9]
+    clauses = json.loads(recorder.requests[-1].content)["filter"]["should"]
+    assert len(clauses) == 1, "只给文章 id 时不该生成笔记那一支"
+    assert clauses[0]["must"][0]["match"]["any"] == [3, 9]
     await store.aclose()
 
 
@@ -439,7 +472,7 @@ async def test_delete_without_ids_skips_http() -> None:
     recorder = _Recorder({})
     store = _store(recorder)
 
-    await store.delete_by_post_ids([])
+    await store.delete_by_docs([])
 
     assert recorder.requests == []
     await store.aclose()
@@ -515,7 +548,26 @@ async def test_error_detail_is_truncated() -> None:
     await store.aclose()
 
 
-async def test_hashes_by_post_reads_payload_without_vectors() -> None:
+async def test_sample_fingerprint_treats_missing_collection_as_not_built() -> None:
+    """集合不存在 = 索引还没建 → 返回 None，**不要**抛 404。
+
+    首次开向量库时索引本来就是空的；在这里抛错会一路冒成 500，
+    把「还没建索引」说成「服务坏了」（实测踩过：查指纹时集合不存在直接 404）。
+    """
+    recorder = _Recorder(
+        {
+            ("POST", f"/collections/{COLLECTION}/points/scroll"): httpx.Response(
+                404, json={"status": {"error": "Not found: Collection doesn't exist!"}}
+            )
+        }
+    )
+    store = _store(recorder)
+
+    assert await store.sample_model_fingerprint() is None
+    await store.aclose()
+
+
+async def test_hashes_by_docs_reads_payload_without_vectors() -> None:
     """增量索引对账（M4）：只读 payload、不读向量。
 
     读向量的代价是「一次对账把几万条向量拉回来」—— 而对账要回答的是「有没有变」，
@@ -540,16 +592,43 @@ async def test_hashes_by_post_reads_payload_without_vectors() -> None:
     )
     store = _store(recorder)
 
-    grouped = await store.hashes_by_post()
+    grouped = await store.hashes_by_docs()
 
-    assert grouped == {1: {"h1", "h2"}, 2: {"h3"}}
+    # 没有 kind 字段的点按**文章**算：它们是笔记接入之前索引的
+    assert grouped == {("post", 1): {"h1", "h2"}, ("post", 2): {"h3"}}
     body = json.loads(recorder.requests[0].content)
     assert body["with_vector"] is False, "对账不该读向量"
     assert body["with_payload"] is True
     await store.aclose()
 
 
-async def test_hashes_by_post_marks_missing_hash_as_none() -> None:
+async def test_hashes_by_docs_separates_articles_from_notes() -> None:
+    """同号的文章与笔记不能归成一份：按数字 id 归并会让「该重建的那篇」被漏掉。"""
+    recorder = _Recorder(
+        {
+            ("POST", f"/collections/{COLLECTION}/points/scroll"): httpx.Response(
+                200,
+                json={
+                    "result": {
+                        "points": [
+                            {"payload": {"postId": 3, "kind": "post", "contentHash": "p"}},
+                            {"payload": {"postId": 3, "kind": "note", "contentHash": "n"}},
+                        ],
+                        "next_page_offset": None,
+                    }
+                },
+            )
+        }
+    )
+    store = _store(recorder)
+
+    grouped = await store.hashes_by_docs()
+
+    assert grouped == {("post", 3): {"p"}, ("note", 3): {"n"}}
+    await store.aclose()
+
+
+async def test_hashes_by_docs_marks_missing_hash_as_none() -> None:
     """老数据没有 `contentHash` → 记成 None（调用方据此判「要重建」），**不猜**。"""
     recorder = _Recorder(
         {
@@ -570,15 +649,15 @@ async def test_hashes_by_post_marks_missing_hash_as_none() -> None:
     )
     store = _store(recorder)
 
-    grouped = await store.hashes_by_post()
+    grouped = await store.hashes_by_docs()
 
-    assert grouped[7] is None, "读不到哈希要如实标出来，而不是拿别的字段充数"
-    assert grouped[8] is None
-    assert 0 not in grouped, "连 postId 都没有的点直接跳过（它本身就该被清理）"
+    assert grouped[("post", 7)] is None, "读不到哈希要如实标出来，而不是拿别的字段充数"
+    assert grouped[("post", 8)] is None
+    assert ("post", 0) not in grouped, "连 postId 都没有的点直接跳过（它本身就该被清理）"
     await store.aclose()
 
 
-async def test_hashes_by_post_follows_pagination() -> None:
+async def test_hashes_by_docs_follows_pagination() -> None:
     """滚动分页：必须跟着 next_page_offset 一直翻，否则对账只看到第一页。"""
     pages = [
         httpx.Response(
@@ -609,9 +688,9 @@ async def test_hashes_by_post_follows_pagination() -> None:
     config = QdrantConfig(collection=COLLECTION)
     store = QdrantVectorStore(config, transport=httpx.MockTransport(handler))
 
-    grouped = await store.hashes_by_post(page_size=1)
+    grouped = await store.hashes_by_docs(page_size=1)
 
-    assert set(grouped) == {1, 2}, "第二页也要读到"
+    assert set(grouped) == {("post", 1), ("post", 2)}, "第二页也要读到"
     await store.aclose()
 
 

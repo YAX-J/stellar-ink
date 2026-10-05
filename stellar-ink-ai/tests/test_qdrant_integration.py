@@ -87,11 +87,10 @@ class _FakeQdrant:
                     self.points[int(point["id"])] = point
                 return httpx.Response(200, json={"result": {"status": "completed"}})
             if tail == "points/delete":
-                wanted = set(body["filter"]["must"][0]["match"]["any"])
                 for key in [
                     key
                     for key, point in self.points.items()
-                    if point["payload"]["postId"] in wanted
+                    if _matches(body["filter"], point["payload"])
                 ]:
                     del self.points[key]
                 return httpx.Response(200, json={"result": {"status": "completed"}})
@@ -112,6 +111,30 @@ class _FakeQdrant:
                 ]
                 return httpx.Response(200, json={"result": rows[: body["limit"]]})
         return httpx.Response(404, json={"status": {"error": f"unhandled {request.method} {path}"}})
+
+
+def _matches(qfilter: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """按 Qdrant 的过滤语义判断一个点是否命中（够用的子集：should=OR、must=AND、match、is_empty）。
+
+    ⚠️ **字段缺失不匹配任何 `match`** —— 这是 Qdrant 的真实行为，也正是
+    「按 kind 过滤必须先写 payload、后过滤」那条教训的来源。fake 必须照它实现：
+    若把「缺失」当成匹配，删除逻辑里 `is_empty` 那一支就永远测不到，
+    而那支一旦缺失，升级后第一次重建会一条旧点都删不掉。
+    """
+    if "should" in qfilter:
+        return any(_matches(clause, payload) for clause in qfilter["should"])
+    if "must" in qfilter:
+        return all(_matches(clause, payload) for clause in qfilter["must"])
+    if "is_empty" in qfilter:
+        return payload.get(qfilter["is_empty"]["key"]) in (None, "")
+    key = qfilter.get("key")
+    match = qfilter.get("match")
+    if isinstance(key, str) and isinstance(match, dict):
+        value = payload.get(key)
+        if "any" in match:
+            return value in match["any"]
+        return value == match.get("value")
+    return False
 
 
 def _store(fake: _FakeQdrant) -> QdrantVectorStore:
@@ -194,7 +217,7 @@ async def test_removed_posts_are_purged_from_the_index() -> None:
     posts = _posts()
     await pipeline.index(posts)
 
-    await pipeline.index([], removed_post_ids=[2])
+    await pipeline.index([], removed_keys=[("post", 2)])
 
     assert {point["payload"]["postId"] for point in fake.points.values()} == {1, 3}
     await store.aclose()

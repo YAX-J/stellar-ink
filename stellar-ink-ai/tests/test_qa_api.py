@@ -59,7 +59,8 @@ async def test_qa_returns_the_answer_contract(app: FastAPI, secret: str) -> None
     assert isinstance(payload["evidenceSufficient"], bool)
     assert payload["usage"]["model"] == "fake", "离线自测：模型标识要如实告诉前端"
     for citation in payload["citations"]:
-        assert set(citation) == {"postId", "title", "chunkIndex", "snippet", "score"}
+        assert set(citation) == {"kind", "postId", "title", "chunkIndex", "snippet", "score"}
+        assert citation["kind"] in {"post", "note"}, "引用要能区分文章与笔记，前端据此跳页面"
         assert citation["snippet"], "引用必须带原文片段，否则无法定位"
 
 

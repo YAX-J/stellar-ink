@@ -219,11 +219,16 @@ class EvalModels:
 
 
 def seed_corpus() -> EvalCorpus:
-    """当前语料：种子内容包（与问答、Agent 共用同一份缓存与切块口径）。"""
+    """当前语料：线上投影表（与问答、Agent 共用同一份缓存与切块口径）。
+
+    **只吃文章**：黄金集的标注是 `expectedPostIds`（裸数字 id），
+    而文章 3 与笔记 3 是两个文档 —— 把笔记放进评测语料会让「命中笔记 3」
+    被算成「命中文章 3」，指标静默虚高。
+    """
     return EvalCorpus(
-        chunks=corpus_module.cached_corpus(),
+        chunks=corpus_module.cached_corpus(kinds=corpus_module.ARTICLE_KINDS),
         source=corpus_module.corpus_source(),
-        posts=len(corpus_module.cached_posts()),
+        posts=len(corpus_module.cached_posts(kinds=corpus_module.ARTICLE_KINDS)),
     )
 
 

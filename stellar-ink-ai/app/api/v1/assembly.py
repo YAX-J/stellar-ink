@@ -113,6 +113,11 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
         key = (corpus_module.EPOCH, config, runtime.fingerprint(), DENSE_STORE_ENABLED)
         cached = _pipelines.get(key)
         if cached is None:
+            # 语料换代（TTL 到期 / 手动 reset）之后，旧 `EPOCH` 的管道**再也用不到**，就地删掉：
+            # 每条管道持有整份语料与 BM25 索引，留着就是「每过一轮 TTL 多一份语料的内存」。
+            # 这里不需要关连接 —— dense 客户端是进程级单例（`_shared_dense_store`），不在管道里。
+            for stale_key in [k for k in _pipelines if k[0] != corpus_module.EPOCH]:
+                _pipelines.pop(stale_key, None)
             cached = RetrievalPipeline(
                 corpus=chunks,
                 config=config,
