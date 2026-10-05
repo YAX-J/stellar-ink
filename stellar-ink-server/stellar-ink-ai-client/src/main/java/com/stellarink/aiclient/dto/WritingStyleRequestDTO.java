@@ -26,7 +26,15 @@ public class WritingStyleRequestDTO implements Serializable {
 
     private Long authorId;
 
-    private Integer maxSamples;
+    /**
+     * 最多分析多少篇。**必须有默认值**：调用方（{@code AiStyleProfileServiceImpl}）只设 authorId，
+     * 而 Jackson 默认会把没设的包装类型序列化成 null —— Python 侧的 {@code max_samples: int}
+     * 不接受 null，于是整条链路变成 422 → 「系统繁忙」（实测：这就是 /ai/writing/style 500 的原因）。
+     * 注意这里**不能**靠 {@code @JsonInclude(NON_NULL)} 之类「不序列化 null」的办法：契约 fixture 里
+     * 就是带 null 的，改序列化会让 AiContractTest 直接红。
+     */
+    @Builder.Default
+    private Integer maxSamples = 20;
 
     /** 序列化前的兜底：缺省时给契约默认值（20），避免 Python 侧看到 null。 */
     @JsonIgnore
