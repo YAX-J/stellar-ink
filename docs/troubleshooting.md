@@ -170,10 +170,29 @@
 - **修法**：`index_reconcile.py` 现在把它当成「一篇都没索引」如实说明；建索引走 `POST /admin/index/rebuild`（Python）或 `/ai/admin/index/rebuild`（网关）。
 - **⚠️ 路径必须逐字一致**：`AiContractPaths.INDEX_REBUILD = "/admin/index/rebuild"`，而 `PythonAiClient` **没有 path 前缀** —— 一度被写成 `/index/rebuild`，接上去必然 404，而报出来的话是「Python 不可用」。
 
-### 5.9 **应用其实不用 Qdrant**
-- **事实**：`assembly.pipeline_for` 默认**不传** `dense_store`，dense 检索走**内存通路**（整库嵌入 + 本地余弦）。应用不碰 Qdrant 时，Qdrant 没起也不影响问答。
-- **要切换**：`AI_DENSE_STORE_ENABLED=true`（部署期开关，进程内不切换；管道是缓存的，所以用进程级单例持有客户端）。**打开前必须先验收**（黄金集 30 题「不劣化才切」）。
-- **⚠️ 不要先加 payload 过滤**：payload 里没有对应字段时 Qdrant 过滤会**静默命中零条**，问答变成「没有依据」而日志一切正常。顺序必须是「先写字段，再过滤」。
+### 5.9 应用到底用不用 Qdrant（**2026-10-05 起：用**）
+- **默认（`AI_DENSE_STORE_ENABLED` 未设）**：`assembly.pipeline_for` **不传** `dense_store`，
+  dense 检索走**内存通路**（整库嵌入 + 本地余弦）。此时 Qdrant 没起也不影响问答。
+- **当前本机开发已切到向量库**：`.env` 里 `AI_DENSE_STORE_ENABLED=true`，索引 = 语料 40 篇 / 92 点 / dim 2048。
+  - **开关是导入期读一次**：改完**必须重启 Python**，进程内不切换。
+  - **新失败模式**：Qdrant 不可达时**问答会整体失败**（以前应用根本不碰它）。
+    本机开发是跨公网连测试机 `124.221.158.32:6333`；生产 compose 里 Qdrant 是同机容器，没有这个问题。
+   排查：`uv run python scripts/qdrant_smoke.py`（用临时集合，安全）。
+  - **换 embedding 模型必须重建索引**：`prepare()` 会在走向量库时校验 payload 里的
+    `modelFingerprint`，不一致**当场报错**（不校验的话检索不报错、只是返回无意义的结果）。
+    重建走 `POST /ai/admin/index/rebuild`。
+  - **内容更新不再「自动」进检索**：内存通路的语料有 TTL（到期换代即可见），
+    而向量库通路的覆盖范围**只等于索引里有什么** —— 新发布 / 改过的内容要跑过
+    `POST /ai/admin/index/reconcile`（对账，只嵌变了的）或 `rebuild` 之后才检索得到。
+    ⚠️ 对账定时任务**默认关闭**（它要花嵌入额度），所以这一步目前是**手动**的。
+    忘了跑的表现是「刚发的文章问不到」，而不是报错。
+  - **单测不受这个开关影响**：`tests/fake_providers.py` 会强制走内存通路 ——
+    否则本机 `.env` 一改成 true，单测就会去连真实 Qdrant（跨公网、指纹还是真实模型的），
+    一次红四条且看起来像代码坏了（真实踩过）。接线本身由
+    `tests/test_assembly_dense_store.py` 用假 store 覆盖。
+- **⚠️ 不要先加 payload 过滤**：payload 里没有对应字段时 Qdrant 过滤会**静默命中零条**，
+  问答变成「没有依据」而日志一切正常。顺序必须是「先写字段，再过滤」。
+- **欠账**：切换前的「黄金集 30 题：内存 vs 向量库不劣化」A/B 对比**尚未做**（需嵌入额度）。
 
 ### 5.10 「发布/删除后索引不更新」
 - **机制**：增量靠**对账**而不是事件（事件会丢，对账每轮自愈）：
@@ -185,6 +204,26 @@
 - **两道闸门**：清单里不出现 + 按 id 取正文也 404。**改任何一边都要重跑 `InternalCorpusServiceImplTest` 的私有笔记用例。**
 
 ---
+
+### 5.12 流式问答显示「回答中断了，内容可能不完整」
+- **真因（2026-10-05 实测定位）**：Java `HttpQaStreamClient` 的 `HttpClient.newBuilder()`
+  没指定版本，JDK 默认 **HTTP/2**；对明文 `http://` 的内网 uvicorn 它会先做 **h2c 升级协商**，
+  而 uvicorn(h11) 不支持升级（Python 日志里是 `Unsupported upgrade request.` +
+  `Invalid HTTP request received.`）—— **请求体在协商中丢掉**，于是 Python 算出的 body hash
+  与 Java 签名时用的不同 ⇒ `内部验签失败：签名不匹配` ⇒ 401 ⇒ 前端只看到「回答中断了」。
+- **为什么只有流式坏**：非流式走 Feign（`HttpURLConnection`），本来就是 HTTP/1.1，所以一直正常。
+- **修法**：`HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)`
+  （`InternalAuthSmoke` 同步加上，别让它成为反例）。
+- **一次定位**：写一个 10 行 Java 程序，用**同一个** JDK HttpClient 打 `/qa/stream`
+  并对比两个版本 —— 默认版 401「签名不匹配」0 帧、显式 HTTP/1.1 版 200/93 帧。
+  ⚠️ 只给请求加一个 `Upgrade: h2c` 头**复现不出来**（那只是"像"）：必须用真的 JDK HttpClient，
+  因为它做的是**完整的升级握手**（先发头等 101，body 随后），而手工加头不会改变发送顺序。
+- **它带来的次生问题**：前端曾把这条 401 显示成「回答中断了，内容可能不完整」——
+  把「内部鉴权失败」说成了「网络抖动」。现在**有 error 帧时不再覆盖那句真因**
+  （`frontend scripts/qa-selfcheck.mjs` 有两条断言盯着）。
+- ⚠️ **本机代理**：排查时若用 httpx 直连 `127.0.0.1:8200`，可能得到 **502 空 body** ——
+  那是 `trust_env=True` 读了系统代理（连 `GET /health` 都 502 就是它的特征）。
+  诊断脚本要 `trust_env=False`，与 `app/rag/qdrant_store.py` 同一个理由。
 
 ## 6. 前端
 
@@ -212,6 +251,20 @@
 ### 6.7 笔记正文被空内容覆盖
 - **真因**：父组件 `modelValue` 在保存/切换时会短暂变空，编辑器照单全收。
 - **修法**：`applyExternalContent` 应在已有内容时拒绝被空字符串覆盖。
+
+### 6.8 `X is not defined`，可 `npm run check` 全绿
+- **症状**：抽模块 / 改名之后，页面一点就抛 `ReferenceError: STREAM_PATH is not defined`，
+  而所有自检 + `vite build` 全绿。（真实踩过：把流式逻辑从 `stores/qa.js` 抽进
+  `composables/useQaStream.js` 时漏搬了两个路径常量。）
+- **真因**：打包器把**未定义的标识符当全局变量**，构建不会失败；那类「漏搬的常量」只在
+  运行时真的走到那一行才炸。而纯逻辑自检（不加载真模块）也照样绿 —— **构建绿 ≠ 运行正确**。
+- **修法**：补回常量，并给这条路径**补一个加载真实模块的自检**：
+  `scripts/qa-selfcheck.mjs` 用 vite 的 `createServer` + `ssrLoadModule` 加载真 composable
+  并真的调一次 `askStream()`。已并入 `npm run check`（同类错误现在当场红）。
+  ⚠️ 写这类自检的一个细节：composable 返回的是 **ref**，只有组件模板会自动解包，
+  纯 JS 里必须取 `.value`（第一版忘了，拿到的是 ref 对象而不是答案）。
+- **一次定位**：报错里是某个**全大写**名字时，grep 全仓 —— 若它只出现在「使用处」、
+  没有任何 `const` 声明，就是它。
 
 ---
 

@@ -218,6 +218,19 @@ M0 期间网关还没有 `/ai/**` 路由，`/ai/health` 只能直连 `127.0.0.1:
 > `@PostMapping(produces = TEXT_EVENT_STREAM_VALUE)` 用反射钉住，
 > 真正的端到端验证留给「起服务后用 curl -N」。
 
+> **助手（笔记 / 随笔问答）P1/P2/S1/S2/S3（2026-10-05）**：五刀都写在
+> [`assistant-plan.md`](assistant-plan.md) §9 —— 那里有完整的「做了什么 / 怎么验证」。
+> 这里只留三条对下一轮有约束力的结论：
+> ① **文档标识是 `(kind, id)`**：任何「按 postId 查」的新代码都要先问一句
+>    「文章 3 与笔记 3 会不会互指」。Wiki / 记忆 / 评测目前**刻意只吃文章**
+>    （`corpus.ARTICLE_KINDS`），要放开就得同时给它们的表加 kind。
+> ② **语料有 TTL**（`AI_CORPUS_TTL_SECONDS`，默认 60s）：别再把 `cached_posts()` 当成
+>    「一个请求内恒定不变」的东西，也别指望改了投影表立刻生效 —— 最坏 60 秒，
+>    而这段时间里「刚转为私有的笔记」仍可能被回答（这是有意的取舍，见该文件 §3.2）。
+> ③ **流式出口也要过配额**：照 `AiQaStreamController` 的写法（开流前 `acquireQuota`、
+>    `finally releaseQuota`），**不要**只调 `recordSuccess` —— 那等于给了一条绕过闸门的路，
+>    而它恰恰是前端默认走的那条。
+
 > M1 原计划的四刀（网关化 / 签名 / 验签 / 首次真实调用）已在 A2 完成，编号不再单独使用；
 > M1-5（SSE）与 D2 一起做，避免先造一条没有消费方的流式通道。
 > nonce 防重放目前是**进程内**存储 + TTL（见 `app/core/internal_auth.py`）；多实例部署前要换 Redis，

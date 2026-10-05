@@ -320,7 +320,7 @@ mysql -h 127.0.0.1 -uroot -p stellar_ink -e "SELECT kind, COUNT(*) FROM ai_conte
 
 | 方法 | 路径 | 说明 | 角色 |
 |---|---|---|---|
-| POST | `/ai/admin/index/rebuild` | 重建向量索引：切块 → 嵌入 → 写 Qdrant。请求体可省略（= 全量重建），也可带 `kind=post_rebuild` + `postId`（单篇）与 `reason`（写进日志便于回溯） | ADMIN |
+| POST | `/ai/admin/index/rebuild` | 重建向量索引：切块 → 嵌入 → 写 Qdrant。请求体可省略（= 全量重建），也可带 `kind=post_rebuild` + `postId` + `contentKind`（`post` 文章 / `note` 笔记，缺省 `post`）与 `reason`（写进日志便于回溯） | ADMIN |
 
 ⚠️ 三条必须知道的现实：
 
@@ -335,9 +335,13 @@ mysql -h 127.0.0.1 -uroot -p stellar_ink -e "SELECT kind, COUNT(*) FROM ai_conte
 ```bash
 # 全量重建（经网关，ADMIN）
 curl -s -X POST http://127.0.0.1:8080/ai/admin/index/rebuild
-# 单篇重建
+# 单篇重建（文章）
 curl -s -X POST http://127.0.0.1:8080/ai/admin/index/rebuild \
   -H "Content-Type: application/json" -d '{"kind":"post_rebuild","postId":1,"reason":"手工验证"}'
+# 单篇重建（技术笔记）：contentKind 不给就是 post
+curl -s -X POST http://127.0.0.1:8080/ai/admin/index/rebuild \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"post_rebuild","postId":11,"contentKind":"note","reason":"笔记改了正文"}'
 # 看结果：测试机 Qdrant 的 dashboard
 #   http://124.221.158.32:6333/dashboard   → 集合 stellar_ink_chunks 应有点
 ```
@@ -570,7 +574,9 @@ curl -s "http://127.0.0.1:8080/ai/admin/usage/summary?days=7" -H "Authorization:
 
 **AI 配额与并发（E3-2）**
 
-配额不是接口，而是**所有 `/ai/**` 业务出口的前置检查**（与调用账同一个收口 `AiUsageService.around`）：
+配额不是接口，而是**所有 `/ai/**` 业务出口的前置检查**，收口在 `AiUsageService`：一次性调用走
+`around`（检查 → 调用 → 记账），**SSE 流式问答走同一道闸门的 `acquireQuota` / `releaseQuota`**
+（流式是同步逐帧转发，「客户端主动断开」按既有口径不算失败，因此不复用 `around` 的记账分支）：
 
 | 维度 | 触发条件 | 返回 |
 |---|---|---|
@@ -590,19 +596,24 @@ curl -s "http://127.0.0.1:8080/ai/admin/usage/summary?days=7" -H "Authorization:
   计数照记（`calls:model:<model>:<day>`），为「钱花在哪个模型上」留数据。
 - 检查与累加之间有一瞬间不是原子的（先读齐再累加，不做「加一半再回滚」）：并发下最多多放行
   「同时在飞」的那几个请求。对「防止自己烧钱」足够，换 Lua/CAS 会让这段逻辑难以单测。
+- **流式问答与一次性问答共用同一道闸门**（2026-10-05 补）：在此之前流式路径只事后记账、不检查，
+  而前端默认走流式（`stores/qa.js`）—— 于是调用数 / token / 角色 / 并发四道闸门对读者是空话，
+  「预算用尽」这类文案承诺了一个并不存在的闸门。闸门持有到流结束（一条长流本来就该占一个
+  「在飞」名额），释放收在 `finally`，正常结束、上游失败、客户端断开三条路一起放。
+  触顶时**在开流前**就返回 429，一个下游调用都不会发出去。
 
 **星海问答（D 阶段）**
 
 | 方法 | 路径（**经网关**） | 说明 | 鉴权 |
 |---|---|---|---|
-| POST | `/ai/qa` | 就全站已发布文章提问：请求体 `{question, topK?}`，响应 `{answer, citations, doneReason, usage, evidenceSufficient}` | **登录**（READER 及以上） |
+| POST | `/ai/qa` | 就全站已发布内容提问（**文章 + 公开技术笔记**）：请求体 `{question, topK?, history?}`，响应 `{answer, citations, doneReason, usage, evidenceSufficient}` | **登录**（READER 及以上） |
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/ai/qa \
   -H "Authorization: <token>" -H "Content-Type: application/json" \
   -d '{"question":"作者为什么坚持写博客，而不是把内容交给时间线？","topK":5}'
-# => {"code":0,"data":{"answer":"…","citations":[{"postId":1,"title":"…","chunkIndex":0,
-#     "snippet":"…","score":0.83}],"doneReason":"stop","usage":{"model":"fake",…},
+# => {"code":0,"data":{"answer":"…","citations":[{"kind":"post","postId":1,"title":"…",
+#     "chunkIndex":0,"snippet":"…","score":0.83}],"doneReason":"stop","usage":{"model":"fake",…},
 #     "evidenceSufficient":true}}
 ```
 
@@ -610,9 +621,18 @@ curl -s -X POST http://127.0.0.1:8080/ai/qa \
   走 `StpUtil.checkLogin()`（`/ai/admin/**` 才是 ADMIN）
 - `evidenceSufficient=false` 时前端**必须**显示「文章里没有找到依据」，不允许渲染成空白答案；
   `doneReason=refused` 与之一致
-- 引用是**可点回原文**的：`postId` 决定跳哪篇、`chunkIndex` 决定段落、`snippet` 是原文片段
+- 引用是**可点回原文**的：`kind` 决定跳哪个栏目（`post` → `/read/:id`，`note` → `/note/:id`）、
+  `postId` 是该栏目下的 id、`chunkIndex` 决定段落、`snippet` 是原文片段。
+  ⚠️ **文档标识是 `kind + postId`**：文章 3 与笔记 3 是两篇不同的内容，
+  只按 `postId` 跳会把人送到同号的另一篇去，而链接看起来完全正常。`kind` 缺省为 `post`。
 - `usage.model` 为 `fake` 表示当前是离线自测（种子语料 + Fake 模型），前端会挂一个提示；
   真实模型接上后这个字段就是模型名
+- **多轮**：请求体可带 `history: [{question, answer}]`（最多 **6 轮**，服务端与前端各自收一道）。
+  它是**语境的参考，不是证据** —— Python 的提示词明确要求只用它理解「那它呢」「上面那个报错」
+  指的是哪件事，不得当事实陈述、不得据它编号引用。理由与 M9 记忆同源且更容易搞混：
+  历史里装的是**模型自己上一轮说过的话**，当证据用等于让它拿自己的旧答案当出处，
+  而那段旧答案本来也可能引用错了。
+  单轮问答（深读页「问星笺」）**不带**它；助手浮层带上本次会话的前几轮（存 `sessionStorage`）
 - Java 侧只做协议转换（`AiAskDTO` → 内部 `QaStreamRequestDTO`），**不拼答案、不改引用**；
   空问题在服务端就被 `@NotBlank` 拦下（`code=1001`），不会白花一次检索
 
@@ -628,7 +648,7 @@ curl -N -s -X POST http://127.0.0.1:8080/ai/qa/stream \
   -H "Accept: text/event-stream" \
   -d '{"question":"一年写十八万字的方法是什么？","topK":5}'
 # => data: {"type": "meta", "model": "fake", "questionLength": 14, "topK": 5}
-#    data: {"type": "citation", "citation": {"postId": 20, "title": "…", …}}
+#    data: {"type": "citation", "citation": {"kind": "post", "postId": 20, "title": "…", …}}
 #    data: {"type": "delta", "text": "…"}
 #    data: {"type": "done", "answer": "…", "doneReason": "stop", "usage": {…},
 #           "evidenceSufficient": true}
@@ -673,7 +693,7 @@ curl -N -s -X POST http://127.0.0.1:8200/qa/stream \
   -H "X-AI-Signature: <HMAC>" \
   -d '{"question":"一年写十八万字的方法是什么？","topK":5}'
 # => data: {"type": "meta", "model": "fake", "questionLength": 14, "topK": 5}
-#    data: {"type": "citation", "citation": {"postId": 20, "title": "…", …}}
+#    data: {"type": "citation", "citation": {"kind": "post", "postId": 20, "title": "…", …}}
 #    data: {"type": "delta", "text": "…"}
 #    data: {"type": "done", "answer": "…", "doneReason": "stop", "usage": {…},
 #           "evidenceSufficient": true}
