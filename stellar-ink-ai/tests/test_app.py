@@ -91,6 +91,10 @@ EXPOSED_PATHS = {
     "/writing/style",
     # 只读 Agent（E2）：受内部签名保护，工具全部只读
     "/agent/ask",
+    # Agent 司职清单（A1）：给前端取可选司职用；同样是内网端点（清单不含提示词）
+    "/agent/profiles",
+    # 确定性引用核验（A2）：零模型调用，只比对答案里的编号与原文
+    "/agent/verify",
     # MCP 工具服务（E3-3）：JSON-RPC 2.0，工具集与 Agent 同一份；同样受内部签名保护
     "/mcp",
     # 按 traceId 回放（E3-4）：运维排障用，只在内网可达
@@ -105,6 +109,8 @@ EXPOSED_PATHS = {
     "/memory/recall",
     # 提示词注册表（M8）：只出元数据（版本/变量/评测状态），供观测出口与面板查看
     "/prompts",
+    # 模型清单：面板「添加模型」的候选来源，清单完全由供应商实时返回（代码里没有预置）
+    "/provider/models",
 }
 
 

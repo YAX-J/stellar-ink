@@ -1,0 +1,6 @@
+{
+  "provider": "openai_compatible",
+  "baseUrl": "https://api.example.com/v1",
+  "apiKey": "sk-fixture-not-a-real-key",
+  "role": "chat"
+}

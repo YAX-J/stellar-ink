@@ -19,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import time
 from collections import Counter
 from collections.abc import Coroutine
@@ -37,6 +36,7 @@ from app.rag.entities import (
     merge_entities,
     relation_edges,
 )
+from app.rag.evidence import chunk_text, evidence_contains, normalize_evidence
 from app.rag.pipeline import IndexedChunk
 from app.rag.topics import Topic, build_topics, topic_stats
 
@@ -377,13 +377,10 @@ def _prompt(post_chunks: list[IndexedChunk], max_claims_per_chunk: int) -> str:
 def _chunk_text(chunk: IndexedChunk) -> str:
     """段落原文：优先用 payload 里的 `text`（切块时的那份原文），退回检索文本。
 
-    为什么不用 `IndexedChunk.text`：那是**检索用文本**（标题 + 片段）。
-    拿它当证据来源的话，模型引用标题也能通过校验 —— 而标题并不是「这一段的原文」。
+    口径见 `app/rag/evidence.py`：核验器（`app/agents/verifier.py`）必须与这里
+    **判出同一个答案**，所以实现只有那一份，这里只做名字上的保留（本模块的历史调用点很多）。
     """
-    payload_text = chunk.payload.get("text")
-    if isinstance(payload_text, str) and payload_text.strip():
-        return payload_text
-    return chunk.text
+    return chunk_text(chunk)
 
 
 def _parse_entities(raw: str) -> list[dict[str, Any]]:
@@ -448,7 +445,7 @@ def _verify(
         return None, DROP_UNKNOWN_CHUNK
 
     quote = str(item.get("quote") or "").strip()
-    if len(quote) < MIN_QUOTE_CHARS or _normalize(quote) not in _normalize(_chunk_text(chunk)):
+    if not evidence_contains(quote, chunk_text(chunk), min_chars=MIN_QUOTE_CHARS):
         # **这就是「回到证据」的实现**：引用找不到原文依据 → 这条主张不成立
         return None, DROP_QUOTE_NOT_FOUND
 
@@ -475,8 +472,12 @@ def _confidence(raw: Any) -> float:
 
 
 def _normalize(text: str) -> str:
-    """规范化空白后再比对：模型常把换行/多空格写得不一致，那不是「引用不实」。"""
-    return re.sub(r"\s+", "", text)
+    """规范化空白后再比对（口径见 `app/rag/evidence.py`，实现只有那一份）。
+
+    本模块用它做**去重**（`(post_id, 主张文本)`）与实体名比对，
+    与「引用有没有被观察到」（`evidence_contains`）是同一套规范化。
+    """
+    return normalize_evidence(text)
 
 
 def _digest(text: str) -> str:

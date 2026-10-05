@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -234,11 +235,20 @@ class Agent:
     """只读 Agent 的循环：想一步 → 调一个工具 → 再看 → 收尾。
 
     无状态（可并发复用），模型的决策能力由注入的 `ChatModel` 提供。
+
+    A1 起它同时是**司职骨架的执行体**：提示词、工具集、预算都由 `app/agents` 的
+    `AgentProfile` 声明，装配层（`app/api/v1/agent.py`）按司职把它拼出来。
+    因此这个类**不认识「司职」这个概念** —— 它只拿到一份提示词、一个 `ToolBox` 与一份
+    `AgentSettings`。这样做的收益是「各司职互不打扰」有了结构性保证：没有共享的
+    全局状态、没有按名字分支的判断，每个请求都是一个新的 `Agent`。
     """
 
     chat: ChatModel
     tools: ToolBox
     settings: AgentSettings = field(default_factory=AgentSettings)
+    #: 系统提示词。缺省就是 `SYSTEM_PROMPT`（= `searcher` 司职那份），
+    #: 所以**老的直接实例化写法一行都不用改**（单测与 `searcher` 都依赖这一点）。
+    system_prompt: str = ""
     #: 外部中断开关：返回 True 即停止（浏览器断开时由调用方置位）
     should_stop: Callable[[], bool] | None = None
 
@@ -253,6 +263,12 @@ class Agent:
         "kind 取 post（文章）或 note（技术笔记）：文章 3 与笔记 3 是两篇不同的内容，"
         "标错了会指到另一篇去。"
     )
+
+    def __post_init__(self) -> None:
+        # 空字符串也回退到默认：调用方拿到 `profile.system_prompt` 直接传，
+        # 而某个司职写空提示词是配置事故（模型会没有任何约束），不是「无提示词」这种合法状态
+        if not self.system_prompt:
+            self.system_prompt = Agent.SYSTEM_PROMPT
 
     async def run(self, question: str) -> AgentRun:
         text = str(question or "").strip()
@@ -382,7 +398,7 @@ class Agent:
 
     async def _decide(self, question: str, observations: list[str]) -> _Decision:
         messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=self.SYSTEM_PROMPT),
+            ChatMessage(role=MessageRole.SYSTEM, content=self.system_prompt),
             ChatMessage(
                 role=MessageRole.USER, content=_user_prompt(question, self.tools, observations)
             ),
@@ -483,22 +499,58 @@ def _parse_citations(payload: dict[str, Any]) -> list[_Claim]:
     return claims
 
 
-def _verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation]) -> list[Citation]:
+def citation_key(citation: Citation) -> tuple[str, int, int]:
+    """引用的**文档标识**：`(kind, postId, chunkIndex)`。
+
+    单独开出来（而不是留在 `_verified_citations` 里）的理由：核验器
+    （`app/agents/verifier.py`）要按同一把钥匙回查原文。
+    两处各写一遍比较键，现象是「同一个引用在 Agent 里算被观察到、在核验器里算没被观察到」——
+    而两边都「有代码有注释」。文档标识是 `kind + post_id`：文章 3 与笔记 3 是两篇。
+    """
+    return (str(citation.kind), citation.post_id, citation.chunk_index)
+
+
+#: 答案里的引用编号：`[1]`、`[12]`。**只认方括号里的纯数字** ——
+#: 「[见上文]」不算；「[1,2]」也不算（那是模型的另一种写法，本轮不猜它的语义：
+#: 猜错会把「没标编号」说成「标了」，而这两种结论的处置完全不同）。
+_CITE_MARK = re.compile(r"\[(\d+)\]")
+
+
+def parse_citation_marks(answer: str) -> list[int]:
+    """取出答案里标出的引用编号（`[n]`），**按出现顺序去重**。
+
+    为什么单独成函数：问答与 Agent 的提示词都要求「用 [1] [2] 标注来源」，
+    而核验（A2）要判「编号有没有越界」。谁都能写一行正则，但**口径必须只有一份**：
+    同一段答案在两处被解析出不同的编号集合，就会出现「前端说有引用、核验说没标」。
+    """
+    seen: set[int] = set()
+    marks: list[int] = []
+    for raw in _CITE_MARK.findall(str(answer or "")):
+        number = int(raw)
+        if number in seen:
+            continue
+        seen.add(number)
+        marks.append(number)
+    return marks
+
+
+def verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation]) -> list[Citation]:
     """只保留**工具真的返回过**的引用，并按观察顺序给出完整片段与分数。
 
     这一步是引用可信的关键：模型可能记错 postId、也可能把别的文章编进来。
     声称但没观察到的一律丢掉 —— 宁可少一条引用，也不要给读者一个指向错误内容的链接。
 
-    核实按**文档标识** `(kind, postId, chunkIndex)` 做：只用 `postId` 的话，
-    「文章 3」与「笔记 3」会互相通过核实，而它们是完全不同的两篇。
+    核实按**文档标识** `(kind, postId, chunkIndex)` 做（见 `citation_key`）：只用 `postId`
+    的话，「文章 3」与「笔记 3」会互相通过核实，而它们是完全不同的两篇。
 
     模型一条都没标对时，退化成「把观察到的引用原样带上」：答案是依据它们写的，
     一条引用都不给反而让读者无法核对。
+
+    ⚠️ 这是**共享口径**：核验器（A2）按同一条规则判「引用的片段有没有被观察到」，
+    所以实现只有这一份，`_verified_citations` 只是它的历史别名。
     """
-    # 显式注解成 `str` 键：`Citation.kind` 是 Literal，直接拿 `claim.kind`（str）去查
-    # 会被类型检查判为不兼容 —— 而这里要表达的就是「按文本标识查」
     allowed: dict[tuple[str, int, int], Citation] = {
-        (str(item.kind), item.post_id, item.chunk_index): item for item in observed
+        citation_key(item): item for item in observed
     }
     kept: list[Citation] = []
     for claim in claimed:
@@ -506,6 +558,11 @@ def _verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation])
         if real is not None and real not in kept:
             kept.append(real)
     return kept or _dedupe(observed)
+
+
+def _verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation]) -> list[Citation]:
+    """历史入口（口径在 `verified_citations`）：保留是因为循环里读起来像「做了一次核实」。"""
+    return verified_citations(claimed, observed)
 
 
 def _dedupe(citations: Sequence[Citation]) -> list[Citation]:

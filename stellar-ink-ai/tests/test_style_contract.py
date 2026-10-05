@@ -121,3 +121,35 @@ def test_agent_fixture_pins_the_budget_exhausted_shape() -> None:
     assert payload["steps"], "跑了就要留下逐步记录"
     assert any(step["error"] for step in payload["steps"]), "要留下「为什么没收敛」"
     assert payload["interruptedBy"] == "budget"
+
+
+# --------------------------------------------------------------- A2 引用核验
+
+
+def test_verify_fixture_matches_the_current_translation() -> None:
+    """核验 fixture 同样要与翻译层一致（同 `build()` 的理由）。
+
+    它同时证明 fixture 是**算出来的**而不是手写的：`build_verify()` 会真的跑一遍
+    `verifier.verify()`，所以判定口径改了而 fixture 没重生成时，这条会红。
+    """
+    sys.path.insert(0, str(SCRIPTS))
+    from gen_agent_fixture import build_verify, build_verify_request  # noqa: PLC0415
+
+    assert build_verify() == load("agent_verify_result.json"), (
+        "fixture 与当前核验翻译不一致：改了契约就要跑 "
+        "`uv run python scripts/gen_agent_fixture.py`"
+    )
+    assert build_verify_request() == load("agent_verify_request.json")
+
+
+def test_verify_fixture_pins_the_warn_shape() -> None:
+    """「查出问题」的形态要在契约里钉死：结论 + 可读问题清单 + 核对条数。"""
+    payload = load("agent_verify_result.json")
+
+    assert payload["verdict"] == "warn"
+    assert payload["checked"] == 2, "两条引用都回查到了原文（它是 ok 的可信度分母）"
+    assert payload["evidenceAvailable"] is True
+    assert payload["problems"], "warn 必须带可读的问题"
+    assert [item["kind"] for item in payload["problems"]] == ["snippetNotFound"]
+    assert "找不到" in payload["problems"][0]["message"]
+    assert payload["uncited"] is False and payload["outOfRange"] == []

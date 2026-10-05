@@ -74,11 +74,16 @@ def install_fake_providers() -> None:
     `registry_for(user_id)` 取模型，只装全局那份的话，测试里会落到「按用户读数据库」——
     而单测机器上没有库，于是所有问答用例都变成 400「角色 chat 尚未配置」。
     桩的含义是「这次用桩」，所以两处都给同一份桩。
+
+    ⚠️ 还有**第三个**来源「用户自己那份」（`use_own_user_config_source`，拉模型清单借密钥用）：
+    它同样要显式装，否则那条路径会去真读库 —— 而它借的是**明文密钥**，
+    让测试落到真实读库上是最不该有的意外（本地有 `.env` 时会真的连上库）。
     """
     _force_in_memory_retrieval()
     configs = fake_provider_configs()
     use_provider_configs(configs)
     runtime.use_user_config_source(lambda _user_id: configs)
+    runtime.use_own_user_config_source(lambda _user_id: configs)
 
 
 def install_no_providers() -> None:
@@ -90,6 +95,7 @@ def install_no_providers() -> None:
     _force_in_memory_retrieval()
     use_provider_configs([])
     runtime.use_user_config_source(lambda _user_id: [])
+    runtime.use_own_user_config_source(lambda _user_id: [])
 
 
 def install_roles(roles: Sequence[str], *, provider: str = "fake") -> None:
@@ -98,3 +104,4 @@ def install_roles(roles: Sequence[str], *, provider: str = "fake") -> None:
     configs = [provider_config(role, provider=provider) for role in roles]
     use_provider_configs(configs)
     runtime.use_user_config_source(lambda _user_id: configs)
+    runtime.use_own_user_config_source(lambda _user_id: configs)

@@ -20,6 +20,8 @@ from app.schemas import (
     EvalRunResponse,
     IndexJob,
     IndexRebuildRequest,
+    ProviderModelsRequest,
+    ProviderModelsResult,
     QaAnswer,
     QaStreamRequest,
     WritingSuggestRequest,
@@ -44,6 +46,9 @@ ROUND_TRIP_CASES: list[tuple[str, type[BaseModel]]] = [
     ("index_job.json", IndexJob),
     ("eval_run_request.json", EvalRunRequest),
     ("eval_run_response.json", EvalRunResponse),
+    # 模型清单（面板「添加模型」）：两边读同一份，字段是 provider/baseUrl/apiKey/role
+    ("provider_models_request.json", ProviderModelsRequest),
+    ("provider_models_result.json", ProviderModelsResult),
     ("error_body.json", ErrorBody),
 ]
 
@@ -121,3 +126,43 @@ def test_post_rebuild_requires_post_id_by_contract() -> None:
 
     assert request.post_id == 12
     assert request.model_dump(by_alias=True)["postId"] == 12
+
+
+def test_provider_models_response_has_no_key_field() -> None:
+    """模型清单的响应里**没有**任何密钥字段 —— 连掩码都没有（红线 §5 的第一条）。
+
+    这条断言的价值在于：它是**契约层**的。哪天真有人「顺手加个 apiKeyMask 方便用户核对」，
+    这里会立刻红，而不是等到某次日志/审计里出现密钥才发现。
+    """
+    payload = load_fixture("provider_models_result.json")
+    serialized = ProviderModelsResult.model_validate(payload).model_dump(
+        by_alias=True, mode="json"
+    )
+
+    assert set(serialized) == {"models", "truncated", "source"}
+    for entry in serialized["models"]:
+        assert set(entry) == {"id", "created"}, "条目只留 id（外加可选的 created）"
+    assert "created" in serialized["models"][-1] and serialized["models"][-1]["created"] is None, (
+        "样例里必须有「供应商没给 created」的形态：可空字段得有人守着"
+    )
+
+
+def test_provider_models_request_key_is_optional() -> None:
+    """`apiKey` 可留空（= 用该用户已保存的该角色密钥），`role` 缺省是 chat。"""
+    request = ProviderModelsRequest.model_validate(
+        {"provider": "openai_compatible", "baseUrl": "https://api.example.com/v1"}
+    )
+
+    assert request.api_key is None
+    assert request.role == "chat"
+
+
+def test_provider_models_request_accepts_a_null_base_url_for_fake() -> None:
+    """`baseUrl` 必须能接受 **null**：Java 侧把「地址栏是空的」归一成 null 再转发。
+
+    契约层只收字符串的话，面板选 fake 时真实链路会以 422 结束，而两侧单测各自都是绿的。
+    """
+    request = ProviderModelsRequest.model_validate({"provider": "fake", "baseUrl": None})
+
+    assert request.base_url is None
+    assert request.provider == "fake"

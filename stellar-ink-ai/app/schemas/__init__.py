@@ -30,6 +30,11 @@ from app.schemas.indexing import (
     IndexRebuildRequest,
     IndexTaskKind,
 )
+from app.schemas.provider import (
+    ProviderModelEntry,
+    ProviderModelsRequest,
+    ProviderModelsResult,
+)
 from app.schemas.qa import QaAnswer, QaStreamRequest
 from app.schemas.qa_stream import (
     EVENT_CITATION,
@@ -85,6 +90,9 @@ __all__ = [
     "IndexRebuildRequest",
     "IndexTaskKind",
     "MAX_STYLE_SAMPLES",
+    "ProviderModelEntry",
+    "ProviderModelsRequest",
+    "ProviderModelsResult",
     "QaAnswer",
     "QaStreamRequest",
     "Role",

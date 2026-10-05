@@ -200,3 +200,11 @@ def _snippet(chunk: IndexedChunk, limit: int) -> str:
         raw = chunk.text.split("\n", 1)[1] if "\n" in chunk.text else chunk.text
     body = raw.strip()
     return body if len(body) <= limit else body[:limit].rstrip() + "…"
+
+
+#: 公开别名：`app/api/v1/agent.py` 的生成路径（`answerer` 司职）要拼引用，
+#: 而它必须与工具这条路**裁出同一份片段、同一个段落号** ——
+#: 同一段内容在两处裁出不同长度或不同下标，读者点回原文就会落到错的地方。
+#: 与其复制一份（迟早分叉），不如就在这里开一个不带下划线的入口。
+chunk_index_of = _chunk_index
+snippet_of = _snippet

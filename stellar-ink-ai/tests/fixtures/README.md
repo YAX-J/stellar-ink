@@ -16,6 +16,8 @@
 | `index_job.json` | `IndexJob`（`GET /ai/admin/jobs/{id}` 返回） |
 | `eval_run_request.json` | `EvalRunRequest`（`POST /eval/run` 请求，面板跑评测用；Java 侧转发时读同一份） |
 | `eval_run_response.json` | `EvalRunResponse`（评测结果：对比表 + 逐题明细；由 `scripts/gen_eval_response_fixture.py` 真实跑出来，不做手工修饰） |
+| `provider_models_request.json` | `ProviderModelsRequest`（`POST /ai/me/providers/models` 请求；`apiKey` 是**占位符**，不是任何人的密钥） |
+| `provider_models_result.json` | `ProviderModelsResult`（模型清单：`models`/`truncated`/`source`；由 `scripts/gen_provider_models_fixture.py` 用**假供应商**走真实取数代码路径生成。⚠️ 响应里**没有**任何密钥字段，连掩码都没有） |
 | `error_body.json` | `ErrorBody`（可展示错误码与提示） |
 
 ## 两侧怎么读同一组文件

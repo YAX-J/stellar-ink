@@ -1,5 +1,6 @@
 {
   "question": "一年写十八万字的方法是什么？",
+  "agent": "searcher",
   "maxSteps": 4,
   "maxToolCalls": 6
 }

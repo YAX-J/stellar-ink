@@ -1,0 +1,21 @@
+{
+  "answer": "靠的是每天五百字 [1]，超时要显式写出来 [2]。",
+  "citations": [
+    {
+      "kind": "post",
+      "postId": 1,
+      "title": "写作的复利",
+      "chunkIndex": 0,
+      "snippet": "每天写五百字，一年就是十八万字。",
+      "score": 14.28
+    },
+    {
+      "kind": "post",
+      "postId": 16,
+      "title": "一次 23 秒的请求",
+      "chunkIndex": 1,
+      "snippet": "把超时显式地写出来，比默认无限等要安全得多。",
+      "score": 9.5
+    }
+  ]
+}

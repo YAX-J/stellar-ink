@@ -223,6 +223,104 @@ def test_env_source_empty_means_no_configs() -> None:
     assert configs_from_env("") == []
 
 
+# ------------------------------------------- 「用户自己那份」（借密钥那条路径）
+
+
+def _own_source_rows() -> list[dict[str, object]]:
+    """一份库里的行集合：全局 chat、用户自己的 chat、用户自己的 embedding、别人的 chat。"""
+    return [
+        {
+            "user_id": 0,
+            "role": "chat",
+            "provider": "openai_compatible",
+            "base_url": "https://global.example.com/v1",
+            "model": "global-chat",
+            "api_key": "sk-global-key",
+        },
+        {
+            "user_id": 7,
+            "role": "chat",
+            "provider": "openai_compatible",
+            "base_url": "https://mine.example.com/v1",
+            "model": "my-chat",
+            "api_key": "sk-my-key",
+        },
+        {
+            "user_id": 7,
+            "role": "embedding",
+            "provider": "openai_compatible",
+            "base_url": "https://mine.example.com/v1",
+            "model": "my-embed",
+            "api_key": "sk-my-embed-key",
+        },
+        {
+            "user_id": 8,
+            "role": "chat",
+            "provider": "openai_compatible",
+            "base_url": "https://other.example.com/v1",
+            "model": "other-chat",
+            "api_key": "sk-other-key",
+        },
+    ]
+
+
+def test_own_user_configs_never_include_the_global_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**安全回归**：只读 `user_id = 该用户` 的行。
+
+    这条不是洁癖：拉模型清单时 `apiKey` 留空会用这里读到的**明文密钥**去请求
+    **用户自己填的 `base_url`**。一旦把全局那份也读进来，任何登录用户都能让服务端
+    把站长的 Key 发往他控制的公网地址。
+    """
+    from app.providers import config_source
+
+    monkeypatch.setattr(config_source, "_mysql_configured", lambda: True)
+    monkeypatch.setattr(config_source, "_fetch_rows", lambda user_id=None: _own_source_rows())
+
+    configs = config_source.load_own_user_configs(7)
+
+    assert [config.role for config in configs] == ["chat"], (
+        "只该拿到他自己的、按用户隔离的那个角色（embedding 不隔离、全局与别人的都不是他的）"
+    )
+    assert configs[0].api_key == "sk-my-key"
+    assert "sk-global-key" not in {config.api_key for config in configs}
+    assert "sk-other-key" not in {config.api_key for config in configs}
+
+
+def test_own_user_configs_ignores_the_env_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """容器/CI 注入的整份配置是**站长那份**，不能当成「用户自己的密钥」。"""
+    from app.providers import config_source
+
+    monkeypatch.setattr(config_source, "_mysql_configured", lambda: True)
+    monkeypatch.setattr(config_source, "_fetch_rows", lambda user_id=None: [])
+    monkeypatch.setattr(
+        config_source,
+        "configs_from_env",
+        lambda raw=None: [
+            ProviderConfig(
+                role="chat",
+                provider="openai_compatible",
+                base_url="https://global.example.com/v1",
+                model="global-chat",
+                api_key="sk-global-key",
+                capabilities=ProviderCapabilities(chat=True),
+            )
+        ],
+    )
+
+    assert config_source.load_own_user_configs(7) == []
+
+
+def test_own_user_configs_without_user_id_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有身份就没有「他自己的配置」：不能拿全局那份顶上。"""
+    from app.providers import config_source
+
+    monkeypatch.setattr(config_source, "_mysql_configured", lambda: True)
+    monkeypatch.setattr(config_source, "_fetch_rows", lambda user_id=None: _own_source_rows())
+
+    assert config_source.load_own_user_configs(0) == []
+    assert config_source.load_own_user_configs(None) == []  # type: ignore[arg-type]
+
+
 def test_provider_error_is_the_common_base_for_callers() -> None:
     """端点按 `ASSEMBLY_ERRORS`（`ProviderError` / `ProviderConfigError` / `CorpusError`）捕获：
     三者都要能被同一个 except 收到，否则「没配好」会漏成 500。

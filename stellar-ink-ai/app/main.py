@@ -29,6 +29,8 @@ from app.core.internal_auth_middleware import InternalAuthMiddleware, require_in
 from app.core.logging import configure_logging
 from app.core.trace import TraceIdMiddleware, current_trace_id
 from app.providers.errors import (
+    InvalidBaseUrlError,
+    ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
     UnsupportedCapabilityError,
@@ -48,17 +50,32 @@ def provider_error_status(error: ProviderError) -> int:
     """Provider 失败的 HTTP 状态码：**按「谁该动手」分档，不按异常名字分档**。
 
     - 429：被限流（上游让我们慢一点，可退避重试）；
-    - 400：配置问题（角色没配 / 能力不符）—— 让用户去面板改，重试一万次也没用；
-    - 502：上游坏了（超时 / 5xx / 鉴权被拒）—— 这是「服务下游的问题」，不是请求错了。
+    - 400：参数/配置问题（角色没配、能力不符、地址不合规）—— 让用户去面板改，
+      重试一万次也没用；
+    - 401：**密钥无效**（上游 401/403）—— 同上，只有人类能修（换一把 Key）；
+    - 502：上游坏了（超时 / 5xx / 连不上）—— 这是「服务下游的问题」，不是请求错了。
 
     为什么必须有这一层：真实模型接上之后，超时与限流是**常态**。
     没有它，一次模型超时就是一个带栈的 500，前端只能显示「服务器错误」，
     而用户真正需要知道的是「这次是模型超时，可以重试」。
+
+    ⚠️ 三条新增分档（拉模型清单那一刀）说明：
+
+    * `ProviderAuthError → 401`：在此之前它落进默认的 502，但 502 的含义是「我们这边坏了」，
+      而密钥无效**只有用户能修**。401 与 502 在 Java 侧都翻成同一条
+      `ErrorCode.SERVICE_UNAVAILABLE` + 原话提示（见 `PythonErrorDecoder`），
+      所以对前端而言这条改动**不会**变成「登录失效」——它仍然带上游那句可操作的话。
+    * `InvalidBaseUrlError → 400`：地址不合规是**用户填错**（个人配置只允许公网，
+      见 `providers/url_policy.py`）。它此前只在装配路径出现，而那条路径本来就转成 400
+      （`assembly_error`），这里只是把同一档口径收进唯一的分档函数。
+    * `ProviderRateLimitError` 必须先判：`ProviderQuotaExhaustedError` 是它的子类（仍是 429）。
     """
     if isinstance(error, ProviderRateLimitError):
         return 429
-    if isinstance(error, UnsupportedCapabilityError):
+    if isinstance(error, (UnsupportedCapabilityError, InvalidBaseUrlError)):
         return 400
+    if isinstance(error, ProviderAuthError):
+        return 401
     return 502
 
 

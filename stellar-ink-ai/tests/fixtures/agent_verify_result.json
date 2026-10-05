@@ -1,0 +1,17 @@
+{
+  "verdict": "warn",
+  "checked": 2,
+  "evidenceAvailable": true,
+  "citedIndexes": [
+    1,
+    2
+  ],
+  "outOfRange": [],
+  "uncited": false,
+  "problems": [
+    {
+      "kind": "snippetNotFound",
+      "message": "第 2 条引用的片段在它标注的原文里找不到（post:16 第 1 段，片段至少 4 字才算数）—— 这条引用没有被观察到。"
+    }
+  ]
+}

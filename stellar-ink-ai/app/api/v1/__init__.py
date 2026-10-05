@@ -9,6 +9,7 @@ from app.api.v1 import index as index_routes
 from app.api.v1 import mcp as mcp_routes
 from app.api.v1 import memory as memory_routes
 from app.api.v1 import prompts as prompt_routes
+from app.api.v1 import provider as provider_routes
 from app.api.v1 import qa as qa_routes
 from app.api.v1 import style as style_routes
 from app.api.v1 import trace as trace_routes
@@ -34,3 +35,5 @@ api_router.include_router(wiki_routes.router)
 api_router.include_router(memory_routes.router)
 # 提示词注册表（M8）：只出元数据（版本/变量/评测状态），不出模板全文
 api_router.include_router(prompt_routes.router)
+# 模型清单（面板「添加模型」的候选来源）：清单完全由供应商实时返回，代码里没有预置
+api_router.include_router(provider_routes.router)

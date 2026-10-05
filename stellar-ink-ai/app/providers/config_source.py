@@ -258,6 +258,35 @@ def _user_id_of(row: Mapping[str, object]) -> int:
     return _as_int(row.get("user_id")) or 0
 
 
+def load_own_user_configs(user_id: int) -> list[ProviderConfig]:
+    """**只**读该用户自己保存的行（`user_id = 该用户`），**不含** `user_id = 0` 的全局那份。
+
+    ⚠️ 为什么单独一个入口（这是**安全边界**，不是洁癖）：「拉模型清单」时 `apiKey` 留空会用
+    这里读到的明文密钥，去请求**请求体里那个 `base_url`**（由用户自己填）。若把全局那份一起读，
+    任何登录用户都能让服务端把**站长的密钥**发往他控制的公网地址 ——
+    一次请求偷走一把 Key，而日志里只留下「有人拉了一次模型清单」。
+    所以这条路径**只认用户自己的行**：用他自己的密钥，去他自己填的地址。
+
+    另两条与 `load_provider_configs` 刻意的差别：
+
+    * **环境注入（`AI_PROVIDER_CONFIG_JSON`）不参与**：那是站长那份全局配置（容器/CI 里注入的
+      整份配置），给它当「用户的密钥」用就是同一个漏洞。所以这种部署下这里恒为空 ——
+      用户要拉清单就得在表单里填 Key，那是**正确**的行为；
+    * **`embedding` / `rerank` 直接丢弃**（不警告）：这两个角色本来就不按用户隔离，
+      用户行里出现它们属于历史遗留，这里静默当作「他没有」——上层会给出可读的 400。
+    """
+    if not user_id or not _mysql_configured():
+        return []
+    owner = int(user_id)
+    own_rows = [
+        row
+        for row in _fetch_rows(user_id=owner)
+        if _user_id_of(row) == owner and str(row.get("role") or "") in USER_SCOPED_ROLES
+    ]
+    # 与个人配置同一条地址口径：只允许公网（地址是服务端拿去发请求的）
+    return configs_from_rows(own_rows, decrypt_key=True, allow_private=False)
+
+
 def describe_sources() -> str:
     """说清「配置是从哪读的、为什么是空的」——**不含任何值**。
 

@@ -1,4 +1,5 @@
 {
+  "agent": "searcher",
   "answer": "",
   "citations": [
     {
@@ -32,7 +33,7 @@
       "thought": "还想再确认一下",
       "tool": "",
       "label": "",
-      "error": "模型既没有选择工具，也没有给出答案（格式不符）"
+      "error": "模型既没有选择工具，也不知道答案（格式不符）"
     }
   ],
   "toolCalls": 1,
