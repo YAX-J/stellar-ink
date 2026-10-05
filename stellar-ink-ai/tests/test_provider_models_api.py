@@ -2,7 +2,8 @@
 
 这一层要守的东西与 `/agent/verify` 那一刀同类，但多了两件**只在这一层**能验的事：
 
-1. **密钥从哪来**：请求里给了就用它；没给就用该用户已保存的该角色密钥；两处都没有 → 400 + 可读提示。
+1. **密钥从哪来**：请求里给了就用它；没给就用该用户已保存的该角色密钥；两处都没有 →
+   **不带 `Authorization` 头试一次**（`/models` 是否公开由供应商决定），由供应商来回答。
    断言不是「返回了什么」，而是**上游真的收到了哪把密钥**（MockTransport 里看请求头）——
    「用了正确的密钥」这件事只有在那条线上才看得见。
 2. **明文密钥不进响应**：连掩码都不回（响应里干脆没有这个字段）。这条也在整段响应体上断言。
@@ -219,6 +220,21 @@ async def test_falls_back_to_the_saved_key_of_that_role(
     assert SAVED_SECRET not in json.dumps(payload, ensure_ascii=False)
 
 
+def _recording(seen: list[httpx.Request]) -> VendorHandler:
+    """记录出站请求，供「上游到底收到了哪把密钥」这类断言使用。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"object": "list", "data": [{"id": "m-1"}]})
+
+    return handler
+
+
+def _authorization_of(request: httpx.Request) -> str:
+    """该请求带的 `Authorization` 头（没有就是空串）。"""
+    return request.headers.get("authorization", "")
+
+
 async def test_never_borrows_the_global_config_key(
     app: FastAPI, secret: str, vendor: Callable
 ) -> None:
@@ -228,24 +244,30 @@ async def test_never_borrows_the_global_config_key(
     把地址填成自己的服务器、`apiKey` 留空，服务端就会把站长的明文 Key 发过去 ——
     一次请求偷走一把 Key，而日志里只留下「有人拉了一次模型清单」。
 
-    所以「他自己没配」= 没有可借的密钥（400），**不是**回落到全局。
+    ⚠️ 2026-10-05 起「他自己没配」不再提前 400，而是**空手去试一次**（有些供应商的
+    `/models` 是公开的）。所以这里断言的不再是「不该发请求」，而是**发了请求、但头里
+    没有那把全局密钥** —— 新口径下这才是安全边界的准确表达，也比旧断言更贴近真实行为。
     """
+    seen: list[httpx.Request] = []
     # 全局那份（站长配的）在两条来源里都存在；用户自己那份是空的
     runtime.use_provider_configs([_saved_config()])
     runtime.use_user_config_source(lambda _user_id: [_saved_config()])
     _save_config_for_user([])
-    vendor(lambda _: pytest.fail("没有可借的密钥时不该发出任何请求"))
+    vendor(_recording(seen))
 
     status, payload = await post_models(app, secret, _request(apiKey=None))
 
-    assert status == 400
-    assert "API Key" in payload["message"]
+    assert status == 200, "没有可借的密钥也要照常试一次，由供应商来回答"
+    assert [m["id"] for m in payload["models"]] == ["m-1"]
+    assert len(seen) == 1, "应该恰好发出去一次请求"
+    assert not _authorization_of(seen[0]), "绝不能把站长那把密钥发往用户自己填的地址"
 
 
 async def test_other_roles_saved_key_is_not_used(
     app: FastAPI, secret: str, vendor: Callable
 ) -> None:
     """只取请求点名的那个角色：串到别的角色就是「用别人的配置发请求」。"""
+    seen: list[httpx.Request] = []
     _save_config_for_user(
         [
             ProviderConfig(
@@ -258,40 +280,46 @@ async def test_other_roles_saved_key_is_not_used(
             )
         ]
     )
-    vendor(_list_response([{"id": "m-1"}]))
+    vendor(_recording(seen))
 
     status, payload = await post_models(app, secret, _request(apiKey=None, role="chat"))
 
-    assert status == 400
-    assert "API Key" in payload["message"]
+    assert status == 200
+    assert not _authorization_of(seen[0]), "fast 那把密钥不该被拿去请求 chat 的清单"
 
 
-async def test_no_key_anywhere_is_a_readable_400(
+async def test_no_key_anywhere_still_tries_once(
     app: FastAPI, secret: str, vendor: Callable
 ) -> None:
-    """两处都没有 → 400 + 可读提示（不是 401：它不是「会话/签名坏了」）。"""
+    """两处都没有密钥 → **不带 `Authorization` 头试一次**，而不是提前判死。
+
+    为什么不再回 400：`/models` 是否公开由**供应商**决定，有些本来就是公开的。
+    提前说「没有可用的 API Key」会让用户以为功能坏了，而实际只是「这家要密钥」——
+    由对方回 401 比我们自己猜更接近事实（那句 401 的文案另有用例盯着）。
+    """
+    seen: list[httpx.Request] = []
     _save_config_for_user([])
-    vendor(_list_response([{"id": "m-1"}]))
+    vendor(_recording(seen))
 
     status, payload = await post_models(app, secret, _request(apiKey=None))
 
-    assert status == 400
-    assert payload["code"] == "AI_BAD_REQUEST"
-    assert "API Key" in payload["message"]
-    assert "模型配置" in payload["message"], "要指路「去哪儿存一个」，不能只说没带"
+    assert status == 200
+    assert [m["id"] for m in payload["models"]] == ["m-1"]
+    assert not _authorization_of(seen[0]), "没有密钥时不该凭空编一个 Authorization 头"
 
 
-async def test_saved_config_without_a_key_is_a_readable_400(
+async def test_saved_config_without_a_key_also_tries_once(
     app: FastAPI, secret: str, vendor: Callable
 ) -> None:
-    """已保存的配置存在但没密钥（协议可能是 fake）：也要说清是这件事，而不是含糊的「未配置」。"""
+    """已保存的配置存在但没密钥（协议可能是 fake）：同样空手试一次，而不是含糊地报「未配置」。"""
+    seen: list[httpx.Request] = []
     _save_config_for_user([_saved_config(api_key="")])
-    vendor(_list_response([{"id": "m-1"}]))
+    vendor(_recording(seen))
 
     status, payload = await post_models(app, secret, _request(apiKey=None))
 
-    assert status == 400
-    assert "没有密钥" in payload["message"]
+    assert status == 200
+    assert not _authorization_of(seen[0])
 
 
 async def test_config_read_failure_is_a_readable_400(
