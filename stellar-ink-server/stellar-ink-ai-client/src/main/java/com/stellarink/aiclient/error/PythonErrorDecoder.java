@@ -38,7 +38,16 @@ public class PythonErrorDecoder implements ErrorDecoder {
     @Override
     public Exception decode(String methodKey, Response response) {
         int status = response.status();
-        String message = readableMessage(response);
+        // ⚠️ Feign 的 body 是**流**，只能读一次：所以在这里读出来再往下传。
+        String body = bodyOf(response);
+        String message = readableMessage(body);
+        if (message == null) {
+            // FastAPI 的参数校验失败是 {detail:[{loc,msg,…}]}，不是我们的 {code,message} 契约。
+            // 不认它就会掉进下面的「契约外」分支 → FeignException → 全局处理器给
+            // 「系统繁忙，请稍后重试」，而真正的原因（哪个字段不合法）就此消失 ——
+            // 2026-10-05 那次 /ai/writing/style 的 500 就是这么被藏了两轮。
+            message = validationMessage(body);
+        }
         if (message == null) {
             // 不是我们的错误契约：保留默认行为（FeignException → 上层兜成 5xx），
             // 但把状态码记下来，否则这类问题在日志里毫无痕迹
@@ -82,8 +91,7 @@ public class PythonErrorDecoder implements ErrorDecoder {
     }
 
     /** 从错误体里取可展示的消息；取不到（非 JSON、没有 message 字段、空体）返回 null。 */
-    private static String readableMessage(Response response) {
-        String body = bodyOf(response);
+    private static String readableMessage(String body) {
         if (body == null || body.isBlank()) {
             return null;
         }
@@ -98,6 +106,54 @@ public class PythonErrorDecoder implements ErrorDecoder {
         } catch (IOException malformed) {
             return null;
         }
+    }
+
+    /**
+     * FastAPI 的参数校验错误 → 一句人话。
+     *
+     * <p>形状是 {@code {"detail":[{"type":…,"loc":["body","maxSamples"],"msg":"Input should be a
+     * valid integer",…}]}}。这里取第一条，拼成
+     * {@code "请求参数不合法（maxSamples）：Input should be a valid integer"} ——
+     * 定位到**具体字段**才是这条消息的全部价值；只说「参数错误」等于没说。
+     *
+     * <p>`detail` 也可能直接是字符串（自己 raise 的 HTTPException），同样认。
+     */
+    private static String validationMessage(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode detail = MAPPER.readTree(body).get("detail");
+            if (detail == null || detail.isNull()) {
+                return null;
+            }
+            if (detail.isTextual()) {
+                return truncate("请求参数不合法：" + detail.asText().trim());
+            }
+            if (!detail.isArray() || detail.isEmpty()) {
+                return null;
+            }
+            JsonNode first = detail.get(0);
+            String message = first.path("msg").asText("").trim();
+            if (message.isBlank()) {
+                return null;
+            }
+            String field = lastLocationPart(first.path("loc"));
+            return truncate(field.isBlank()
+                    ? "请求参数不合法：" + message
+                    : "请求参数不合法（" + field + "）：" + message);
+        } catch (IOException malformed) {
+            return null;
+        }
+    }
+
+    /** `loc` 形如 `["body","maxSamples"]`：取最后一段（字段名）作为可读定位。 */
+    private static String lastLocationPart(JsonNode loc) {
+        if (loc == null || !loc.isArray() || loc.isEmpty()) {
+            return "";
+        }
+        JsonNode last = loc.get(loc.size() - 1);
+        return last.isTextual() ? last.asText() : last.toString();
     }
 
     private static String bodyOf(Response response) {
