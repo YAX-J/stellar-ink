@@ -485,16 +485,6 @@ const history = computed(() =>
     .map((turn) => ({ question: turn.question, answer: turn.answer.answer })),
 )
 
-function archiveFinishedTurn() {
-  if (completed.value && answer.value?.answer && qaQuestion.value) {
-    boxes.value.answer = [...boxes.value.answer, {
-      question: qaQuestion.value,
-      answer: answer.value,
-      verification: verification.value,
-    }].slice(-HISTORY_LIMIT)
-  }
-}
-
 function startTicker() {
   waited.value = 0
   if (ticker) clearInterval(ticker)
@@ -520,6 +510,24 @@ async function safeVerify(run) {
 }
 
 /**
+ * 一轮问答应有的收尾：**归档 + 清当前轮，两件事必须一起做**。
+ *
+ * ⚠️ 真实事故（用户反馈「问一个问题连续出现两次问答」）：深挖那条链最初只做了归档、
+ * 没有清 `deepResult`，于是同一个问答**同时**出现在「历史轮」与「当前轮」两个渲染分支里，
+ * 视觉上就是问了一遍、答了两屏。问答那条链当时是「下一次提问时才归档」，所以不重复 ——
+ * 两条链收尾口径不同，只有一条会露出这个问题。
+ *
+ * 现在统一：完成（含用户停止、预算用尽）就归档，紧接着把当前轮状态清掉；
+ * 只有**真失败**才留在当前轮，让 `error` 如实显示。
+ */
+function archiveTurn(list, turn, reset) {
+  if (!turn.answer?.answer) return false
+  list.value = [...list.value, turn].slice(-HISTORY_LIMIT)
+  reset()
+  return true
+}
+
+/**
  * @param preset 示例问题（空态的 chip 直接传文案）；不传则取输入框内容。
  *   注意模板里必须写成 `@click="send()"`：写 `@click="send"` 会把事件对象当问题发出去。
  */
@@ -536,13 +544,23 @@ async function send(preset) {
     await sendDeep(text)
     return
   }
-  // 先把上一轮归档，它的正文才会进这一轮的上下文（`history` 依赖 boxes）
-  archiveFinishedTurn()
   qaReset()
   verification.value = null
+  // ⚠️ `history` 必须在**发起请求前**取：归档发生在响应之后，那时 boxes 里已经多了本轮，
+  // 把它当上下文发出去等于让模型看到自己刚写的答案
+  const context = history.value
   try {
-    await askStream(text, { history: history.value })
-    verification.value = await safeVerify(answer.value)
+    await askStream(text, { history: context })
+    const report = await safeVerify(answer.value)
+    const archived = archiveTurn(boxes.value.answer, {
+      question: qaQuestion.value,
+      answer: answer.value,
+      verification: report,
+    }, qaReset)
+    if (!archived) {
+      // 没归档（响应里没有正文）：核验结果仍留在当前轮，别让它凭空消失
+      verification.value = report
+    }
   } catch {
     // 失败已经在 `qaError` 里如实显示（含 401/429 的专门处理）
   }
@@ -555,15 +573,16 @@ async function sendDeep(text) {
   try {
     const result = await deepAsk(text, { depth: 'quick' })
     const run = toAnswerShape(result, { stopped: !result })
-    deepVerification.value = await safeVerify(run)
-    if (result || deepStopped.value) {
-      // 用户自己停的、或预算用尽：**不是失败**，也要留一轮，否则"查过什么"就丢了
-      boxes.value.deep = [...boxes.value.deep, {
-        question: text,
-        answer: run,
-        verification: deepVerification.value,
-      }].slice(-HISTORY_LIMIT)
-    }
+    const report = await safeVerify(run)
+    // 收尾提示（正在检索 / 预算用尽 / 已停止）要**先抄进轮里再 reset**，
+    // 否则 `deepNotice` 依赖的那几个状态一被清掉，这句说明就跟着消失了
+    const notice = deepNotice.value
+    archiveTurn(boxes.value.deep, {
+      question: text,
+      answer: run,
+      verification: report,
+      notice,
+    }, deepReset)
   } catch {
     // 真失败：错误显示在 `deepError` 里
   } finally {
@@ -872,6 +891,7 @@ function clearAll() {
             <p v-if="turn.answer?.steps?.length" class="dock-steps">
               深挖 · {{ turn.answer.steps.length }} 步 · {{ turn.answer.toolCalls }} 次工具调用
             </p>
+            <p v-if="turn.notice" class="dock-notice">{{ turn.notice }}</p>
             <p
               v-if="turn.verification" class="dock-verify"
               :class="turn.verification.verdict"
