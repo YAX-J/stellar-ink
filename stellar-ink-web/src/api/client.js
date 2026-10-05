@@ -67,13 +67,16 @@ function httpMessage(status, fallback) {
 /**
  * 发送请求并解包统一响应。
  * @param {string} path 以 / 开头的接口路径，如 /auth/login
- * @param {{ method?: string, body?: object, form?: FormData, query?: object, timeout?: number, silent?: boolean, signal?: AbortSignal }} [opts]
+ * @param {{ method?: string, body?: object, form?: FormData, query?: object, timeout?: number, silent?: boolean, signal?: AbortSignal, ownErrors?: boolean }} [opts]
  *   body 走 JSON；form 走 multipart（上传文件用，两者互斥，form 优先）。
  *   silent=true 时不弹全局 toast（由调用方自行展示局部错误）。
  *   signal 是**调用方**的中断信号（用户点「停止」）：接上它，请求才会真的被取消 ——
  *   否则「停止」只是本地不再等待，服务端照样跑完多步检索，那是白烧钱。
+ *   ownErrors=true 表示**这次请求的错误归调用方那个功能管**（默认 false，老调用方一字不变）：
+ *   见下面 `notify` 与错误映射处的注释 —— 典型场景是直接打供应商的
+ *   `POST /ai/me/providers/models`，那里的 401/403 来自**上游供应商**，与本站会话无关。
  */
-export async function request(path, { method = 'GET', body, form, query, timeout = 15000, silent = false, signal } = {}) {
+export async function request(path, { method = 'GET', body, form, query, timeout = 15000, silent = false, signal, ownErrors = false } = {}) {
   /* multipart 的 Content-Type 必须由浏览器自己生成（带 boundary），手写会导致后端解析失败 */
   const headers = form ? {} : { 'Content-Type': 'application/json' }
   const token = getToken()
@@ -129,23 +132,35 @@ export async function request(path, { method = 'GET', body, form, query, timeout
   const traceId = (json && json.traceId) || res.headers.get('X-Trace-Id') || ''
   const ok = res.ok && (code === undefined || code === 0)
   if (!ok) {
-    /* 后端 msg 是业务文案（如「原密码不正确」），优先使用；泛化时再退回状态码文案 */
+    /* 后端 msg 是业务文案（如「原密码不正确」），优先使用；泛化时再退回状态码文案。
+       ⚠️ 401/403/429/5xx 平时走的是 `httpMessage` 的通用文案（「登录状态已失效」这类），
+       这对**会话/全局**层面的接口是对的；但 `ownErrors` 调用方（打供应商的那类接口）里，
+       401 是「密钥无效」、502 是「上游连不上」——通用文案会把上游的原因整句吃掉，
+       所以这时优先用后端那句可读文案。 */
     const backendMsg = json && json.msg
     const status = res.status
-    const message = status === 401 || status === 403 || status === 429 || status >= 500
+    const generic = status === 401 || status === 403 || status === 429 || status >= 500
+    const message = generic && !ownErrors
       ? httpMessage(status, backendMsg)
       : backendMsg || httpMessage(status)
     const apiError = new ApiError(code ?? status, message, status, traceId)
-    notify(apiError, silent)
+    notify(apiError, silent, ownErrors)
     throw apiError
   }
   return json && json.data !== undefined ? json.data : json
 }
 
-/** 统一的错误外送：会话失效发总线事件，其余弹全局 toast（silent 时跳过） */
-function notify(error, silent) {
+/**
+ * 统一的错误外送：会话失效发总线事件，其余弹全局 toast（silent 时跳过）。
+ *
+ * ⚠️ `ownErrors` 时必须**跳过会话失效那条链**：它会把用户清会话踢回登录页
+ * （`main.js` 的 SESSION_EXPIRED 处理），而「拉模型列表」这种辅助动作失败
+ * 绝不该产生这个后果 —— 用户正在填的表单会连同上下文一起丢掉。
+ * 会话真过期了也不吃亏：紧接着任何一个正常请求都会照常把用户请去登录。
+ */
+function notify(error, silent, ownErrors = false) {
   if (isAuthError(error)) {
-    if (!toastSuppressed) emit(SESSION_EXPIRED, { error })
+    if (!toastSuppressed && !ownErrors) emit(SESSION_EXPIRED, { error })
     return
   }
   if (silent) return

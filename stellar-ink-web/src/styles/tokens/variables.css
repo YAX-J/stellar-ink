@@ -19,7 +19,8 @@
   --font-serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
   --font-body:'Noto Sans SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif;
   --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  --r-lg:24px; --r-md:16px; --r-sm:10px;
+  /* --r-pill：胶囊形。此前 .chip 与浮层气泡各自硬编码 99px/999px，收进 token 一处可改 */
+  --r-lg:24px; --r-md:16px; --r-sm:10px; --r-pill:99px;
   --ease-spring:cubic-bezier(.34,1.56,.64,1);
   --ease-standard:cubic-bezier(.2,0,0,1);
   /* 正文可用宽度：详情页/深读页下发为 100%（整页铺满），这里只是兜底默认值 */

@@ -44,10 +44,12 @@
 .section-head .more:hover{color:var(--primary)}
 
 .chips{display:flex; gap:8px; margin-top:16px; flex-wrap:wrap}
-.chip{font-size:11px; padding:4px 10px; border-radius:99px; background:var(--primary-soft);
+.chip{font-size:11px; padding:4px 10px; border-radius:var(--r-pill); background:var(--primary-soft);
   color:var(--primary); letter-spacing:.05em}
-.chip.warm{background:rgba(255,180,84,.14); color:var(--amber)}
-.chip.cool{background:rgba(77,201,217,.13); color:var(--teal)}
+/* 底色由语义变量混合而来：此前写死 rgba(255,180,84,.14) 是**夜色的**琥珀，
+   破晓主题下 --amber 是 #8F4C10（深），固定浅色底会让文字对比度掉下来 */
+.chip.warm{background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--amber)}
+.chip.cool{background:color-mix(in srgb, var(--teal) 13%, transparent); color:var(--teal)}
 
 .field{margin-bottom:14px}
 .field label{display:block; font-size:11px; letter-spacing:.15em; color:var(--ink-faint); margin-bottom:7px}
