@@ -16,6 +16,8 @@ import { emit, TOAST } from '@/utils/bus'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
+import QaAnswerBlock from '@/components/ai/QaAnswerBlock.vue'
+import QaCitationList from '@/components/ai/QaCitationList.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,7 +68,8 @@ async function deleteComment(comment) {
 }
 
 /* ---- 问星笺（问答入口）----
- * 问的是**全站已发布文章**，不是只看当前这篇：这样「这篇文章提到的书在哪篇写过」也能问到。
+ * 问的是**全站已发布内容**（文章与技术笔记），不是只看当前这篇：
+ * 这样「这篇文章提到的书在哪篇写过」「上次那个报错是怎么修的」都能问到。
  * 答案与引用一律来自服务端，前端只负责展示与把引用做成可跳转的链接。
  *
  * 默认走**流式**：引用由检索决定、比正文先到，所以先渲染引用再等答案 ——
@@ -75,11 +78,8 @@ async function deleteComment(comment) {
  */
 const qaDraft = ref('')
 
-/** 引用可点回原文：跳到那篇文章（当前这篇就不跳，只提示） */
-function openCitation(citation) {
-  if (!citation || Number(citation.postId) === Number(route.params.id)) return
-  router.push({ name: 'read', params: { id: citation.postId } })
-}
+/* 引用跳转（含 `kind` 判定）收在 `QaCitationList` 里：助手浮层用的是同一个组件，
+ * 各写一份迟早会「深读页改对了、浮层忘了改」。 */
 
 /* ---- 深挖（只读 Agent，E2）----
  * 与「问星笺」共用一块面板，因为用户的心智是同一件事：都在这篇文章旁边问站内文章。
@@ -105,7 +105,8 @@ async function askStar() {
     return
   }
   try {
-    const answer = await qaStore.askStream(question, 5)
+    // 深读页问的是**单轮**：不带 history（多轮是助手浮层的事）
+    const answer = await qaStore.askStream(question, { topK: 5 })
     if (answer) qaDraft.value = ''
   } catch { /* 错误已进 store.error 并有局部/全局提示 */ }
 }
@@ -479,16 +480,9 @@ onUnmounted(() => {
                 </li>
               </ol>
 
-              <ul v-if="agentStore.citations.length" class="qa-cites">
-                <li v-for="(cite, index) in agentStore.citations" :key="index">
-                  <button class="qa-cite" type="button" @click="openCitation(cite)">
-                    <b>[{{ index + 1 }}] {{ cite.title }}</b>
-                    <span>{{ cite.snippet }}</span>
-                  </button>
-                </li>
-              </ul>
-              <p v-else-if="!agentStore.running && !agentStore.result?.answer" class="qa-hint">
-                这次既没有答案也没有引用：文章里确实没有能支撑回答的段落。
+              <QaCitationList :citations="agentStore.citations" />
+              <p v-if="!agentStore.citations.length && !agentStore.running && !agentStore.result?.answer" class="qa-hint">
+                这次既没有答案也没有引用：站内确实没有能支撑回答的段落。
               </p>
 
               <p v-if="agentStore.result" class="qa-hint">
@@ -497,28 +491,20 @@ onUnmounted(() => {
               </p>
             </div>
 
-            <!-- ---------- 一次问答结果（流式） ---------- -->
-            <div v-else-if="qaMode === 'ask' && qaStore.answer" class="qa-answer">
-              <p v-if="qaStore.question" class="qa-question">问：{{ qaStore.question }}</p>
-              <p v-if="qaStore.offline" class="qa-offline">离线自测：当前用的是 Fake 模型，回答仅用于验证链路。</p>
-              <p v-if="qaStore.answerDone && qaStore.interrupted" class="qa-interrupted">
-                回答中断了，下面是已经生成的部分。
-              </p>
-              <p v-if="qaStore.streaming && !qaStore.answer.answer" class="qa-waiting">正在检索文章…</p>
-              <p class="qa-text" :class="{ refused: qaStore.refused }">{{ qaStore.answer.answer }}<span
-                v-if="qaStore.streaming && qaStore.answer.answer" class="qa-caret" aria-hidden="true"
-              >▍</span></p>
-
-              <ul v-if="qaStore.answer.citations?.length" class="qa-cites">
-                <li v-for="(cite, index) in qaStore.answer.citations" :key="index">
-                  <button class="qa-cite" type="button" @click="openCitation(cite)">
-                    <b>[{{ index + 1 }}] {{ cite.title }}</b>
-                    <span>{{ cite.snippet }}</span>
-                  </button>
-                </li>
-              </ul>
-              <p v-else-if="qaStore.refused" class="qa-hint">这次没有引用可给：文章里确实没有相关段落。</p>
-            </div>
+            <!-- ---------- 一次问答结果（流式） ----------
+              与助手浮层共用同一个结果块：三态（拒答 / 中断 / 离线自测）的语义只写一遍 -->
+            <QaAnswerBlock
+              v-else-if="qaMode === 'ask' && qaStore.answer"
+              separated
+              :question="qaStore.question"
+              :answer="qaStore.answer"
+              :streaming="qaStore.streaming"
+              :refused="qaStore.refused"
+              :offline="qaStore.offline"
+              :interrupted="qaStore.interrupted"
+              :answer-done="qaStore.answerDone"
+              empty-hint="这次没有引用可给：站内确实没有相关段落。"
+            />
           </template>
         </section>
 
@@ -755,25 +741,9 @@ onUnmounted(() => {
 .qa-hint{font-size:11px; color:var(--ink-faint); line-height:1.9; margin-top:10px}
 .qa-link{color:var(--primary); margin-left:4px}
 .qa-err{color:var(--rose); font-weight:400}
-.qa-answer{margin-top:16px; padding-top:16px; border-top:1px solid var(--line)}
-.qa-question{font-size:12px; color:var(--ink-faint); margin-bottom:8px}
-.qa-offline{font-size:11px; color:var(--amber); margin-bottom:8px}
-/* 中断提示用暖色：它是「内容可能不完整」的提醒，不是错误（错误走 .qa-err） */
-.qa-interrupted{font-size:11px; color:var(--amber); line-height:1.9; margin-bottom:8px}
-.qa-waiting{font-size:13px; color:var(--ink-faint); animation:qa-pulse 1.6s ease-in-out infinite}
-/* 光标：用一个字宽的下划线块，比动画省略号更能表达「还在写」 */
-.qa-caret{display:inline-block; margin-left:2px; color:var(--primary);
-  animation:qa-pulse 1.1s step-end infinite}
-@keyframes qa-pulse{0%,100%{opacity:1}50%{opacity:.25}}
-.qa-text{font-size:14px; line-height:1.95; color:var(--ink-dim); white-space:pre-wrap}
-.qa-text.refused{border-left:2px solid var(--amber); padding-left:12px; color:var(--ink-faint)}
-.qa-cites{list-style:none; margin:16px 0 0; display:flex; flex-direction:column; gap:8px}
-.qa-cite{display:flex; flex-direction:column; gap:4px; width:100%; text-align:left; cursor:pointer;
-  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--bg-2);
-  padding:10px 12px; font:inherit; color:var(--ink-dim); transition:border-color .25s var(--ease-soft)}
-.qa-cite:hover{border-color:var(--primary)}
-.qa-cite b{font-size:12px; font-weight:500}
-.qa-cite span{font-size:11px; color:var(--ink-faint); line-height:1.8}
+/* 答案块（.qa-answer / .qa-text / .qa-cites…）已搬进
+ * `components/ai/QaAnswerBlock.vue` 与 `QaCitationList.vue`：
+ * 助手浮层用的是同一份，这里不再重复定义（重复的那份迟早会分叉） */
 /* 模式切换：默认「一次问答」，深挖要用户自己切过去 —— 它更慢也更贵，不能默认选中 */
 .qa-modes{display:flex; gap:6px; margin-bottom:12px}
 .qa-mode{border:1px solid var(--line); background:transparent; color:var(--ink-faint); font:inherit;

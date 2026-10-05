@@ -5,6 +5,7 @@ import { useSettingsStore } from '@/stores/settings'
 import Starfield from '@/components/canvas/Starfield.vue'
 import TopNav from '@/components/common/TopNav.vue'
 import ToastCenter from '@/components/common/ToastCenter.vue'
+import AssistantDock from '@/components/assistant/AssistantDock.vue'
 
 const route = useRoute()
 const settings = useSettingsStore()
@@ -39,6 +40,8 @@ watch(
       <RouterView />
     </main>
     <ToastCenter />
+    <!-- 星笺助手（右下角浮层）：不占一级导航，登录/注册页不出现 -->
+    <AssistantDock v-if="route.name && !isAuthPage" />
   </div>
 </template>
 
