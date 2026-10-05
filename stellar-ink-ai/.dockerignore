@@ -1,0 +1,20 @@
+# 只让运行时需要的东西进镜像
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+logs
+data
+
+# ⚠️ 密钥绝不进镜像：AI_INTERNAL_SECRET / AI_SECRET_MASTER_KEY 与数据库口令
+#    一律由 compose 从环境变量注入（.env 本身也已被根 .gitignore 排除）
+.env
+
+# 开发与文档资产（运行时用不到）
+tests
+scripts
+docs
+*.md

@@ -303,6 +303,90 @@ services:
     mem_limit: 512m
     logging: *default-logging
 
+  # ------------------------------------------------- AI 出口（Java，对外 /ai/**）
+  ai-service:
+    build:
+      <<: *server-build
+      args:
+        JAR_PATH: ai-service/target/ai-service.jar
+    image: stellar-ink/ai-service:latest
+    container_name: stellar-ink-ai-service
+    restart: unless-stopped
+    depends_on:
+      nacos:
+        condition: service_started
+    environment:
+      TZ: Asia/Shanghai
+      # ⚠️ ai-service 的 application-prod.yml 默认值与另外三个服务**不一样**
+      #    （Nacos 127.0.0.1 + 命名空间 public + JDBC 默认 mysql，见 AGENTS §2 记的配置债），
+      #    所以这里每一项都得显式传，不能靠 yml 里的默认值兜。
+      NACOS_ADDR: ${NACOS_ADDR:-host.docker.internal:8848}
+      NACOS_NAMESPACE: ${NACOS_NAMESPACE:-140e3d39-2520-4d07-a08a-f4b2451109c8}
+      NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
+      NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
+      MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DB: ${MYSQL_DB:-stellar_ink}
+      MYSQL_USER: ${MYSQL_USER:-stellar}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DATABASE: ${REDIS_DATABASE:-0}
+      SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
+      AI_INTERNAL_SECRET: ${AI_INTERNAL_SECRET:?请在 deploy/docker/.env 中设置 AI_INTERNAL_SECRET}
+      AI_SECRET_MASTER_KEY: ${AI_SECRET_MASTER_KEY:?请在 deploy/docker/.env 中设置 AI_SECRET_MASTER_KEY}
+      # Python 也在这个编排里，所以走**服务名**（不是 host.docker.internal）
+      AI_PYTHON_BASE_URL: http://stellar-ink-ai:8200
+    extra_hosts: *extra-hosts
+    volumes:
+      - ./logs/ai-service:/app/logs
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "curl -fs http://localhost:8107/ai/health || exit 1"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    logging: *default-logging
+
+  # ---------------------------------- AI 编排（Python，仅内网可达，不发布任何端口）
+  stellar-ink-ai:
+    build:
+      # ⚠️ 必须是**独立的 build context**：根 .dockerignore 里写着 `stellar-ink-ai/`
+      #    （后端镜像用不上它），跟着仓库根走的话上下文里根本没有 Python 源码。
+      context: ../../stellar-ink-ai
+      dockerfile: Dockerfile
+    image: stellar-ink/ai-python:latest
+    container_name: stellar-ink-ai-python
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 测试/排错期建议 dev（保留 /docs）；prod 会关掉 /docs 与自检接口
+      AI_APP_ENV: ${AI_APP_ENV:-dev}
+      AI_LOG_LEVEL: ${AI_LOG_LEVEL:-INFO}
+      MYSQL_HOST: ${MYSQL_HOST:-host.docker.internal}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DB: ${MYSQL_DB:-stellar_ink}
+      MYSQL_USER: ${MYSQL_USER:-stellar}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/docker/.env 中设置 MYSQL_PASSWORD}
+      QDRANT_BASE_URL: ${QDRANT_BASE_URL:-http://host.docker.internal:6333}
+      AI_INTERNAL_SECRET: ${AI_INTERNAL_SECRET:?请在 deploy/docker/.env 中设置 AI_INTERNAL_SECRET}
+      AI_SECRET_MASTER_KEY: ${AI_SECRET_MASTER_KEY:?请在 deploy/docker/.env 中设置 AI_SECRET_MASTER_KEY}
+      # 打开前必须先建索引（POST /admin/index/rebuild），否则检索命中不到任何内容
+      AI_DENSE_STORE_ENABLED: ${AI_DENSE_STORE_ENABLED:-false}
+    extra_hosts: *extra-hosts
+    healthcheck:
+      <<: *health-defaults
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=3).status == 200 else 1)\""]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    logging: *default-logging
+
   # -------------------------------------------------------------------- 前端
   web:
     build:
