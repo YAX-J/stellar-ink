@@ -70,6 +70,30 @@
 - **真因**：撤销列表在 Redis 里；如果网关与 user-service 连的**不是同一个 Redis**，写入与读取就分家了。
 - **修法**：四个服务统一 `REDIS_HOST`；网关撤销校验 **fail-closed**（Redis 不可用返回 503，不得放行）；**绝不要动 `stellar-ink:auth:revoked:*`**（删掉等于让已登出的令牌复活）。
 
+### 2.5 浏览器里写请求一律 403，换个终端 curl 却 200（CORS 白名单缺当前来源）
+
+- **症状**：注册/登录等 POST 在浏览器里一律 **403 Forbidden**，响应头是 `Server: nginx` +
+  `Content-Length: 0` + 三个 `Vary`（`Origin`、`Access-Control-Request-Method`、
+  `Access-Control-Request-Headers`）；而同一台服务器上 `curl` 打同一个接口是 **200**。
+  换隐身窗口、关掉代理都无效。前端把 403 统一翻成「权限不足：该操作需要更高的角色」，
+  所以**看起来像角色问题**，很容易查错方向。
+- **真因**：网关的 CORS 白名单 `GATEWAY_CORS_ORIGINS` 里**没有当前访问来源**。浏览器发 POST
+  一定带 `Origin`，网关比对失败即回 403（这是 CORS 拒绝，与角色门槛无关）；`curl` 默认**不带
+  `Origin`**，恰好绕过了这段校验 —— "同样的请求两种结果"就是这么来的。
+  ⚠️ 用 **IP 直连**（`https://<IP>`）或**换端口**（`http://<IP>:8088`）访问时最容易踩：
+  白名单通常只按生产域名填过，换一种访问方式就漏。**同源不等于免检**（这一点曾经写错过）。
+- **修法**：把**实际访问来源**（scheme + 主机 + 非默认端口都要写全）加进 `deploy/docker/.env`
+  的 `GATEWAY_CORS_ORIGINS`，然后**重建网关容器**：
+  `docker compose up -d --no-deps gateway` —— 它是环境变量，`restart`/`reload` 不够。
+  **不要**改成 `*` 或删掉：该项是 compose 的**必填项**（`${VAR:?}`，删掉直接起不来），
+  改成 `*` 还会使 `allowCredentials` 失效（本项目**确实在用 cookie**，注册响应里就有
+  `Set-Cookie: Authorization=…`），等于放开任意站点携带登录态发请求。
+  另：`.env` 每台机器一份（gitignore，不入库），测试机加自己的来源**不影响生产**。
+- **怎么一次定位**：同一个请求**只差一个 `Origin` 头**，对比两次即可 ——
+  不带 `Origin` 是 200，加 `-H 'Origin: https://<host>'` 变 403，就是这个坑。
+  反向再验一条：换一个不在白名单的 `Origin`（如 `https://evil.example.com`）应当**仍然 403**，
+  否则说明白名单被放宽了。
+
 ---
 
 ## 3. 数据与 MyBatis
