@@ -53,9 +53,12 @@ deploy\scripts\start-all.bat                           # 3. 一键起全部：Py
                                                        #    注：该脚本为本地私有文件（含服务器连接信息），已 gitignore 不入库
 
 # 生产部署（境外 Linux 服务器 Docker Compose；Nacos/MySQL/Redis/Qdrant 全部由编排拉起）
-cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET / GATEWAY_CORS_ORIGINS
+cd deploy/docker && cp .env.example .env && vi .env    # 1. 填 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / SA_TOKEN_JWT_SECRET /
+                                                       #    GATEWAY_CORS_ORIGINS / GRAFANA_ADMIN_PASSWORD
 docker compose up -d --build                           # 2. 构建 + 启动（步骤详见 deploy/docker/README.md）
                                                        #    ⚠️ 源站必须放境外：大陆源站 + 未备案域名会被按 SNI 重置入站 443，CF 报 525
+
+# 可观测性：口径见 docs/architecture/observability.md（起法 docker compose up -d prometheus grafana；看板走隧道 :3000）
 ```
 
 - 提交前必须验证：前端 `npm run build` 通过；后端 `mvn package` 通过，且启动后通过网关（:8080）curl 过改动到的接口。
@@ -428,6 +431,14 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 一律 `@Slf4j`；关键业务动作 info，登录失败/未授权/业务异常 warn（不含敏感信息），未捕获 error。
 - 访问日志由 common-core 的 `LogInterceptor` 输出（`API-ACCESS 方法 路径 状态 耗时`）；
   链路追踪 `TraceIdFilter`（MDC + `X-Trace-Id` 响应头），异常响应带 traceId。
+
+### 可观测性（指标：Prometheus + Grafana）
+口径、指标清单、告警阈值与已知限制**全在 [`docs/architecture/observability.md`](docs/architecture/observability.md)**。写代码只需记住四条：
+
+- **指标名与标签是契约**：改名前要同步 4 个看板 JSON 与 `deploy/docker/observability/rules/stellar-ink.yml`；**基数红线**是禁止 `userId`/`traceId`/原始 path/关键词/文章 id 入标签（基数失控时 Prometheus 会先 OOM）。
+- **公共标签 `application` 有两份实现**（`common-core` 的 `MetricsConfig` 与网关的 `GatewayMetricsConfig`，WebFlux 不能依赖 common-core）：**改一处必须同步另一处**。
+- **「结果」不要压成 success/fail**：`counted/deduped`、`hit/miss/error/bypass`、`ok/revoked/error/timeout` 全是正常业务分支。成本口径同理：单位是元，`unpriced` 与 `untokenized` 是两个必须分开的缺口，且只复用 `AiUsageService.dailyUsage()`。
+- **放 `com.stellarink.common` 的新组件会被 ai-service 的 12 个 `@WebMvcTest` 切片一起装配**：指标组件要兜住「切片里没有 DataSource、没有 MeterRegistry」，不能让切片上下文起不来。
 
 ### 安全
 - 密码只存 BCrypt；`SA_TOKEN_JWT_SECRET` 生产用环境变量覆盖，

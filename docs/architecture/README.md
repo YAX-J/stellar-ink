@@ -379,6 +379,20 @@ JDK 17 的默认字符集是 GBK**（JDK 18+ 起 `file.encoding` 默认才是 UT
 `GET + Accept: text/html` 识别浏览器页面导航并回退 `index.html`；`fetch` 的 `Accept: */*`
 继续代理到网关。新增重名路由时必须保持这条分流规则，不能简单按路径把所有请求都代理到后端。
 
+## 可观测性
+
+指标栈是 **Prometheus + Grafana**（`deploy/docker/observability/`），四个 Java 服务各暴露
+`/actuator/prometheus`，Prometheus 用**编排内网服务名**抓取 —— 业务服务一个端口都不发布，
+所以抓取不依赖宿主机端口暴露（这是安全姿态的一部分，不要为了让 Prometheus 抓取而发布端口）。
+
+口径、指标清单、告警阈值与「已知限制」全部收在 [observability.md](observability.md)，这里只记三条边界：
+
+- 公共标签 `application` 由**两份等价实现**打上：`common-core` 的 `MetricsConfig`（user/content/ai）
+  与网关的 `GatewayMetricsConfig`（WebFlux 不能依赖带 servlet 的 common-core）。**改一处必须同步另一处。**
+- **标签基数红线**：禁止把 `userId`、`traceId`、原始 path、搜索关键词用作标签。基数失控的监控比没有监控更糟。
+- 成本指标的单位是**元**，且「没配单价」与「上游没回报 token」是两个**必须分开**的缺口计数 ——
+  把它们当 0 计进金额会得到一个偏低的假成本。
+
 ## 再拆分门槛
 
 只有某个领域出现以下情况之一时再拆成独立服务：需要独立扩缩容；需要独立数据库或事务边界；需要不同发布节奏；存在明确团队所有权；故障隔离收益显著高于远程调用成本。不要只因表不同就拆服务。

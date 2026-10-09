@@ -19,6 +19,12 @@
   Lettuce 三处加固。成因与验收见 `architecture/README.md` §空闲保活。
 - 启动期 JCE 预热：把「重启后第一个鉴权请求卡 5 秒」挪到启动（`JceWarmupRunner`，两份实现）。
   见 `architecture/README.md` §重启后第一个请求为什么慢 5 秒。
+- **可观测性已落地（Prometheus + Grafana）**：四个 Java 服务的 `/actuator/prometheus` 由 Prometheus
+  经**编排内网服务名**抓取（业务服务一个端口都不发布），四块看板与 13 条告警规则全部 provisioning 入库；
+  埋点覆盖撤销校验四档结果与耗时、缓存命中/出错/熔断（`bypass` 与 `miss` 分开）、浏览与点赞的去重结果、
+  Druid 连接池、AI 配额触顶四档、AI 成本与两个成本缺口、Python 可用性。
+  **通知通道默认关闭**（需要你填接收地址，模板见 `observability/alertmanager/*.example`）——
+  这是刻意的，不是缺陷。口径见 [`architecture/observability.md`](architecture/observability.md)。
 - 本机开发默认连本机 Redis + MySQL、Nacos 留远端；**本机库与服务器库是两份数据，互不同步**。
 
 ## 2. 后端功能
