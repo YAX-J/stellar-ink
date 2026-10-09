@@ -12,6 +12,31 @@
 #
 # 三个环境（生产 / 测试 / 本地开发）的关系与网络限制见同目录 README.md 第一节。
 #
+# =============================================================================
+# ⚠️ 两种部署形态（改这个文件之前必须先明确你在哪一种）
+# =============================================================================
+#   形态 A「整栈自洽」——Nacos / MySQL / Redis / Qdrant **全由本编排拉起**：
+#       .env 里必须有 `COMPOSE_PROFILES=selfcontained`
+#       生产机（103.14.33.78）是这种。缺了这一行，那四个容器不会启动，
+#       应用服务就连不上 nacos:8848 / mysql / redis（域名根本不存在）→ 站点起不来。
+#
+#   形态 B「中间件在宿主机」——四个中间件跑在宿主机上，本编排**只跑应用层**：
+#       .env 里**不要**有 `COMPOSE_PROFILES`（保持未激活），并把
+#       NACOS_ADDR / MYSQL_HOST / REDIS_HOST 指向 host.docker.internal
+#       测试机（124.221.158.32）是这种。
+#
+#   为什么需要这个区分（2026-10-09 在测试机上真实踩到，站点断了 20 分钟）：
+#   形态 B 的机器上，宿主机已经占着 8848 / 3306 / 6379 / 6333；一旦某个命令让那四个
+#   服务参与启动，docker 绑定宿主机端口失败 → **compose 在启动阶段整体中止** →
+#   应用容器被创建后留在 `Created`（从没启动），站点直接不可用。
+#
+#   实现方式：那四个服务带 `profiles: ["selfcontained"]`，而应用服务对它们的
+#   `depends_on` 一律带 `required: false` —— ⚠️ 这两个必须**成对出现**：
+#   只加 profiles 不加 required 会让整个项目变成
+#   `service "gateway" depends on undefined service "nacos": invalid compose project`，
+#   于是**每一条** docker compose 命令都报错（实测 Docker Compose v5.5.0）。
+#   这正是「形态 B 的机器上普通 `docker compose up -d` 也安全」的原因。
+#
 # 敏感配置统一放同目录 .env（模板见 .env.example）；首次部署步骤见同目录 README.md。
 # 数据落盘：MySQL/Redis/Qdrant/Nacos 用 Docker 具名卷（避免 bind mount 的属主问题），
 #          日志/头像/证书用 ./logs、./data/*（都在仓库目录下，已 gitignore）。
@@ -92,6 +117,11 @@ volumes:
 services:
   # ------------------------------------------------------- 注册/配置中心 Nacos
   nacos:
+    # ⚠️ 「整栈自洽」部署专用（见文件头 §两种部署形态）。
+    #    跑在**宿主机已提供 Nacos** 的机器上时必须保持未激活 —— 否则它会去抢宿主机
+    #    已占用的 8848，compose 在启动阶段直接中止，**连带把整个应用层留在 Created 状态**
+    #    （2026-10-09 在测试机上真实踩到：站点断了 20 分钟）。
+    profiles: ["selfcontained"]
     image: nacos/nacos-server:v2.4.3
     container_name: stellar-ink-nacos
     restart: unless-stopped
@@ -117,6 +147,8 @@ services:
 
   # -------------------------------------------------------------------- MySQL
   mysql:
+    # 同 nacos：宿主机已有 MySQL 时不得激活（3306 会撞）
+    profiles: ["selfcontained"]
     image: mysql:8.0
     container_name: stellar-ink-mysql
     restart: unless-stopped
@@ -155,6 +187,8 @@ services:
 
   # -------------------------------------------------------------------- Redis
   redis:
+    # 同 nacos：宿主机已有 Redis 时不得激活（6379 会撞）
+    profiles: ["selfcontained"]
     image: redis:7-alpine
     container_name: stellar-ink-redis
     restart: unless-stopped
@@ -179,6 +213,8 @@ services:
 
   # ------------------------------------------------------------------- Qdrant
   qdrant:
+    # 同 nacos：宿主机已有 Qdrant（或单独容器）时不得激活（6333 会撞）
+    profiles: ["selfcontained"]
     image: qdrant/qdrant:v1.12.4
     container_name: stellar-ink-qdrant
     restart: unless-stopped
@@ -205,8 +241,10 @@ services:
     depends_on:
       nacos:
         condition: service_started
+        required: false
       redis:
         condition: service_healthy
+        required: false
     environment:
       <<: *common-env
       # 必填、无默认值：避免漏配时默认放开通配 "*"
@@ -245,10 +283,13 @@ services:
     depends_on:
       nacos:
         condition: service_started
+        required: false
       mysql:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
     environment:
       <<: *db-env
       # 头像存储：local 用下方卷目录；cos 用腾讯云对象存储（此时卷不再使用，可保留以备回滚）
@@ -288,10 +329,13 @@ services:
     depends_on:
       nacos:
         condition: service_started
+        required: false
       mysql:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
     environment:
       <<: *db-env
     extra_hosts: *extra-hosts
@@ -322,6 +366,7 @@ services:
     depends_on:
       nacos:
         condition: service_started
+        required: false
     environment:
       TZ: Asia/Shanghai
       # ⚠️ ai-service 的 application-prod.yml 默认值与另外三个服务**不一样**

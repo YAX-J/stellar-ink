@@ -1,21 +1,41 @@
 # 星笺 STELLAR INK Docker 部署手册
 
-Docker Compose 一键编排：**Nacos + MySQL + Redis + Qdrant + 网关 + 2 个业务服务 + 前端 Nginx**，
-一台机器整栈自洽（不再依赖宿主机预装任何中间件）。所有 Java 服务走 `prod` profile，敏感配置统一放同目录 `.env`。
+Docker Compose 一键编排。所有 Java 服务走 `prod` profile，敏感配置统一放同目录 `.env`。
+
+> ## ⚠️ 先确认这台机器属于哪一种部署形态（搞错会让站点直接不可用）
+>
+> | | 形态 A「整栈自洽」 | 形态 B「中间件在宿主机」 |
+> |---|---|---|
+> | 谁提供 Nacos/MySQL/Redis/Qdrant | **本编排**（四个容器） | **宿主机**（已有的进程/容器） |
+> | `.env` 必须有 | `COMPOSE_PROFILES=selfcontained` | **不要**有这一行 |
+> | `NACOS_ADDR` / `MYSQL_HOST` / `REDIS_HOST` | 默认（容器服务名 `nacos` / `mysql` / `redis`） | 指向 `host.docker.internal` |
+> | 日常命令 | `docker compose up -d --build` | `docker compose up -d --build`（同样一条，无需 `--no-deps`） |
+> | 用在 | **生产机 103.14.33.78** | **测试机 124.221.158.32** |
+>
+> **2026-10-09 真实事故**：在形态 B 的测试机上跑了一次普通的 `docker compose up -d --build`，
+> 编排里那四个多余的中间件服务被连带启动 → docker 绑定宿主机端口（8848/3306/6379/6333 全被宿主机占着）
+> 失败 → **compose 在启动阶段整体中止**，四个业务容器被创建后留在 `Created` 状态，**站点断了 20 分钟**。
+> 现在的实现方式：那四个服务带 `profiles: ["selfcontained"]`，应用服务对它们的 `depends_on` 一律带
+> `required: false` —— 这两者**必须成对出现**（只加 `profiles` 不加 `required`，整个项目会变成
+> `invalid compose project`，**每一条** `docker compose` 命令都报错）。
+>
+> ⚠️ **形态 A 的机器在改完这个版本后，必须先在 `.env` 里补上 `COMPOSE_PROFILES=selfcontained` 再部署**，
+> 否则那四个中间件不会启动、应用连不上 `nacos:8848` → 站点起不来。
+> 用 `docker compose config --services` 可以一眼确认当前属于哪种形态（它不会启动任何容器）。
 
 ## 一、拓扑与三个环境
 
-本编排启动的服务：
+**形态 A** 下本编排启动的全部服务：
 
 | 服务 | 容器端口 | 对外暴露 | 说明 |
 |---|---|---|---|
 | web（nginx） | 80 / 443 | `WEB_PORT` / `WEB_HTTPS_PORT`（默认 80 / 443） | **唯一对公网入口**：静态 SPA + API 反代到网关；443 是 Cloudflare 回源入口 |
 | gateway | 8080 | 仅宿主机 `127.0.0.1`（`GATEWAY_PORT`） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
 | user / content | 8101-8102 | 不暴露 | 网关经 Nacos 服务发现路由；user-service 另挂载 `./data/uploads` 存头像 |
-| nacos | 8848 / 9848 | 仅宿主机 `127.0.0.1:8848`（控制台） | 单机模式 + 内置 Derby；容器间走服务名 `nacos:8848` |
-| mysql | 3306 | 仅宿主机 `127.0.0.1`（`MYSQL_BIND_PORT`） | 首次启动自动导入 `deploy/sql/01_schema.sql` + `02_init-data.sql` |
-| redis | 6379 | 仅宿主机 `127.0.0.1`（`REDIS_BIND_PORT`） | 开启 AOF：JWT 撤销列表与登录失败计数需跨重启保留 |
-| qdrant | 6333 | 仅宿主机 `127.0.0.1`（`QDRANT_BIND_PORT`） | 业务暂未使用，AI 阶段（M3 起）接入 |
+| nacos | 8848 / 9848 | 仅宿主机 `127.0.0.1:8848`（控制台） | 单机模式 + 内置 Derby；容器间走服务名 `nacos:8848`；**形态 B 下由宿主机提供，本编排不启动** |
+| mysql | 3306 | 仅宿主机 `127.0.0.1`（`MYSQL_BIND_PORT`） | 首次启动自动导入 `deploy/sql/01_schema.sql` + `02_init-data.sql`；**形态 B 下由宿主机提供** |
+| redis | 6379 | 仅宿主机 `127.0.0.1`（`REDIS_BIND_PORT`） | 开启 AOF：JWT 撤销列表与登录失败计数需跨重启保留；**形态 B 下由宿主机提供** |
+| qdrant | 6333 | 仅宿主机 `127.0.0.1`（`QDRANT_BIND_PORT`） | 业务暂未使用，AI 阶段（M3 起）接入；**形态 B 下由宿主机提供** |
 
 ```
 浏览器 ──TLS(CF 边缘证书)──▶ Cloudflare ──TLS(Origin 证书)──▶ web:443
