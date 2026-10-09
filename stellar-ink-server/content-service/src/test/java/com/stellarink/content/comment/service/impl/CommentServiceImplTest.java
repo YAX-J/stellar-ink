@@ -13,6 +13,7 @@ import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class CommentServiceImplTest {
     private final CommentMapper commentMapper = mock(CommentMapper.class);
     private final PostMapper postMapper = mock(PostMapper.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
-    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, new SimpleMeterRegistry()));
     private final CommentServiceImpl commentService = new CommentServiceImpl(commentMapper, postMapper, cache);
 
     @BeforeAll

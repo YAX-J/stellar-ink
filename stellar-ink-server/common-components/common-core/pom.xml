@@ -53,6 +53,26 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-jsqlparser</artifactId>
         </dependency>
+        <!-- Micrometer / Actuator：RedisCache 与数据源指标埋点需要 MeterRegistry，
+             MetricsConfig 需要 MeterRegistryCustomizer（在 actuator-autoconfigure 里）。
+             标 optional —— user/content/ai 三个服务各自已引 spring-boot-starter-actuator
+             与 micrometer-registry-prometheus（见各自 pom），这里只为公共模块自己能编译到这些类型，
+             不重复向下传递。
+             ⚠️ 两个都要写：`spring-boot-actuator-autoconfigure` **不会**传递 micrometer-core
+             （那个依赖在它自己的 pom 里是可选的），只写它会在编译期报
+             「找不到 io.micrometer.core.instrument」。
+             ⚠️ 消费方若引了 common-core 却没引 actuator，MetricsConfig 不会生效（指标静默为空），
+             但服务本身照常启动 —— 这一点由 MetricsConfig 的 @ConditionalOnClass 兜住。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-actuator-autoconfigure</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>cn.dev33</groupId>
             <artifactId>sa-token-spring-boot3-starter</artifactId>

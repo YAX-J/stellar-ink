@@ -20,6 +20,8 @@ import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.post.PostDetailVO;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -46,9 +48,12 @@ class PostServiceImplTest {
     private final PostViewMapper postViewMapper = mock(PostViewMapper.class);
     private final CommentMapper commentMapper = mock(CommentMapper.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
-    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+
+    /** 真的注册表（而不是 mock）：浏览/点赞的指标断言要读它的实际计数 */
+    private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, meterRegistry));
     private final PostServiceImpl postService = new PostServiceImpl(
-            postMapper, postGlowMapper, postViewMapper, commentMapper, cache);
+            postMapper, postGlowMapper, postViewMapper, commentMapper, cache, meterRegistry);
 
     @BeforeAll
     static void initializeMybatisMetadata() {
@@ -170,6 +175,51 @@ class PostServiceImplTest {
         }
 
         verify(postMapper).update(Mockito.<Post>isNull(), any());
+    }
+
+    /**
+     * 指标是这次可观测性改造的交付物之一，所以它必须被断言，而不只是「编译通过」。
+     *
+     * <p>四档结果各自要能被看见，理由在 PostServiceImpl 的字段注释里：
+     * 「去重率突然变成 0」与「重复点赞突然变多」都是**数据库里看不出异常**的问题 ——
+     * 数据是对的，只有这两个比例能暴露行为变化。
+     */
+    @Test
+    void shouldExposeViewDedupAndGlowDuplicateAsMetrics() {
+        when(postMapper.selectById(1L)).thenReturn(post(1L, 10L, 1));
+
+        try (MockedStatic<StpUtil> token = Mockito.mockStatic(StpUtil.class);
+             MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            token.when(StpUtil::isLogin).thenReturn(true);
+            auth.when(AuthHelper::loginId).thenReturn(99L);
+
+            // 浏览：第一次闸门放行（counted），第二次同一人当天已计过（deduped）
+            when(postViewMapper.claimToday(99L)).thenReturn(true);
+            assertThat(postService.recordView(1L)).isTrue();
+            when(postViewMapper.claimToday(99L)).thenReturn(false);
+            assertThat(postService.recordView(1L)).isFalse();
+
+            // 点赞：唯一键里没有记录 → 真的加了一赞（created）
+            when(postGlowMapper.selectCount(any())).thenReturn(0L);
+            postService.glow(1L);
+        }
+
+        assertThat(counter("stellar.view.recorded", "counted")).isEqualTo(1d);
+        assertThat(counter("stellar.view.recorded", "deduped")).isEqualTo(1d);
+        assertThat(meterRegistry.get("stellar.view.recorded")
+                .tag("kind", "post").tag("result", "counted").counter().count())
+                .as("文章与笔记共用同一个指标名，必须能按 kind 分开")
+                .isEqualTo(1d);
+        assertThat(counter("stellar.glow.recorded", "created")).isEqualTo(1d);
+        // 用 find 而不是 get：Micrometer 只在该计量器被自增过之后才创建它，
+        // 「计数为 0」在这里的表现是「计量器不存在」，用 get 会抛 MeterNotFoundException。
+        assertThat(meterRegistry.find("stellar.glow.recorded").tag("result", "duplicate").counter())
+                .as("这次没有重复点赞，duplicate 不该被创建")
+                .isNull();
+    }
+
+    private double counter(String metricName, String result) {
+        return meterRegistry.get(metricName).tag("result", result).counter().count();
     }
 
     private Post post(Long id, Long userId, int status) {

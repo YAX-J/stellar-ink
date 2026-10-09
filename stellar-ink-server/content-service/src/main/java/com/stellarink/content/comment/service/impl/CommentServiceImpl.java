@@ -37,7 +37,7 @@ public class CommentServiceImpl implements CommentService {
     @Override
     public List<CommentVO> list(Long postId) {
         String cacheKey = cache.versionedKey("comment", "post", postId);
-        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
+        return cache.getOrLoad("comment", cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
                 () -> loadComments(postId));
     }
 

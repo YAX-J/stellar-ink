@@ -55,6 +55,15 @@ public class UserServiceImpl implements UserService {
     private static final String AUTHOR_CACHE_KEY_PREFIX = "stellar-ink:user:cache:author:";
     private static final Duration USER_CACHE_TTL = Duration.ofMinutes(5);
 
+    /**
+     * 缓存的指标命名空间（只影响 {@code stellar.cache.requests{namespace}} 这个标签）。
+     *
+     * <p>用 {@code user} 而不是让它落到默认值：公开作者摘要与内容服务的 8 个命名空间
+     * 共用同一个 Redis，混在 {@code default} 里会让看板上「作者缓存命中率」无从单独判断 ——
+     * 而它是最容易出问题的一个（改昵称/头像就要失效，见 {@link #evictUserCache}）。
+     */
+    private static final String CACHE_NAMESPACE = "user";
+
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final AvatarStorage avatarStorage;
@@ -259,7 +268,7 @@ public class UserServiceImpl implements UserService {
         Map<Long, AuthorVO> authors = new HashMap<>();
         List<Long> misses = new ArrayList<>();
         for (Long id : safeIds) {
-            AuthorVO cached = redisCache.get(authorCacheKey(id), AuthorVO.class);
+            AuthorVO cached = redisCache.get(CACHE_NAMESPACE, authorCacheKey(id), AuthorVO.class);
             if (cached == null) {
                 misses.add(id);
             } else {
@@ -270,7 +279,7 @@ public class UserServiceImpl implements UserService {
             for (User user : userMapper.selectBatchIds(misses)) {
                 AuthorVO author = toAuthorVO(user);
                 authors.put(user.getId(), author);
-                redisCache.put(authorCacheKey(user.getId()), author, USER_CACHE_TTL);
+                redisCache.put(CACHE_NAMESPACE, authorCacheKey(user.getId()), author, USER_CACHE_TTL);
             }
         }
         return safeIds.stream().map(authors::get).filter(Objects::nonNull).toList();
@@ -391,12 +400,12 @@ public class UserServiceImpl implements UserService {
     }
 
     private void cacheUser(User user) {
-        redisCache.put(authorCacheKey(user.getId()), toAuthorVO(user), USER_CACHE_TTL);
+        redisCache.put(CACHE_NAMESPACE, authorCacheKey(user.getId()), toAuthorVO(user), USER_CACHE_TTL);
     }
 
     private void evictUserCache(Long userId, boolean authorChanged) {
         if (authorChanged) {
-            redisCache.evict(authorCacheKey(userId));
+            redisCache.evict(CACHE_NAMESPACE, authorCacheKey(userId));
         }
     }
 

@@ -9,6 +9,7 @@ import com.stellarink.user.component.AvatarStorage;
 import com.stellarink.user.component.TokenRevocationService;
 import com.stellarink.user.mapper.UserMapper;
 import com.stellarink.user.pojo.User;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -53,7 +54,7 @@ class UserServiceImplTest {
     void setUp() {
         userService = new UserServiceImpl(
                 userMapper, passwordEncoder, avatarStorage, tokenRevocationService,
-                redisUtils, new RedisCache(redisUtils));
+                redisUtils, new RedisCache(redisUtils, new SimpleMeterRegistry()));
     }
 
     @Test

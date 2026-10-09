@@ -37,7 +37,7 @@ public class EchoController {
     @GetMapping
     public Response<List<EchoVO>> list() {
         String cacheKey = cache.versionedKey("echo", "list");
-        return Response.success(cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
+        return Response.success(cache.getOrLoad("echo", cacheKey, CACHE_TYPE, ContentCache.SHORT_TTL,
                 this::loadEchos));
     }
 

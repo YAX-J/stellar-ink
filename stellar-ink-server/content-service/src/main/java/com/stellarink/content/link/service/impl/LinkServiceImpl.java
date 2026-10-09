@@ -36,7 +36,7 @@ public class LinkServiceImpl implements LinkService {
     @Override
     public List<LinkVO> listApproved() {
         String cacheKey = cache.versionedKey("link", "approved");
-        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.LONG_TTL,
+        return cache.getOrLoad("link", cacheKey, CACHE_TYPE, ContentCache.LONG_TTL,
                 () -> listByStatus(APPROVED));
     }
 

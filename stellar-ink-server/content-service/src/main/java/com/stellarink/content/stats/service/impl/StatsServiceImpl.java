@@ -26,7 +26,7 @@ public class StatsServiceImpl implements StatsService {
     @Override
     public StatsVO overview() {
         String cacheKey = cache.versionedKey("stats", "overview");
-        return cache.getOrLoad(cacheKey, StatsVO.class, ContentCache.LONG_TTL, this::loadOverview);
+        return cache.getOrLoad("stats", cacheKey, StatsVO.class, ContentCache.LONG_TTL, this::loadOverview);
     }
 
     private StatsVO loadOverview() {

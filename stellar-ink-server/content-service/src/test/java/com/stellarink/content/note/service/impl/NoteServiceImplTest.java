@@ -20,6 +20,8 @@ import com.stellarink.sharedmodel.enums.NoteVisibility;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
 import com.stellarink.sharedmodel.vo.note.NoteDetailVO;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -44,8 +46,12 @@ class NoteServiceImplTest {
     private final NoteMapper noteMapper = mock(NoteMapper.class);
     private final PostViewMapper postViewMapper = mock(PostViewMapper.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
-    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
-    private final NoteServiceImpl noteService = new NoteServiceImpl(noteMapper, postViewMapper, cache);
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, new SimpleMeterRegistry()));
+
+    /** 真的注册表（不是 mock）：笔记浏览的指标断言要读它的实际计数 */
+    private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final NoteServiceImpl noteService = new NoteServiceImpl(
+            noteMapper, postViewMapper, cache, meterRegistry);
 
     @BeforeAll
     static void initializeMybatisMetadata() {
@@ -240,6 +246,10 @@ class NoteServiceImplTest {
         }
 
         verify(noteMapper).update(Mockito.<Note>isNull(), any());
+        assertThat(meterRegistry.get("stellar.view.recorded")
+                .tag("kind", "note").tag("result", "counted").counter().count())
+                .as("笔记浏览与文章共用同一个指标名，靠 kind 区分；漏埋会让「总浏览量」少一半")
+                .isEqualTo(1d);
     }
 
     private void assertNotFound(ThrowingCall call) {

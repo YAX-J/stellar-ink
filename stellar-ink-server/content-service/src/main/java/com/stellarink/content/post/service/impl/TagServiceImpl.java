@@ -26,7 +26,7 @@ public class TagServiceImpl implements TagService {
     @Override
     public List<TagVO> listWithCount() {
         String cacheKey = cache.versionedKey("tag", "list");
-        return cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.LONG_TTL, this::loadTags);
+        return cache.getOrLoad("tag", cacheKey, CACHE_TYPE, ContentCache.LONG_TTL, this::loadTags);
     }
 
     private List<TagVO> loadTags() {

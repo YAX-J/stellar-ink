@@ -28,6 +28,8 @@ import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.vo.post.GlowResultVO;
 import com.stellarink.sharedmodel.vo.post.PostDetailVO;
 import com.stellarink.sharedmodel.vo.post.PostVO;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -50,11 +52,43 @@ public class PostServiceImpl implements PostService {
     private static final String CACHE_NAMESPACE = "post";
     private static final TypeReference<CachedPage<PostVO>> PAGE_CACHE_TYPE = new TypeReference<>() { };
 
+    /**
+     * 浏览量计数结果：{@code stellar.view.recorded{kind=post,result=counted|deduped}}。
+     *
+     * <p>为什么值得单独埋一个指标：浏览闸门是「登录用户按天去重、未登录访客每次计数」，
+     * 于是 {@code counted} 与 {@code deduped} 的**比例**就是「回头客 vs 新访问」的近似读数。
+     * 如果哪天这个比例突然全是 {@code counted}，通常意味着闸门表没生效（去重失效），
+     * 而不是「今天读者变多了」—— 这两件事在数据库里长得一样，只有分开计数才分得开。
+     *
+     * <p>{@code kind} 区分文章与笔记（笔记在同一张闸门表上，见 {@code NoteServiceImpl}）；
+     * 「文章不存在 / 未发射」这类**本来就不该计**的情况刻意不入指标 ——
+     * 它们不是「被去重」，混进 deduped 会让去重率虚高。
+     */
+    private static final String METRIC_VIEW = "stellar.view.recorded";
+
+    /**
+     * 点赞结果：{@code stellar.glow.recorded{result=created|duplicate}}。
+     *
+     * <p>{@code duplicate}（登录用户重复点赞被唯一键挡下）本身就是**正常行为**
+     * （用户会连点、前端会重试），但它一旦异常升高，指向的是前端重复提交或按钮状态没更新 ——
+     * 这是「数据没错、体验有错」的那一类问题，靠日志看不出来。
+     */
+    private static final String METRIC_GLOW = "stellar.glow.recorded";
+
+    private static final String TAG_RESULT = "result";
+    private static final String TAG_KIND = "kind";
+    private static final String KIND_POST = "post";
+    private static final String RESULT_COUNTED = "counted";
+    private static final String RESULT_DEDUPED = "deduped";
+    private static final String RESULT_CREATED = "created";
+    private static final String RESULT_DUPLICATE = "duplicate";
+
     private final PostMapper postMapper;
     private final PostGlowMapper postGlowMapper;
     private final PostViewMapper postViewMapper;
     private final CommentMapper commentMapper;
     private final ContentCache cache;
+    private final MeterRegistry meterRegistry;
 
     @Override
     public IPage<PostVO> page(PostQueryDTO query) {
@@ -66,7 +100,8 @@ public class PostServiceImpl implements PostService {
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "page",
                 query.getPage(), query.getSize(), query.getYear(), query.getTag(), query.getKeyword(),
                 query.getStatus(), query.getOrderBy(), query.isPublishedOnly());
-        CachedPage<PostVO> cached = cache.getOrLoad(cacheKey, PAGE_CACHE_TYPE, ContentCache.DEFAULT_TTL, () -> {
+        CachedPage<PostVO> cached = cache.getOrLoad(CACHE_NAMESPACE, cacheKey, PAGE_CACHE_TYPE,
+                ContentCache.DEFAULT_TTL, () -> {
             IPage<PostVO> loaded = loadPublicPage(query);
             return CachedPage.from(loaded);
         });
@@ -122,7 +157,7 @@ public class PostServiceImpl implements PostService {
     @Override
     public PostDetailVO detail(Long id) {
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "detail", id);
-        PostDetailVO cached = cache.get(cacheKey, PostDetailVO.class);
+        PostDetailVO cached = cache.get(CACHE_NAMESPACE, cacheKey, PostDetailVO.class);
         if (cached != null) {
             cached.setLiked(likedBy(id));
             return cached;
@@ -132,7 +167,7 @@ public class PostServiceImpl implements PostService {
         PostDetailVO vo = toDetailVO(post);
         if (Integer.valueOf(1).equals(post.getStatus())) {
             vo.setLiked(false);
-            cache.put(cacheKey, vo, ContentCache.DEFAULT_TTL);
+            cache.put(CACHE_NAMESPACE, cacheKey, vo, ContentCache.DEFAULT_TTL);
         }
         vo.setLiked(likedBy(id));
         return vo;
@@ -179,6 +214,7 @@ public class PostServiceImpl implements PostService {
                     .setSql("view_count = view_count + 1"));
             cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         }
+        countView(counted);
         return counted;
     }
 
@@ -286,6 +322,10 @@ public class PostServiceImpl implements PostService {
                     .eq(Post::getId, id)
                     .setSql("glow = glow + 1"));
         }
+        // 计数真的 +1 了吗：登录用户看「状态是否写成功」（applied），未登录访客点了就算一次。
+        // duplicate 因此只可能是「登录用户重复点赞被唯一键挡下」，不会是访客造成的。
+        boolean counted = applied || !StpUtil.isLogin();
+        countRecorded(METRIC_GLOW, counted ? RESULT_CREATED : RESULT_DUPLICATE);
         Integer glow = postMapper.selectById(id).getGlow();
         cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         log.debug("文章 {} 补充光芒 applied={} -> {}", id, applied, glow);
@@ -301,6 +341,36 @@ public class PostServiceImpl implements PostService {
         return postGlowMapper.selectCount(new LambdaQueryWrapper<PostGlow>()
                 .eq(PostGlow::getPostId, postId)
                 .eq(PostGlow::getUserId, userId)) > 0;
+    }
+
+    /**
+     * 记一次浏览量结果（带 {@code kind=post}；笔记侧由 {@code NoteServiceImpl} 记 {@code kind=note}）。
+     */
+    private void countView(boolean counted) {
+        Counter.builder(METRIC_VIEW)
+                .tag(TAG_KIND, KIND_POST)
+                .tag(TAG_RESULT, counted ? RESULT_COUNTED : RESULT_DEDUPED)
+                .description("浏览量计数结果：counted=真的计了一次；deduped=同一登录用户当天已计过被去重"
+                        + "（kind 区分 post 与 note；不该计的场合不入指标）")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    /**
+     * 记一次业务结果计数。
+     *
+     * <p>标签用「业务结果」而不是「成功/失败」：这里四档（counted/deduped/created/duplicate）
+     * **没有一个是错误**，它们全是正常业务分支。压成 success/fail 就等于把信息丢掉 ——
+     * 而「去重率突然变成 0」「重复点赞突然变多」正是我们要能看见的东西。
+     */
+    private void countRecorded(String metricName, String result) {
+        Counter.builder(metricName)
+                .tag(TAG_RESULT, result)
+                .description(METRIC_VIEW.equals(metricName)
+                        ? "浏览量计数结果：counted=真的计了一次；deduped=同一登录用户当天已计过被去重"
+                        : "点赞结果：created=计数 +1（含未登录访客的每次点击）；duplicate=重复点赞被唯一键挡下")
+                .register(meterRegistry)
+                .increment();
     }
 
     private void invalidatePublicCaches() {

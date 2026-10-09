@@ -8,6 +8,7 @@ import com.stellarink.content.post.pojo.Post;
 import com.stellarink.sharedmodel.vo.stats.StatsVO;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ class StatsServiceImplTest {
 
     private final PostMapper postMapper = mock(PostMapper.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
-    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils));
+    private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, new SimpleMeterRegistry()));
     private final StatsServiceImpl statsService = new StatsServiceImpl(postMapper, cache);
 
     @BeforeAll

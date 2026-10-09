@@ -45,7 +45,8 @@ public class MeteorController {
                                            @RequestParam(required = false, defaultValue = "24") Integer size) {
         Pagination.requireValid(page, size);
         String cacheKey = cache.versionedKey("meteor", "page", page, size);
-        CachedPage<MeteorVO> cached = cache.getOrLoad(cacheKey, CACHE_TYPE, ContentCache.DEFAULT_TTL,
+        CachedPage<MeteorVO> cached = cache.getOrLoad("meteor", cacheKey, CACHE_TYPE,
+                ContentCache.DEFAULT_TTL,
                 () -> CachedPage.from(loadMeteors(page, size)));
         return Response.success(cached.toPage());
     }

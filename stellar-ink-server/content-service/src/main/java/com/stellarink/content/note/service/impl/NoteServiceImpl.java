@@ -25,6 +25,8 @@ import com.stellarink.sharedmodel.enums.NoteType;
 import com.stellarink.sharedmodel.enums.NoteVisibility;
 import com.stellarink.sharedmodel.vo.note.NoteDetailVO;
 import com.stellarink.sharedmodel.vo.note.NoteVO;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -49,10 +51,26 @@ public class NoteServiceImpl implements NoteService {
     private static final String CACHE_NAMESPACE = "note";
     private static final TypeReference<CachedPage<NoteVO>> PAGE_CACHE_TYPE = new TypeReference<>() { };
 
+    /**
+     * 浏览量计数结果：{@code stellar.view.recorded{kind=note,result=counted|deduped}}。
+     *
+     * <p>与文章**共用同一个指标名**、用 {@code kind} 区分。共用一个名字是刻意的：
+     * 看板上「今天有多少次浏览被计上」应当是一个数；分成两个指标就得每次手工相加，
+     * 而漏加一个的症状是「浏览量看起来变少了」，很难发现。
+     */
+    private static final String METRIC_VIEW = "stellar.view.recorded";
+
+    private static final String TAG_KIND = "kind";
+    private static final String TAG_RESULT = "result";
+    private static final String KIND_NOTE = "note";
+    private static final String RESULT_COUNTED = "counted";
+    private static final String RESULT_DEDUPED = "deduped";
+
     private final NoteMapper noteMapper;
     /** 浏览量闸门与文章共用：该表只记「某用户某天已计过一次」，与内容类型无关 */
     private final PostViewMapper postViewMapper;
     private final ContentCache cache;
+    private final MeterRegistry meterRegistry;
 
     @Override
     public IPage<NoteVO> page(NoteQueryDTO query) {
@@ -60,7 +78,8 @@ public class NoteServiceImpl implements NoteService {
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "page",
                 query.getPage(), query.getSize(), query.getTag(), query.getNoteType(),
                 query.getKeyword(), query.getOrderBy(), query.isPublicOnly());
-        CachedPage<NoteVO> cached = cache.getOrLoad(cacheKey, PAGE_CACHE_TYPE, ContentCache.DEFAULT_TTL, () -> {
+        CachedPage<NoteVO> cached = cache.getOrLoad(CACHE_NAMESPACE, cacheKey, PAGE_CACHE_TYPE,
+                ContentCache.DEFAULT_TTL, () -> {
             IPage<NoteVO> loaded = loadPublicPage(query);
             return CachedPage.from(loaded);
         });
@@ -157,7 +176,7 @@ public class NoteServiceImpl implements NoteService {
     @Override
     public NoteDetailVO detail(Long id) {
         String cacheKey = cache.versionedKey(CACHE_NAMESPACE, "detail", id);
-        NoteDetailVO cached = cache.get(cacheKey, NoteDetailVO.class);
+        NoteDetailVO cached = cache.get(CACHE_NAMESPACE, cacheKey, NoteDetailVO.class);
         if (cached != null) {
             return cached;
         }
@@ -166,7 +185,7 @@ public class NoteServiceImpl implements NoteService {
         ensureReadable(note);
         NoteDetailVO vo = toDetailVO(note);
         if (isPublicPublished(note)) {
-            cache.put(cacheKey, vo, ContentCache.DEFAULT_TTL);
+            cache.put(CACHE_NAMESPACE, cacheKey, vo, ContentCache.DEFAULT_TTL);
         }
         return vo;
     }
@@ -308,7 +327,24 @@ public class NoteServiceImpl implements NoteService {
                     .setSql("view_count = view_count + 1"));
             cache.evictVersioned(CACHE_NAMESPACE, "detail", id);
         }
+        countView(counted);
         return counted;
+    }
+
+    /**
+     * 记一次浏览量结果。
+     *
+     * <p>「私有笔记 / 草稿」与「作者看自己」这两种不计数的情况**刻意不入指标**：
+     * 它们不是「被去重」，而是「本来就不该计」，混进 deduped 会让去重率虚高。
+     */
+    private void countView(boolean counted) {
+        Counter.builder(METRIC_VIEW)
+                .tag(TAG_KIND, KIND_NOTE)
+                .tag(TAG_RESULT, counted ? RESULT_COUNTED : RESULT_DEDUPED)
+                .description("浏览量计数结果：counted=真的计了一次；deduped=同一登录用户当天已计过被去重"
+                        + "（kind 区分 post 与 note；不该计的场合不入指标）")
+                .register(meterRegistry)
+                .increment();
     }
 
     private void invalidatePublicCaches() {
