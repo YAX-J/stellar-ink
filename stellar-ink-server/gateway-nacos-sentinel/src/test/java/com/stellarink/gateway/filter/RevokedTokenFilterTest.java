@@ -1,6 +1,7 @@
 package com.stellarink.gateway.filter;
 
 import com.stellarink.sharedmodel.auth.TokenRevocationKey;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
@@ -22,7 +23,16 @@ class RevokedTokenFilterTest {
 
     private final ReactiveStringRedisTemplate redisTemplate = mock(ReactiveStringRedisTemplate.class);
     private final WebFilterChain chain = mock(WebFilterChain.class);
-    private final RevokedTokenFilter filter = new RevokedTokenFilter(redisTemplate);
+
+    /**
+     * 真的注册表（不是 mock）：撤销校验的四种结果必须能被断言。
+     *
+     * <p>这是整条链路上最该被监控的一个指标 —— 撤销校验是 fail-closed 的，
+     * Redis 查不通就回 503，而用户看到的是「莫名其妙 503」，日志里只有一行 warn。
+     * 四种结果分开记，才不用每次靠猜。
+     */
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final RevokedTokenFilter filter = new RevokedTokenFilter(redisTemplate, meterRegistry);
 
     @Test
     void rejectsRevokedTokenBeforeRouting() {
@@ -167,6 +177,53 @@ class RevokedTokenFilterTest {
                 .as("应当在下单次请求可接受的范围内快速失败")
                 .isLessThan(5_000L);
         verify(chain, never()).filter(exchange);
+    }
+
+    @Test
+    @DisplayName("四种撤销校验结果分开计数：error 与 timeout 必须能区分（它们的修法不同）")
+    void revocationOutcomesAreCountedSeparately() {
+        // ① 放行
+        String active = "active2.jwt";
+        var okExchange = exchange("GET", "/posts", active);
+        when(redisTemplate.hasKey(TokenRevocationKey.of(active))).thenReturn(Mono.just(false));
+        when(chain.filter(okExchange)).thenReturn(Mono.empty());
+        filter.filter(okExchange, chain).block();
+
+        // ② 命中撤销列表 → 401
+        String revoked = "revoked2.jwt";
+        var revokedExchange = exchange("GET", "/posts", revoked);
+        when(redisTemplate.hasKey(TokenRevocationKey.of(revoked))).thenReturn(Mono.just(true));
+        filter.filter(revokedExchange, chain).block();
+
+        // ③ 两次都失败 → error（Redis 链路问题）
+        String failing = "failing2.jwt";
+        var failingExchange = exchange("GET", "/posts", failing);
+        when(redisTemplate.hasKey(TokenRevocationKey.of(failing)))
+                .thenReturn(Mono.error(new org.springframework.dao.QueryTimeoutException("Redis command timed out")));
+        filter.filter(failingExchange, chain).block();
+
+        // ④ 石沉大海 → timeout（连接池拿不到连接；注意它**不会**触发重试，因为 timeout 挂在 retry 之后）
+        String hanging = "hanging2.jwt";
+        var hangingExchange = exchange("GET", "/posts", hanging);
+        when(redisTemplate.hasKey(TokenRevocationKey.of(hanging))).thenReturn(Mono.never());
+        filter.filter(hangingExchange, chain).block();
+
+        org.assertj.core.api.Assertions.assertThat(check("ok")).isEqualTo(1d);
+        org.assertj.core.api.Assertions.assertThat(check("revoked")).isEqualTo(1d);
+        org.assertj.core.api.Assertions.assertThat(check("error")).isEqualTo(1d);
+        org.assertj.core.api.Assertions.assertThat(check("timeout")).isEqualTo(1d);
+        // 只有 ③ 真的重试过一次：它是「抖动的前兆」，通常用户没受影响，所以单独计数
+        org.assertj.core.api.Assertions.assertThat(
+                        meterRegistry.get("stellar.auth.revoked.retry").counter().count())
+                .as("只有真正报错的那一次触发重试")
+                .isEqualTo(1d);
+    }
+
+    private double check(String result) {
+        return meterRegistry.get("stellar.auth.revoked.check")
+                .tag("result", result)
+                .counter()
+                .count();
     }
 
     private MockServerWebExchange exchange(String method, String path, String token) {

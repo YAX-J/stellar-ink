@@ -16,9 +16,12 @@ import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import com.stellarink.sharedmodel.vo.ai.AiDailyUsageVO;
 import com.stellarink.sharedmodel.vo.ai.AiTraceCallVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageBreakdownVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -71,6 +74,22 @@ public class AiUsageServiceImpl implements AiUsageService {
 
     private static final BigDecimal PER_MILLION = BigDecimal.valueOf(1_000_000L);
 
+    /**
+     * 配额触顶计数：{@code stellar.quota.rejected{scope}}。
+     *
+     * <p>scope 取 {@code concurrency} / {@code user_calls} / {@code user_tokens} / {@code role_calls}
+     * —— 四个维度的**修法完全不同**（前者是「前端重复提交」，第二个是「某人用太多」，
+     * 第三个是「单次回答太长」，第四个是「角色额度配小了」），
+     * 合成一个总数就等于把可行动的信息丢掉。
+     */
+    private static final String METRIC_QUOTA_REJECTED = "stellar.quota.rejected";
+
+    private static final String TAG_SCOPE = "scope";
+    private static final String SCOPE_CONCURRENCY = "concurrency";
+    private static final String SCOPE_USER_CALLS = "user_calls";
+    private static final String SCOPE_USER_TOKENS = "user_tokens";
+    private static final String SCOPE_ROLE_CALLS = "role_calls";
+
     private final AiCallLogMapper callLogMapper;
 
     private final AiProviderConfigMapper providerConfigMapper;
@@ -79,6 +98,9 @@ public class AiUsageServiceImpl implements AiUsageService {
     private final RedisUtils redisUtils;
 
     private final AiQuotaProperties quotaProperties;
+
+    /** 配额触顶指标（E3-2 的配额是「调用前拦截」，被拦下的次数必须能被看见） */
+    private final MeterRegistry meterRegistry;
 
     @Override
     public void recordSuccess(AiCallScene scene, UsageDTO usage, long startedAtMillis) {
@@ -143,7 +165,7 @@ public class AiUsageServiceImpl implements AiUsageService {
             long inflight = redisUtils.increment(inflightKey, 1, inflightTtl());
             if (inflight > quotaProperties.getMaxConcurrentPerUser()) {
                 rollbackInflight(inflightKey);
-                throw quotaExceeded("同时进行的 AI 请求过多（上限 "
+                throw quotaExceeded(SCOPE_CONCURRENCY, "同时进行的 AI 请求过多（上限 "
                         + quotaProperties.getMaxConcurrentPerUser() + " 个），请等上一个完成再试。");
             }
         }
@@ -153,13 +175,13 @@ public class AiUsageServiceImpl implements AiUsageService {
             if (userId != null) {
                 callsKey = AiQuotaPolicy.callsKeyOfUser(userId, day);
                 if (AiQuotaPolicy.exhausted(readCounter(callsKey), quotaProperties.getDailyCallsPerUser())) {
-                    throw quotaExceeded("今天的 AI 调用次数已用完（上限 "
+                    throw quotaExceeded(SCOPE_USER_CALLS, "今天的 AI 调用次数已用完（上限 "
                             + quotaProperties.getDailyCallsPerUser() + " 次）。");
                 }
                 if (AiQuotaPolicy.exhausted(
                         readCounter(AiQuotaPolicy.tokensKeyOfUser(userId, day)),
                         quotaProperties.getDailyTokensPerUser())) {
-                    throw quotaExceeded("今天的 AI token 额度已用完（上限 "
+                    throw quotaExceeded(SCOPE_USER_TOKENS, "今天的 AI token 额度已用完（上限 "
                             + quotaProperties.getDailyTokensPerUser() + " token）。");
                 }
             }
@@ -168,7 +190,7 @@ public class AiUsageServiceImpl implements AiUsageService {
             if (providerRole != null && quotaProperties.getDailyCallsPerRole() > 0) {
                 roleKey = AiQuotaPolicy.callsKeyOfRole(providerRole, day);
                 if (AiQuotaPolicy.exhausted(readCounter(roleKey), quotaProperties.getDailyCallsPerRole())) {
-                    throw quotaExceeded("今天的「" + providerRole + "」模型调用次数已用完（上限 "
+                    throw quotaExceeded(SCOPE_ROLE_CALLS, "今天的「" + providerRole + "」模型调用次数已用完（上限 "
                             + quotaProperties.getDailyCallsPerRole() + " 次）。");
                 }
             }
@@ -239,7 +261,19 @@ public class AiUsageServiceImpl implements AiUsageService {
         return Duration.ofSeconds(Math.max(1, quotaProperties.getInflightTtlSeconds()));
     }
 
-    private static BusinessException quotaExceeded(String message) {
+    /**
+     * 配额触顶：**先记指标再抛**。
+     *
+     * <p>为什么把埋点放在这里而不是各调用点：四条触顶路径都会经过本方法，
+     * 在这里计数意味着「将来新增一个维度」不会漏埋 —— 只要它走同一个出口。
+     */
+    private BusinessException quotaExceeded(String scope, String message) {
+        Counter.builder(METRIC_QUOTA_REJECTED)
+                .tag(TAG_SCOPE, scope)
+                .description("AI 配额触顶被拦下的次数；触顶返回 429。"
+                        + "注意 Redis 不可用时配额是**放行**的（fail-open，它不是安全边界），那种情况不会计入这里")
+                .register(meterRegistry)
+                .increment();
         return new BusinessException(ErrorCode.TOO_MANY_REQUESTS, message);
     }
 
@@ -261,6 +295,49 @@ public class AiUsageServiceImpl implements AiUsageService {
         List<AiCallLog> rows = callLogMapper.selectList(
                 new LambdaQueryWrapper<AiCallLog>().ge(AiCallLog::getCreatedAt, since));
         return summarize(rows, days, since);
+    }
+
+    @Override
+    public List<AiDailyUsageVO> dailyUsage() {
+        LocalDateTime since = LocalDate.now().atStartOfDay();
+        List<AiCallLog> rows = callLogMapper.selectList(
+                new LambdaQueryWrapper<AiCallLog>().ge(AiCallLog::getCreatedAt, since));
+
+        // 分组键 = 场景 + 模型角色。两者都参与标签，所以用不可能出现在取值里的分隔符拼中间键，
+        // 再原样带上两个字段（不要回头去 split 字符串 —— 那是把一个可避免的解析错误留给自己）。
+        Map<String, List<AiCallLog>> grouped = new LinkedHashMap<>();
+        for (AiCallLog row : rows) {
+            String key = textOrUnknown(row.getScene()) + '\u001f' + textOrUnknown(row.getProviderRole());
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
+        }
+
+        List<AiDailyUsageVO> result = new ArrayList<>();
+        grouped.forEach((key, group) -> {
+            // 复用 totalsOf：token / 成本 / 两个缺口的口径只有那一个实现
+            Totals totals = totalsOf(group);
+            AiCallLog sample = group.get(0);
+            result.add(AiDailyUsageVO.builder()
+                    .scene(textOrUnknown(sample.getScene()))
+                    .providerRole(textOrUnknown(sample.getProviderRole()))
+                    .calls(group.size())
+                    .successCalls(totals.successCalls)
+                    .failedCalls(group.size() - totals.successCalls)
+                    .totalTokens(totals.totalTokens)
+                    .cost(scale(totals.cost))
+                    .unpricedCalls(totals.unpricedCalls)
+                    .untokenizedCalls(totals.untokenizedCalls)
+                    .build());
+        });
+        // 固定顺序（调用多的在前、同数量按键名）：同一份数据每次输出一致，便于断言与对比
+        result.sort(Comparator.comparingInt(AiDailyUsageVO::getCalls).reversed()
+                .thenComparing(AiDailyUsageVO::getScene)
+                .thenComparing(AiDailyUsageVO::getProviderRole));
+        return result;
+    }
+
+    /** 分组标签用的空值兜底：缺失不是错误（评测的模型角色本来就为空），用同一套可读占位。 */
+    private static String textOrUnknown(String value) {
+        return value == null || value.isBlank() ? UNKNOWN_KEY : value;
     }
 
     @Override

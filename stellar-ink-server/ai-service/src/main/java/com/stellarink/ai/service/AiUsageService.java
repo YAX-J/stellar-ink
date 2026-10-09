@@ -2,6 +2,7 @@ package com.stellarink.ai.service;
 
 import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.ai.enums.AiCallScene;
+import com.stellarink.sharedmodel.vo.ai.AiDailyUsageVO;
 import com.stellarink.sharedmodel.vo.ai.AiTraceCallVO;
 import com.stellarink.sharedmodel.vo.ai.AiUsageSummaryVO;
 import org.slf4j.Logger;
@@ -89,6 +90,18 @@ public interface AiUsageService {
 
     /** 汇总窗口内的账（看板用）。缺单价 / 缺 token 的调用数会如实返回，不会当 0 混进金额。 */
     AiUsageSummaryVO summary(int days);
+
+    /**
+     * **当日**用量按「模型角色 + 场景」聚合（指标看板用）。
+     *
+     * <p>为什么不让指标层自己去查表：成本口径只有一份（见 {@code AiDailyUsageVO} 的说明），
+     * 再算一遍早晚会和 {@code summary} 上的数字对不上，而两个看板给出两个成本数字最难解释。
+     *
+     * <p>与 {@link #summary(int)} 的分工：那个是「对外可查的多天窗口」，
+     * 这个是「当日快照」—— 指标是不断刷新的 Gauge，只需要当天这一段，
+     * 每次都全表扫 90 天纯属浪费。
+     */
+    List<AiDailyUsageVO> dailyUsage();
 
     /**
      * 按 traceId 取这次链路的全部调用记录（E3-4 回放用），按发生顺序。

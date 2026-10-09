@@ -12,6 +12,8 @@ import com.stellarink.common.auth.AuthHelper;
 import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.enums.Role;
 import com.stellarink.sharedmodel.exception.BusinessException;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,6 +64,13 @@ class AiUsageQuotaTest {
 
     private AiUsageServiceImpl service;
 
+    /**
+     * 真的注册表（不是 mock）：配额触顶不仅要返回 429，还要在指标上按 scope 分开计数 ——
+     * 「哪个维度触顶」决定了修法（前端重复提交 / 某人用太多 / 单次回答太长 / 角色额度配小了），
+     * 合成一个总数就把可行动的信息丢掉了。
+     */
+    private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+
     private String day;
 
     @BeforeEach
@@ -75,7 +84,8 @@ class AiUsageQuotaTest {
         properties.setDailyTokensPerUser(1000);
         properties.setDailyCallsPerRole(5);
         properties.setMaxConcurrentPerUser(2);
-        service = new AiUsageServiceImpl(callLogMapper, providerConfigMapper, redisUtils, properties);
+        service = new AiUsageServiceImpl(
+                callLogMapper, providerConfigMapper, redisUtils, properties, meterRegistry);
         day = AiQuotaPolicy.dayOf(LocalDate.now());
     }
 
@@ -133,6 +143,24 @@ class AiUsageQuotaTest {
         verify(redisUtils).increment(inflightKey(), -1, Duration.ofSeconds(300));
         verify(redisUtils, never()).increment(eq(AiQuotaPolicy.callsKeyOfUser(USER_ID, day)), eq(1L),
                 any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("配额触顶要按维度分开计数：合成一个总数就分不清该改哪里")
+    void quotaRejectionIsCountedByScope() {
+        when(redisUtils.increment(eq(inflightKey()), anyLong(), any(Duration.class))).thenReturn(1L);
+        when(redisUtils.get(AiQuotaPolicy.callsKeyOfUser(USER_ID, day), Long.class)).thenReturn(3L);
+
+        try (MockedStatic<AuthHelper> ignored = loggedIn()) {
+            assertThrows(BusinessException.class, () -> service.acquireQuota(AiCallScene.QA));
+        }
+
+        assertEquals(1d, meterRegistry.get("stellar.quota.rejected")
+                .tag("scope", "user_calls").counter().count(),
+                "用户调用数触顶必须落在 user_calls 这一档");
+        assertTrue(meterRegistry.find("stellar.quota.rejected").tag("scope", "concurrency")
+                        .counter() == null,
+                "并发闸门这次是拿到了的，不该被记成并发触顶");
     }
 
     @Test

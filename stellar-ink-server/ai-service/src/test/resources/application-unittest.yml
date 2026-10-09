@@ -57,6 +57,11 @@ stellar:
       # 真正的信号反而看不见。配额本身由 AiQuotaPolicyTest / AiUsageQuotaTest 单独覆盖。
       quota:
         enabled: false
+    # 指标定时任务关闭：同 quota 的理由 —— 测试进程里它会每 60 秒查一次 ai_call_log
+    # 并探活 Python（127.0.0.1:8200，测试机上通常没有），日志会被「探活不可用」淹没，
+    # 真正的信号反而看不见。指标本身由 AiMetricsJobTest 直接调 refresh() 覆盖。
+    metrics:
+      enabled: false
 
 logging:
   level:

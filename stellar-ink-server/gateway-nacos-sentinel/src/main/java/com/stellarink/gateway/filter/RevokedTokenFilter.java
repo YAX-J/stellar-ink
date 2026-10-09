@@ -1,7 +1,9 @@
 package com.stellarink.gateway.filter;
 
 import com.stellarink.sharedmodel.auth.TokenRevocationKey;
-import lombok.RequiredArgsConstructor;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -20,15 +22,48 @@ import reactor.util.retry.Retry;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** 在 Sa-Token 路由鉴权前拦截已登出或改密后撤销的 JWT。 */
 @Slf4j
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
-@RequiredArgsConstructor
 public class RevokedTokenFilter implements WebFilter {
 
     private static final String UNAUTHORIZED_BODY = "{\"code\":401,\"msg\":\"会话已失效，请重新登录\"}";
+
+    /**
+     * 撤销校验结果计数：{@code stellar.auth.revoked.check{result}}。
+     *
+     * <p>这是整条链路上**最该被监控的一个指标**。原因：撤销校验是 fail-closed 的
+     * —— Redis 查不通时网关回 503 而不是放行。安全口径正确，但**用户看到的是
+     * 「莫名其妙 503」**：一次连接抖动 → 一个请求 503 → 下一个又好了，
+     * 而日志里只有一行 warn，响应体里过去什么线索都没有。
+     * 四档分开记，就是为了让「为什么这次 503」不再需要一个一个去猜：
+     * <ul>
+     *   <li>{@code ok} —— 查询成功且未撤销，正常放行</li>
+     *   <li>{@code revoked} —— 命中撤销列表，返回 401（用户主动登出/改密，属正常）</li>
+     *   <li>{@code error} —— 两次查询都失败，fail-closed 返回 503（**Redis 链路问题**）</li>
+     *   <li>{@code timeout} —— 撞上 2 秒整体上限，fail-closed 返回 503
+     *       （**连接池被占满 / 连接卡死**，与上一条的修法不同，所以要分开）</li>
+     * </ul>
+     */
+    private static final String METRIC_CHECK = "stellar.auth.revoked.check";
+
+    /** 撤销校验耗时：{@code stellar.auth.revoked.duration{result}}。 */
+    private static final String METRIC_DURATION = "stellar.auth.revoked.duration";
+
+    /** 触发重试的次数：{@code stellar.auth.revoked.retry}。见下面 filter 里的说明。 */
+    private static final String METRIC_RETRY = "stellar.auth.revoked.retry";
+
+    private static final String TAG_RESULT = "result";
+
+    private static final String RESULT_OK = "ok";
+    private static final String RESULT_REVOKED = "revoked";
+    private static final String RESULT_ERROR = "error";
+    private static final String RESULT_TIMEOUT = "timeout";
 
     /** 重试间隔：够 Lettuce 完成一次重连，又不至于让用户明显感到卡顿 */
     private static final Duration RETRY_DELAY = Duration.ofMillis(120);
@@ -69,6 +104,12 @@ public class RevokedTokenFilter implements WebFilter {
                     + "本地开发建议指向本机 Redis（跨公网的 500ms 超时会让带 token 的请求随机 503）\"}";
 
     private final ReactiveStringRedisTemplate redisTemplate;
+    private final MeterRegistry meterRegistry;
+
+    public RevokedTokenFilter(ReactiveStringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
+        this.redisTemplate = redisTemplate;
+        this.meterRegistry = meterRegistry;
+    }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -81,6 +122,14 @@ public class RevokedTokenFilter implements WebFilter {
         }
         String path = exchange.getRequest().getPath().value();
 
+        // 耗时的起点：只覆盖「这次撤销校验」，不含被放行之后的业务处理
+        long startedAtNanos = System.nanoTime();
+
+        // 每次请求一份状态：用来把「重试」只计一次。
+        // 不能直接用 doOnError 计数 —— 两次都失败时它会触发两遍，
+        // 于是「一次重试」会被记成 2，看板上的抖动次数直接翻倍。
+        AtomicBoolean retried = new AtomicBoolean(false);
+
         // ⚠️ 错误处理**只能包住这一次 Redis 查询**：把它挂在 flatMap 之前。
         // 以前写在整条链的最后，于是 chain.filter(exchange) 里抛出的任何异常
         // （最典型的是「Unable to find instance for xxx」）都会被这里吞掉并改写成
@@ -92,8 +141,14 @@ public class RevokedTokenFilter implements WebFilter {
         // 重试一次（间隔 120ms）足以跨过重连窗口；两次都失败仍然 fail-closed，
         // 安全口径不变，只是不再让一次网络抖动变成一次 503。
         Mono<Boolean> revoked = redisTemplate.hasKey(TokenRevocationKey.of(token))
-                .doOnError(ex -> log.warn(
-                        "Redis 撤销列表查询失败，重试一次：path={} error={}", path, ex.toString()))
+                .doOnError(ex -> {
+                    if (retried.compareAndSet(false, true)) {
+                        // 只是「即将重试」的计数：它是 503 的**前兆**，
+                        // 重试通常能跨过去，所以此时用户还没受影响。
+                        count(METRIC_RETRY, null);
+                    }
+                    log.warn("Redis 撤销列表查询失败，重试一次：path={} error={}", path, ex.toString());
+                })
                 .retryWhen(Retry.fixedDelay(1, RETRY_DELAY))
                 // 整体上限：跨过「命令超时 + 重试」还没回来就快速失败，别把请求挂到浏览器的 15s
                 .timeout(SESSION_CHECK_TIMEOUT)
@@ -104,11 +159,23 @@ public class RevokedTokenFilter implements WebFilter {
                 .onErrorMap(SessionCheckUnavailableException::new);
 
         return revoked
-                .flatMap(value -> Boolean.TRUE.equals(value)
-                        ? write(exchange, HttpStatus.UNAUTHORIZED, UNAUTHORIZED_BODY)
-                        : chain.filter(exchange))
-                .onErrorResume(SessionCheckUnavailableException.class,
-                        ex -> write(exchange, HttpStatus.SERVICE_UNAVAILABLE, UNAVAILABLE_BODY));
+                .flatMap(value -> {
+                    if (Boolean.TRUE.equals(value)) {
+                        record(RESULT_REVOKED, startedAtNanos);
+                        return write(exchange, HttpStatus.UNAUTHORIZED, UNAUTHORIZED_BODY);
+                    }
+                    record(RESULT_OK, startedAtNanos);
+                    return chain.filter(exchange);
+                })
+                .onErrorResume(SessionCheckUnavailableException.class, ex -> {
+                    // 两种失败要分开：error = 命令/连接错误（重试也没用），
+                    // timeout = 撞上 2 秒整体上限（典型是响应式连接池 acquire 拿不到连接）。
+                    // 它们的修法不同（前者查网络与 Redis 本身，后者查池子与卡死的连接），
+                    // 所以指标上也必须分开。
+                    record(ex.getCause() instanceof TimeoutException ? RESULT_TIMEOUT : RESULT_ERROR,
+                            startedAtNanos);
+                    return write(exchange, HttpStatus.SERVICE_UNAVAILABLE, UNAVAILABLE_BODY);
+                });
     }
 
     /** 只用于区分「Redis 这一次查询失败」与「下游路由失败」，不对外暴露。 */
@@ -123,6 +190,42 @@ public class RevokedTokenFilter implements WebFilter {
         String path = exchange.getRequest().getPath().value();
         return "POST".equalsIgnoreCase(exchange.getRequest().getMethod().name())
                 && ("/auth/login".equals(path) || "/auth/register".equals(path));
+    }
+
+    /**
+     * 记录一次撤销校验的结果与耗时。
+     *
+     * <p>耗时**连失败一起记**（把 timeout 也记进去）是刻意的：P99 在 Redis 抖动时
+     * 直接顶到 2 秒上限，正是「用户实际感受到了多久」的真实答案。
+     * 若只记成功路径，看板会一片祥和，而用户那边在转圈。
+     */
+    private void record(String result, long startedAtNanos) {
+        count(METRIC_CHECK, result);
+        Timer.builder(METRIC_DURATION)
+                .tag(TAG_RESULT, result)
+                .description("网关撤销校验耗时（含失败与 2 秒整体上限；失败样本会顶到上限）")
+                .register(meterRegistry)
+                .record(System.nanoTime() - startedAtNanos, TimeUnit.NANOSECONDS);
+    }
+
+    private void count(String metricName, String result) {
+        var builder = Counter.builder(metricName);
+        if (result != null) {
+            builder.tag(TAG_RESULT, result);
+        }
+        builder.description(descriptionOf(metricName))
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private static String descriptionOf(String metricName) {
+        return switch (metricName) {
+            case METRIC_CHECK -> "网关撤销校验结果："
+                    + "ok=放行 / revoked=命中撤销列表(401) / error=两次都失败(503,Redis 链路) /"
+                    + " timeout=撞上 2 秒上限(503,连接池或连接卡死)";
+            case METRIC_RETRY -> "撤销校验触发重试的次数（Redis 链路抖动的前兆，通常不影响用户）";
+            default -> "星笺网关鉴权指标";
+        };
     }
 
     private Mono<Void> write(ServerWebExchange exchange, HttpStatus status, String body) {
