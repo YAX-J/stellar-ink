@@ -1,0 +1,229 @@
+# =============================================================================
+# 星笺 STELLAR INK · Prometheus 告警规则
+#
+# 口径说明（为什么这些阈值）：
+#   · 这是**个人博客 + 单站长**的规模，不是电商大促。阈值按「明显超出真人使用
+#     频率、但远没到打满机器」来定，宁可晚一点叫，也不要天天叫（告警疲劳之后
+#     等于没有告警）。
+#   · 每条规则都写清「为什么是它」—— 它们对应的都是本项目**真实发生过**的问题，
+#     不是抄来的通用模板。
+#
+# ⚠️ 求值与通知是两件事：Prometheus 会**求值**这些规则并在 /alerts 页与
+#    HTTP API 里如实暴露 firing 状态（Grafana 的 Alert list 面板也能读）；
+#    而**收到通知**需要你在服务器上二选一：
+#      ① 启用 compose 里的 Alertmanager（模板见 observability/alertmanager/alertmanager.yml.example）；
+#      ② 在 Grafana 里配一次 contact point（邮箱/webhook）。
+#    刻意没有把这两者做成默认开启：它们都要求填**你的**通知地址，
+#    而地址为空时 Alertmanager 会直接拒绝启动（配置校验失败）——
+#    宁可在文档里留一步，也不留一个填错就让整栈起不来的文件。
+# =============================================================================
+
+groups:
+  - name: stellar-ink-availability
+    rules:
+      # 任何服务不可用。最基础的一条，兜住所有「服务没起来 / 没注册进 Nacos / 崩了」。
+      # 2 分钟的 for 是为了躲过滚动重启的正常窗口。
+      - alert: StellarInkServiceDown
+        expr: up{job="stellar-ink-java"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "星笺服务不可用：{{ $labels.application }}（{{ $labels.instance }}）"
+          description: >-
+            /actuator/prometheus 抓不到了。先看容器是否在跑（docker compose ps），
+            再看启动日志里是不是 Nacos 注册失败或密钥守卫拒绝了启动
+            （JwtSecretPolicy 在非 dev 档遇到默认密钥会直接拒绝启动，这是刻意行为）。
+
+      # 进程重启检测。这条对应一个真实踩过的坑：容器被 cgroup OOM SIGKILL 后
+      # 日志里**看不到任何 Java 异常栈**（只有反复启动的记录），极难判断。
+      # 注意：正常发布也会触发，所以是 info 而不是 critical。
+      - alert: StellarInkProcessRestarted
+        expr: process_uptime_seconds < 300
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "星笺服务最近重启过：{{ $labels.application }}"
+          description: >-
+            进程运行时长不足 5 分钟。若你没有发布，请对照 JVM 堆曲线
+            （stellar-ink-overview 看板）确认是不是被 OOM SIGKILL ——
+            那种情况日志里不会有异常栈，只有重启记录。
+
+      # 堆使用率贴顶。生产 compose 给 Java 服务的 mem_limit 是 512m、堆上限 -Xmx128m，
+      # 堆外（Metaspace/CodeCache/线程栈/直接内存）约 100-300MB，
+      # 堆打满时容器会被 cgroup 杀掉而不是抛 OutOfMemoryError。
+      # ⚠️ 若 jvm_memory_max_bytes 为 -1（未显式限制堆），本条不会触发。
+      - alert: StellarInkJvmHeapNearLimit
+        expr: >-
+          jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"} > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "星笺 JVM 堆接近上限：{{ $labels.application }}（{{ $labels.id }}）"
+          description: >-
+            堆使用率持续 10 分钟高于 90%。先确认是不是缓存没生效导致全量回源，
+            再考虑调 -Xmx 与 mem_limit（两者要一起动，堆外还要留 300MB 左右）。
+
+  - name: stellar-ink-gateway-auth
+    rules:
+      # 【本项目最重要的一条】撤销校验 fail-closed 触发。
+      # 网关在路由前查 Redis 撤销列表，查不通时按 fail-closed 返回 503
+      # —— 安全口径正确，但**用户看到的是「莫名其妙 503」**，
+      # 而这正是历史上最难排查的一类故障（一次连接抖动 → 一个请求 503 → 下一个又好了）。
+      # 阈值取「5 分钟内有任何一次」：fail-closed 是安全边界，一次都不该有。
+      - alert: StellarInkRevokedCheckFailing
+        expr: >-
+          increase(stellar_auth_revoked_check_total{result=~"error|timeout"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "网关撤销校验失败并按 fail-closed 返回 503"
+          description: >-
+            result=error 表示两次查询都失败（重试后仍不通），result=timeout 表示
+            撞上了 2 秒的整体上限。查 REDIS_HOST/REDIS_PORT 可达性与超时设置；
+            若结果里同时伴随 stellar_auth_revoked_retry_total 上涨，
+            说明是连接被掐断、Lettuce 正在重连的瞬间（重试一次通常会跨过去）。
+            注意：网关与业务服务必须连**同一个** Redis。
+
+      # 重试是「抖动」而不是「故障」——它单独告警的价值在于：
+      # 它在 503 之前出现，是提前量。
+      - alert: StellarInkRevokedCheckRetrying
+        expr: increase(stellar_auth_revoked_retry_total[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "网关撤销校验频繁重试（Redis 链路抖动）"
+          description: >-
+            10 分钟内重试超过 3 次。重试一次通常能跨过重连窗口，所以此刻用户还没受影响，
+            但这是 503 的前兆信号：查远端 Redis 的网络质量、以及网关的
+            Lettuce 保活心跳是否在生效（RedisKeepAliveHeartbeat，日志里应有心跳记录）。
+
+      # 网关整体延迟。网关在链路上是必经之路，它慢等于全站慢。
+      - alert: StellarInkGatewayLatencyHigh
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application="gateway-nacos-sentinel"}[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "网关 P95 延迟超过 1 秒"
+          description: >-
+            先看同一时间的撤销校验耗时：若是它拖的，问题在 Redis 链路；
+            若撤销校验平稳而下游慢，看 stellar-ink-overview 里哪个服务的 P95 在涨。
+
+      # 全站 5xx 率。用「任何服务的 5xx / 全部请求」，避免只看网关而漏掉
+      # 服务自身返回的 5xx（网关只转发，不产生下游的错误码）。
+      - alert: StellarInkHigh5xxRate
+        expr: >-
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_requests_seconds_count[5m])), 0.0001) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "星笺 5xx 占全部请求的比例超过 1%"
+          description: >-
+            按 application 分组细分定位是哪个服务。拿着响应体里的 traceId
+            去该服务的日志里查（日志行带 traceId，响应头是 X-Trace-Id），
+            不要靠猜。
+
+  - name: stellar-ink-cache-db
+    rules:
+      # 【缓存层唯一的「静默故障」信号】RedisCache 在 Redis 失败后熔断 30 秒
+      # （挂起期内所有缓存操作直接回源数据库、不再碰 Redis），而**业务完全不报错**。
+      # 也就是说：Redis 挂掉时站点只是变慢，日志里只有一行 warn —— 没有这条指标，
+      # 你可能几天都不知道所有请求都在打 MySQL。
+      - alert: StellarInkCacheSuspended
+        expr: max(stellar_cache_suspended) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "缓存处于失败熔断窗口（Redis 不可用，业务在裸奔回源）"
+          description: >-
+            stellar_cache_suspended=1 表示 RedisCache 的 30 秒熔断窗口被触发。
+            同时看 stellar_cache_requests_total{result="bypass"} 的速率
+            （那是「本次根本没访问 Redis」的请求）与 MySQL 侧的连接池/延迟。
+            注意这是**故障放行**的设计（缓存不是安全边界），所以业务不会报错。
+
+      # 缓存命中率塌陷。只算 hit/(hit+miss)：bypass 与 error 不计入分母 ——
+      # 否则 Redis 挂掉时命中率会显示成 0%，与「缓存本来就没命中」混为一谈。
+      - alert: StellarInkCacheHitRateLow
+        expr: >-
+          100 * sum(rate(stellar_cache_requests_total{result="hit"}[5m]))
+          / clamp_min(sum(rate(stellar_cache_requests_total{result=~"hit|miss"}[5m])), 0.0001) < 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内容缓存命中率低于 50%（持续 15 分钟）"
+          description: >-
+            按 namespace 分组看是哪一类内容（post/note/tag/stats/...）。
+            常见原因：缓存被高频失效（每次写文章都会推进版本号）、
+            TTL 设置过短、或参数维度太细导致同一份数据被缓存成多个键。
+
+      # 连接池排队。Druid 的 waitThreadCount > 0 意味着有线程在等连接 —— 池不够大，
+      # 或者有慢 SQL 长时间占着连接。跨公网连 MySQL 时，这也是「NAT 丢空闲连接」
+      # 那个老问题的先兆（半开连接会占住池子直到 socketTimeout）。
+      - alert: StellarInkDbPoolWaiting
+        expr: max(stellar_db_pool_connections{state="waiting"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Druid 连接池出现排队（{{ $labels.application }}）"
+          description: >-
+            先看同期的 active 连接数与慢 SQL。若 active 不高却在排队，
+            怀疑链路问题（半开连接）；若 active 贴着 max，就是池子小了或 SQL 慢了。
+
+  - name: stellar-ink-ai
+    rules:
+      # Python 编排服务不可用。博客的读写不受影响，但问答/写作/Copilot 全挂 ——
+      # 这件事 /ai/health 早就能回答（它会真去问 Python 的 GET /health），
+      # 缺的只是「没人主动去看它」。
+      - alert: StellarInkPythonUnavailable
+        expr: min(stellar_ai_python_available) == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Python AI 编排服务（:8200）不可用"
+          description: >-
+            ai-service 探活 Python 失败。检查 stellar-ink-ai 容器、
+            AI_PYTHON_BASE_URL 是否指向 http://stellar-ink-ai:8200、
+            以及 AI_INTERNAL_SECRET 两侧是否一致（不一致会表现为 401 探活失败）。
+
+      # 配额被顶穿。配额是「调用前拦截」，触顶返回 429；
+      # 10 分钟 20 次说明要么有人在刷，要么额度配小了（0/负数=不限，所以能触发就是真限了）。
+      - alert: StellarInkAiQuotaRejectedSpike
+        expr: increase(stellar_quota_rejected_total[10m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI 配额触顶频繁（scope={{ $labels.scope }}）"
+          description: >-
+            scope 区分是哪个维度触顶：user_calls/user_tokens（某个人用太多）、
+            role_calls（某个角色整体额度小）、concurrency（同一用户在飞请求过多，
+            常见于前端重复点了「停止」却仍在跑）。额度在配置里
+            （stellar.ink.ai.quota.*，可调项放 Nacos）。
+
+      # 成本速率。AI 每次调用都花钱，阈值需要你按实际单价折算后调整。
+      # ⚠️ 成本单位是**元（CNY）**，与 ai_call_log 的 price_* 列口径一致。
+      - alert: StellarInkAiCostHigh
+        expr: sum(stellar_ai_daily_cost_cny) > 30
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "AI 当日累计成本超过 30 元"
+          description: >-
+            按 role/scene 分组看是谁花掉的（stellar-ink-ai 看板）。
+            ⚠️ 这条阈值是占位值：请按你自己的单价把它改成「一天花这么多我会心疼」
+            的数字。另外必须同时看两个缺口计数 —— stellar_ai_daily_unpriced（有 token 但没配单价）
+            与 stellar_ai_daily_untokenized（上游没回报 token）：它们任一非 0 时，
+            上面这个金额就只是**下限**，不能当成「今天一共花了这么多」。

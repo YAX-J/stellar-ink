@@ -64,7 +64,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,loggers
+        # prometheus 与 metrics 并存：metrics 是 JSON（本机 curl 看单个指标方便），
+        # prometheus 是抓取格式（让本地也能用与生产**同一份** prometheus.yml 验证接入）。
+        # 两者都只在 dev 档暴露，且 dev 的端口只绑回环。
+        include: health,info,metrics,loggers,prometheus
       base-path: /actuator
   endpoint:
     health:

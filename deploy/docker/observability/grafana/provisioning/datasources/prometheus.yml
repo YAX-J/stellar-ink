@@ -1,0 +1,19 @@
+# Grafana 数据源（file provisioning，容器启动时自动加载）
+#
+# uid 固定为 prometheus：所有看板 JSON 里的 datasource 引用都写死这个 uid，
+# 不靠名称匹配 —— 名称一改，看板就会静默变成「No data」。
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # 走 compose 内网服务名，不经过宿主机端口
+    url: http://prometheus:9090
+    isDefault: true
+    # 与 prometheus.yml 的 scrape_interval 保持一致：
+    # 填小了会让 Grafana 把 30s 一个点插值成假的高频曲线
+    jsonData:
+      timeInterval: 30s
+    editable: false

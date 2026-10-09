@@ -313,13 +313,20 @@ curl -skI --max-time 8 --resolve www.baidu.com:443:<源站IP> https://www.baidu.
 |---|---|---|
 | mysql | 1g | `innodb-buffer-pool-size=256M`；数据量上来后可调到 512M |
 | nacos | 900m | 单机模式，`JVM_XMX=512m` |
-| qdrant | 512m | 尚未使用（M3 起接入） |
+| qdrant | 512m | 向量检索（M3 起接入） |
 | redis | 512m | `maxmemory 192mb` + `noeviction`（宁可写失败，也不静默丢弃 JWT 撤销记录）；限额留给 AOF 重写的 fork |
 | gateway | 512m | `-Xmx128m` + SerialGC |
 | user-service | 512m | 同上 |
 | content-service | 512m | 同上 |
+| ai-service | 512m | 同上（对外 `/ai/**`） |
+| stellar-ink-ai | 768m | Python 编排，**不发布任何端口** |
 | web | 64m | nginx 静态与反代 |
-| **合计上限** | **≈4.5G** | 实际占用通常 2–3G，8G 机器跑完 M0–M11（AI 走云 API）仍有余量 |
+| prometheus | 512m | 观测栈；保留期 15 天 / 1GB 双上限 |
+| grafana | 256m | 观测栈；只绑宿主机回环 |
+| **合计上限** | **≈6.4G** | 这些是**上限不是预留**，实际 RSS 明显更低。若机器开始换页，优先砍 Prometheus 保留期与 Qdrant |
+
+> 观测栈的指标口径、告警阈值与运维命令见
+> [docs/architecture/observability.md](../../docs/architecture/observability.md)。
 
 > ⚠️ **mem_limit 不能贴着堆设**：`mem_limit ≈ JVM 堆上限 + 300MB 左右堆外开销`
 > （Metaspace、Code Cache、线程栈、直接内存、GC 结构）。
@@ -407,14 +414,19 @@ docker compose up -d                                      # 起其余服务
 所以走 **SSH 隧道**——不用开任何端口，也不受你家里公网 IP 变动影响：
 
 ```bash
-# 一条命令把网关、Nacos 控制台、MySQL、Redis、Qdrant 全部映射到本地
+# 一条命令把网关、Nacos 控制台、MySQL、Redis、Qdrant、Grafana 全部映射到本地
 ssh -L 8080:127.0.0.1:8080 \
     -L 8848:127.0.0.1:8848 \
     -L 3306:127.0.0.1:3306 \
     -L 6379:127.0.0.1:6379 \
     -L 6333:127.0.0.1:6333 \
+    -L 3000:127.0.0.1:3000 \
     ubuntu@<服务器IP>
 ```
+
+> **Prometheus 刻意不在这个列表里**：它不发布端口（无鉴权）。要看抓取状态或告警，
+> 用 `docker compose exec prometheus wget -qO- 'http://localhost:9090/api/v1/targets?state=active'`
+> 或 `.../api/v1/alerts`。
 
 > **本地端口被占用**（比如你本机已经装了 MySQL 占着 3306）时，把左侧端口换掉即可，
 > 例如 `-L 13306:127.0.0.1:3306`，然后本地就连 `127.0.0.1:13306`。

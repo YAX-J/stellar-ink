@@ -1,0 +1,21 @@
+# Grafana 看板自动加载（file provisioning）
+#
+# ⚠️ 为什么必须走 provisioning、而不是在 Grafana 界面里手点：
+#    手点的看板存在 grafana-data 卷里，容器一重建就没了 —— 那等于「演示过一次」，
+#    不是「可复现的观测栈」。这里挂载仓库目录，看板随代码走、可 review、可回滚。
+apiVersion: 1
+
+providers:
+  - name: stellar-ink
+    orgId: 1
+    folder: 星笺
+    type: file
+    # 允许删除：仓库里删掉 JSON 后，重启 Grafana 时对应的看板也会消失，
+    # 避免出现「仓库里没有、界面上还在」的幽灵看板。
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    # 界面上改不动（改了下一次加载就被覆盖）。要看板改动，改仓库里的 JSON。
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

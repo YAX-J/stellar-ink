@@ -1,0 +1,42 @@
+# =============================================================================
+# 星笺 STELLAR INK · Alertmanager 配置**模板**（默认未启用）
+#
+# 为什么它叫 .example、为什么默认不挂进 compose：
+#   通知必然要填**你的**地址。而 Alertmanager 在配置文件校验失败时**会拒绝启动**
+#   （url 为空就是校验失败）—— 若把它作为默认服务挂上，任何没填地址的人
+#   都会遇到「整栈里有一个容器起不来」。所以在文档里留一步，
+#   也不留一个配错就让部署失败的文件。
+#
+# 启用步骤（服务器上三步）：
+#   1. cp alertmanager.yml.example alertmanager.yml && vi alertmanager.yml
+#      把下面的 url 改成你的 webhook（企业微信/钉钉/飞书的机器人 webhook 都行，
+#      Alertmanager 的 webhook 是通用 JSON POST；钉钉/飞书若要求特定报文，
+#      需要中间加一个小转发服务）。
+#   2. 在 deploy/docker/docker-compose.yml 里放开 alertmanager 服务，
+#      并把上面 prometheus 服务的注释行 `--alertmanager.url=...` 一起放开。
+#   3. docker compose up -d prometheus alertmanager
+#
+# 另一条路（不引入 Alertmanager）：在 Grafana 里配一次 contact point，
+# 用 Grafana 统一告警去查 Prometheus。两者选一个即可，不要都做。
+# =============================================================================
+
+global:
+  # 告警多久没再触发就认为已恢复
+  resolve_timeout: 5m
+
+route:
+  receiver: stellar-ink-default
+  # 按「告警名 + 服务」聚合：同一个服务同时挂掉多条规则时只发一条
+  group_by: ["alertname", "application"]
+  group_wait: 30s
+  group_interval: 5m
+  # 未恢复的告警每 4 小时重发一次（避免刷屏，又不会让人忘记）
+  repeat_interval: 4h
+
+receivers:
+  - name: stellar-ink-default
+    webhook_configs:
+      # ⚠️ 改成你自己的接收地址。这一项为空会让 Alertmanager 启动失败。
+      - url: "https://example.com/your-webhook-endpoint"
+        # 恢复通知与告警通知都发：否则「好了」这件事只能靠自己反复确认
+        send_resolved: true

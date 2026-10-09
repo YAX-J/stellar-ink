@@ -1,0 +1,44 @@
+# =============================================================================
+# 星笺 STELLAR INK · Prometheus 抓取配置
+#
+# 设计要点：
+#   1. **不发布任何宿主机端口**。四个 Java 服务在 compose 里刻意都没有 ports 映射
+#      （把 8101/8102/8107/8080 暴露到宿主机 = 同时绕过 nginx 边缘限流、并让
+#      /actuator/** 匿名可达）。Prometheus 用**服务名 + 容器端口**从编排内网直接抓，
+#      所以这份配置里的目标地址不是 127.0.0.1。
+#   2. **只抓 Java 侧**。Python（stellar-ink-ai :8200）没有 /metrics 端点
+#      （app/rag/metrics.py 是召回率/MRR 那类评测指标，不是 Prometheus 指标）。
+#      AI 侧的可见性由 ai-service 聚合 ai_call_log 表 + 探测 Python 健康得出，
+#      见 stellar_ai_daily_* 与 stellar_ai_python_available。
+#   3. scrape_interval 取 30s（不是默认的 15s）：这是个人站点，8G 机器上还有
+#      MySQL/Redis/Nacos/Qdrant + 4 个 JVM + Python，采样密度换内存不划算。
+#      P95 这类分位数用 rate() 算，30s 的间隔足够。
+# =============================================================================
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  # 抓取超时必须短于 interval，否则慢目标会拖住整轮抓取
+  scrape_timeout: 10s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # 四个 Java 服务共用一个 job：公共标签 application 由各服务自己上报
+  # （common-core 的 MetricsConfig / 网关的 GatewayMetricsConfig 打上的 MeterRegistry 公共标签），
+  # 所以不需要在这里为每个 target 手写标签 —— 少一处会和代码不一致的地方。
+  - job_name: stellar-ink-java
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - gateway:8080
+          - user-service:8101
+          - content-service:8102
+          - ai-service:8107
+
+  # Prometheus 自监控：抓取失败、规则求值耗时、TSDB 基数都要能看见，
+  # 否则「监控自己挂了」是最难发现的一种故障。
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

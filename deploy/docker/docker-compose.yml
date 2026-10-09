@@ -5,6 +5,10 @@
 #   web(nginx:80/443，唯一对公网入口) → gateway(:8080，容器内网) → 业务服务(8101-8102)
 #   全部 Java 服务 → nacos(:8848/9848 注册与配置) / redis(:6379) ；业务服务 → mysql(:3306)
 #   qdrant(:6333) 目前业务未使用，为 AI 阶段（M3 起）预留
+#   观测栈：prometheus 用**服务名**从编排内网抓四个 Java 服务的 /actuator/prometheus，
+#           grafana 读 prometheus 并只绑宿主机回环（SSH 隧道看板）。
+#           两者都不发布公网端口 —— 网关与业务服务的端口本来就没发布，
+#           指标抓取不需要它们发布（见 observability/prometheus.yml）。
 #
 # 三个环境（生产 / 测试 / 本地开发）的关系与网络限制见同目录 README.md 第一节。
 #
@@ -81,6 +85,9 @@ volumes:
   redis-data:
   qdrant-data:
   nacos-data:
+  # 观测栈的数据卷：Prometheus 的 TSDB（有保留期与容量上限，见下面的启动参数）与 Grafana 的库
+  prometheus-data:
+  grafana-data:
 
 services:
   # ------------------------------------------------------- 注册/配置中心 Nacos
@@ -413,3 +420,95 @@ services:
       start_period: 10s
     mem_limit: 64m
     logging: *default-logging
+
+  # =============================================================== 观测栈
+  # 设计取舍（三条，都是刻意的）：
+  #   ① **不抓 Python（stellar-ink-ai :8200）**：它没有 /metrics 端点。
+  #      AI 侧的可见性由 ai-service 聚合 ai_call_log + 探测 Python 健康得出
+  #      （stellar_ai_daily_* 与 stellar_ai_python_available）。
+  #   ② **Prometheus 不写 depends_on**：它必须在服务起不来的时候**仍然活着** ——
+  #      若靠 depends_on 等业务服务健康，那「服务挂了要看监控」时监控自己也起不来，
+  #      正是最需要它的时刻失效。代价是服务起来之前 up==0，由 2 分钟的 for 兜住。
+  #   ③ **Prometheus 不发布端口**：它无鉴权，暴露公网等于公开全部运行指标。
+  #      抓取走编排内网服务名；要看 PromQL 控制台就用 SSH 隧道到 Grafana 或直接
+  #      `docker compose exec prometheus wget -qO- 'http://localhost:9090/api/v1/targets'`。
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: stellar-ink-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 保留期与容量双上限：单靠时间限制挡不住「基数爆炸把磁盘写满」，
+      # 单靠容量限制又会被一次抓取风暴立刻触发淘汰。两个都给。
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=1GB
+      # 允许 POST /-/reload 热加载配置与规则（改完规则不必重建容器）
+      - --web.enable-lifecycle
+      # 通知通道：启用 Alertmanager 后放开下面这行（见 observability/alertmanager/*.example）
+      # - --alertmanager.url=http://alertmanager:9093
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    logging: *default-logging
+
+  # 看板。看板与数据源全部走 file provisioning（见 observability/grafana/provisioning/），
+  # 所以界面里点出来的面板活不过一次容器重建 —— 改动请改仓库里的 JSON。
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: stellar-ink-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      TZ: Asia/Shanghai
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?请在 deploy/docker/.env 中设置 GRAFANA_ADMIN_PASSWORD}
+      # 匿名访问与自助注册必须关：看板里有错误率、AI 成本这类只该站长看的东西
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # 关掉 Grafana 自己的遥测（它默认会向 grafana.com 发使用统计）
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      # 与 Nacos/MySQL/Redis 同口径：只绑宿主机回环，用 SSH 隧道看
+      #   ssh -L 3000:127.0.0.1:3000 ubuntu@<服务器>
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 256m
+    logging: *default-logging
+
+  # ---- 通知通道（默认关闭，启用步骤见 observability/alertmanager/alertmanager.yml.example）----
+  # 为什么默认关闭：配置里的接收地址必须由你填，而 Alertmanager **在配置校验失败时
+  # 会拒绝启动**（url 为空即失败）—— 挂成默认服务的话，没填地址的人会先遇到
+  # 「整栈里有一个容器起不来」。所以在文档里留一步，也不留一个配错就让部署失败的文件。
+  # 启用时同时放开上面 prometheus 的 --alertmanager.url 注释行。
+  #
+  # alertmanager:
+  #   image: prom/alertmanager:v0.27.0
+  #   container_name: stellar-ink-alertmanager
+  #   restart: unless-stopped
+  #   command:
+  #     - --config.file=/etc/alertmanager/alertmanager.yml
+  #     - --storage.path=/alertmanager
+  #   volumes:
+  #     - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+  #     - ./data/alertmanager:/alertmanager
+  #   mem_limit: 64m
+  #   logging: *default-logging
