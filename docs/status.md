@@ -161,3 +161,22 @@
   笔记标签是否并入 `/tags`、笔记内全文检索、反向链接）。
 - **节奏**：一轮一个可验证切片、一个主题一个提交；**多 Agent 与微调仍未开始**。
   GraphRAG 已获准进入，但形态被限定为「先当评测策略」—— 没证明收益就删掉（见 E5-3）。
+
+## 5. 待用户执行的环境动作（代码侧已就绪，只差到机器上敲一下）
+
+> 这一节只放「代码里做不了、必须有人登到机器上操作」的事情。**做完就把对应条目删掉**，
+> 别让它在这里变成一条永远挂着、没人再看的待办。
+
+- **⚠️ 生产机（103.14.33.78）部署前必须给 `.env` 补一行 `COMPOSE_PROFILES=selfcontained`**
+  （自 2026-10-09 的 `d6f69bd` 起生效）。
+  漏了它的后果：那台机器上的 nacos/mysql/redis/qdrant **不再随编排启动**；一旦它们被停掉或删掉，
+  `docker compose up -d` 就不会再拉起来，应用连不上 `nacos:8848` → 站点起不来。
+  **一秒自检**：在 `deploy/docker` 下跑 `docker compose config --services`
+  —— 应当列出 **12** 个（含那四个中间件）；只列出 **8** 个就是漏了这一行。
+  两种部署形态的判据与 2026-10-09 的事故经过见 `deploy/docker/README.md` 开头。
+- **观测栈的通知通道尚未配置**：告警会照常求值、在 Prometheus 的 `/alerts` 页看得见，
+  但**不会有人被叫醒**（其中最重要的一条是「网关撤销校验 fail-closed」，即历史上最难查的那个 503）。
+  模板与启用步骤见 `deploy/docker/observability/alertmanager/alertmanager.yml.example`；
+  或改用 Grafana 的 contact point（二选一，不要都做）。
+- 其余只能由用户做的环境动作（执行未跑过的 SQL 脚本、真实 embedding/rerank 额度、
+  Qdrant 隧道、压测硬件）见本文档 §4 与 `docs/ai/status.md`。
