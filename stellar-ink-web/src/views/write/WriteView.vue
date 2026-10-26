@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
 import { useSeriesStore } from '@/stores/series'
+import { useNoteStore } from '@/stores/notes'
 import { PROMPTS } from '@/api/mock'
 import { countWords } from '@/utils/wordCount'
 import { MAX_TITLE_LENGTH } from '@/utils/copilot-action'
@@ -16,6 +17,7 @@ const route = useRoute()
 const postStore = usePostStore()
 const auth = useAuthStore()
 const seriesStore = useSeriesStore()
+const noteStore = useNoteStore()
 
 /* 系列：0 = 不归系列；只列自己的系列（别人的系列不该出现在我的选择器里） */
 const seriesId = ref(0)
@@ -57,6 +59,41 @@ let saveTimer = null
 /* 实时字数与后端同口径（见 utils/wordCount.js），发射后列表里的数字与这里一致 */
 const wordCount = computed(() => countWords(body.value))
 const readTime = computed(() => Math.ceil(wordCount.value / 400))
+
+/* 发射前检查：只提示、不拦 —— 发不发由作者决定。
+ * 只放三条真正影响读者体验的，其中「代码块语言」最容易被忘：
+ * 没标语言的代码块在高亮器里只能当纯文本渲染。 */
+const unlabeledCodeBlocks = computed(() => {
+  let inCode = false
+  let count = 0
+  for (const line of body.value.split(/\r?\n/)) {
+    const match = line.match(/^\s*```\s*(\S*)/)
+    if (!match) continue
+    if (!inCode) {
+      inCode = true
+      if (!match[1]) count += 1
+    } else {
+      inCode = false
+    }
+  }
+  return count
+})
+const checklist = computed(() => {
+  const items = [
+    { label: '标题写清了这篇在讲什么', ok: !!title.value.trim() },
+    { label: '正文超过 200 字', ok: countWords(body.value) >= 200 },
+    { label: '选了一个标签（情绪签）', ok: !!activeMood.value?.tag },
+  ]
+  if (/^\s*```/m.test(body.value)) {
+    items.push({
+      label: unlabeledCodeBlocks.value
+        ? `有 ${unlabeledCodeBlocks.value} 个代码块没标语言`
+        : '代码块都标了语言',
+      ok: unlabeledCodeBlocks.value === 0,
+    })
+  }
+  return items
+})
 const saveLabel = computed(() => {
   if (saving.value) return '正在保存…'
   if (saveFailed.value) return '未保存 · 点此重试'
@@ -238,9 +275,26 @@ async function insertCopilot({ text }) {
   }
 }
 
+/** 从笔记起草：搬标题/正文/系列，但**不自动发布** —— 笔记是结论，长文要叙事 */
+async function prefillFromNote(id) {
+  try {
+    const note = await noteStore.fetchDetail(id)
+    title.value = note.title
+    body.value = note.content || ''
+    seriesId.value = note.series?.id ? Number(note.series.id) : 0
+    emit(TOAST, {
+      type: 'info',
+      message: '已从笔记预填正文：发布前请改成叙事结构，并检查代码块语言',
+    })
+  } catch {
+    emit(TOAST, { type: 'warn', message: '那条笔记读不到了，已按空白草稿开始' })
+  }
+}
+
 onMounted(async () => {
   await loadDrafts()
   if (route.query.post) await loadPublished(route.query.post)
+  if (route.query.fromNote) await prefillFromNote(route.query.fromNote)
 })
 onUnmounted(() => {
   if (saveTimer) clearTimeout(saveTimer)
@@ -318,6 +372,15 @@ onUnmounted(() => {
           class="reveal" style="--d:.22s" :draft="body"
           @replace="applyCopilot" @insert="insertCopilot"
         />
+        <div class="side-card reveal" style="--d:.24s">
+          <h5>发射前检查</h5>
+          <ul class="checklist">
+            <li v-for="item in checklist" :key="item.label" :class="{ ok: item.ok }">
+              {{ item.ok ? '✓' : '·' }} {{ item.label }}
+            </li>
+          </ul>
+          <p class="checklist-hint">只提示，不会拦住发射 —— 发不发由你决定。</p>
+        </div>
         <div class="side-card reveal" style="--d:.26s">
           <div class="draft-head">
             <h5>未完的星 · 草稿</h5>
@@ -371,6 +434,10 @@ onUnmounted(() => {
 .series-select{height:28px; border:1px solid var(--line); border-radius:99px; background:var(--surface);
   color:var(--ink-dim); font:11px var(--font-mono); padding:0 10px; max-width:220px; cursor:pointer}
 .series-select:hover{border-color:var(--primary); color:var(--ink)}
+.checklist{list-style:none; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:8px}
+.checklist li{font-size:12px; line-height:1.7; color:var(--ink-faint)}
+.checklist li.ok{color:var(--teal)}
+.checklist-hint{margin-top:10px; font-size:10px; color:var(--ink-faint); opacity:.8}
 .mood{
   border:1px solid var(--line); background:var(--surface); border-radius:99px;
   padding:8px 16px; font-size:13px; color:var(--ink-dim); cursor:pointer;

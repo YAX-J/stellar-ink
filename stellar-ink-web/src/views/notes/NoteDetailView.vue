@@ -90,6 +90,10 @@ const environment = computed(() => {
   return items.filter(Boolean).join(' · ').slice(0, 140)
 })
 
+function toArticle() {
+  router.push({ path: '/write', query: { fromNote: note.value.id } })
+}
+
 async function markVerified() {
   if (!note.value || verifying.value) return
   verifying.value = true
@@ -231,6 +235,11 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
             v-if="canEdit" class="icon-btn"
             @click="router.push({ name: 'note-edit', query: { id: note.id } })"
           >✎ 编辑</button>
+          <button
+            v-if="canEdit" class="icon-btn"
+            title="把这条笔记扩写成一篇长文（会预填标题与正文，发布前请改成叙事结构）"
+            @click="toArticle"
+          >✎ 转成长文</button>
           <RouterLink v-if="canEdit" class="icon-btn" to="/notes/mine">我的笔记</RouterLink>
         </div>
 
