@@ -105,7 +105,7 @@ public class NoteController {
         return Response.success(noteService.detail(id));
     }
 
-    /** 新建笔记（默认私有草稿） */
+    /** 新建笔记（可见性缺省为公开，状态缺省为草稿） */
     @PostMapping
     public Response<Map<String, Long>> create(@Valid @RequestBody NoteCreateDTO dto) {
         AuthHelper.requireAtLeast(Role.AUTHOR);

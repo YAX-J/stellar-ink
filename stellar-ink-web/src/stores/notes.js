@@ -13,8 +13,8 @@ export const NOTE_TYPES = [
 export const NOTE_TYPE_MAP = Object.fromEntries(NOTE_TYPES.map((t) => [t.key, t]))
 
 export const VISIBILITY_OPTIONS = [
-  { key: 'PRIVATE', label: '私有', hint: '只有你自己能看到' },
-  { key: 'PUBLIC', label: '公开', hint: '出现在笔记列表与技术栈热度里' },
+  { key: 'PUBLIC', label: '公开', hint: '默认：出现在笔记列表、标签聚合与 RSS 里' },
+  { key: 'PRIVATE', label: '私有', hint: '只有你自己能看到，不进列表、标签与搜索' },
 ]
 
 /** 新建笔记的默认模板：把「结构」固化成习惯，同时让目录自动生成 */
@@ -286,8 +286,8 @@ export const useNoteStore = defineStore('notes', {
         content: body || '',
         tags: tags || [],
         noteType: noteType || 'FIX',
-        /* 草稿阶段就记住可见性选择，但状态固定为草稿 */
-        visibility: visibility || 'PRIVATE',
+        /* 草稿阶段就记住可见性选择，但状态固定为草稿。缺省公开 —— 与后端 defaultForCreate 同口径 */
+        visibility: visibility || 'PUBLIC',
         status: 0,
       }
       try {
@@ -314,7 +314,7 @@ export const useNoteStore = defineStore('notes', {
         content: body?.trim() || '',
         tags: tags || [],
         noteType: noteType || 'FIX',
-        visibility: visibility || 'PRIVATE',
+        visibility: visibility || 'PUBLIC',
         status: 1,
       }
       try {

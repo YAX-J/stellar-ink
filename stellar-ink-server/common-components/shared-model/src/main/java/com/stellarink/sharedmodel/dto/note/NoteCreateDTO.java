@@ -11,8 +11,9 @@ import java.util.List;
 /**
  * 新建笔记入参。长度上限对齐 note 表列宽（title 200 / content TEXT / tags 200）。
  *
- * <p>缺省值刻意保守：不传 visibility 就是 {@code PRIVATE}，不传 status 就是 {@code 0} 草稿，
- * 避免「随手新建一条笔记」意外公开。
+ * <p>缺省值：不传 visibility 即 {@code PUBLIC}（技术笔记默认要被读到），不传 status 即 {@code 0} 草稿。
+ * 「没传」与「传错」被刻意区别对待 —— 无法识别的可见性值仍回退 {@code PRIVATE}，
+ * 见 {@code NoteVisibility.defaultForCreate}。
  */
 @Data
 public class NoteCreateDTO {
@@ -31,7 +32,7 @@ public class NoteCreateDTO {
     /** FIX / PITFALL / TIL / SCRAP，缺省 FIX */
     private String noteType;
 
-    /** PUBLIC / PRIVATE，缺省 PRIVATE */
+    /** PUBLIC / PRIVATE，缺省 PUBLIC（传了无法识别的值则回退 PRIVATE） */
     private String visibility;
 
     /** 0 草稿 / 1 发布，缺省 0（草稿） */

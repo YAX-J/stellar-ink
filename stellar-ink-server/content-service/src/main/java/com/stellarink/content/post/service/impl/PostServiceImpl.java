@@ -115,10 +115,16 @@ public class PostServiceImpl implements PostService {
                 .eq(query.getStatus() != null, Post::getStatus, query.getStatus())
                 .apply(query.getYear() != null, "YEAR(created_at) = {0}", query.getYear())
                 .apply(StringUtils.hasText(tag), "FIND_IN_SET({0}, tags) > 0", tag)
+                /* 关键词也要命中标签：搜索框的占位文案承诺了「标签」，
+                 * 而技术读者最常搜的恰恰是标签词（redis / lettuce / druid）。
+                 * 标签列是逗号分隔的 VARCHAR，LIKE 子串匹配足够 —— 不做 FIND_IN_SET，
+                 * 那样只能整词命中，「redis 超时」这种组合词就搜不到了。 */
                 .and(StringUtils.hasText(query.getKeyword()), w -> w
                         .like(Post::getTitle, query.getKeyword())
                         .or()
-                        .like(Post::getContent, query.getKeyword()));
+                        .like(Post::getContent, query.getKeyword())
+                        .or()
+                        .like(Post::getTags, query.getKeyword()));
         /* 排序统一在 applyOrder 里加：MyBatis-Plus 对同一列只保留先加入的排序条件，
          * 若这里先写死 id 倒序，后面的 glow/wordCount 排序会被静默丢弃。 */
         applyOrder(wrapper, query.getOrderBy());

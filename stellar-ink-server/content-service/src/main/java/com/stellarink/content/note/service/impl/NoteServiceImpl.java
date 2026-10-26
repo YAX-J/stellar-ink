@@ -154,10 +154,13 @@ public class NoteServiceImpl implements NoteService {
         if (type != null) {
             wrapper.eq(Note::getNoteType, type.name());
         }
+        /* 与文章同一口径：关键词也命中标签（技术读者常直接搜技术栈名） */
         wrapper.and(StringUtils.hasText(query.getKeyword()), w -> w
                 .like(Note::getTitle, query.getKeyword())
                 .or()
-                .like(Note::getContent, query.getKeyword()));
+                .like(Note::getContent, query.getKeyword())
+                .or()
+                .like(Note::getTags, query.getKeyword()));
     }
 
     /**
@@ -217,7 +220,8 @@ public class NoteServiceImpl implements NoteService {
     @Override
     public Long create(NoteCreateDTO dto) {
         NoteType type = NoteType.parseOrDefault(dto.getNoteType());
-        NoteVisibility visibility = NoteVisibility.parseOrDefault(dto.getVisibility());
+        /* 未指定可见性时默认公开（技术笔记要被读到）；填错的值仍回退私有，见 NoteVisibility */
+        NoteVisibility visibility = NoteVisibility.defaultForCreate(dto.getVisibility());
         int status = dto.getStatus() != null ? dto.getStatus() : DRAFT;
         String content = status == DRAFT ? optionalContent(dto.getContent()) : requireContent(dto.getContent());
 

@@ -4,6 +4,7 @@
 --
 -- 说明：note 与 post 是两张独立表，边界不同：
 --   post 是「星」（文章，重文笔、天然公开）；note 是「标本」（技术笔记，结构化、可私有、会过期）。
+--   可见性**默认公开**（技术笔记的价值在于被读到）；写错的值在服务层仍回退私有，不复用这里的默认值兜底。
 -- 结构约定：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，
 --           由前端渲染成目录，不额外占用数据库列。
 -- =============================================================
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `note` (
     `content`     TEXT                                  COMMENT '正文（Markdown）',
     `tags`        VARCHAR(200)                          COMMENT '技术栈标签，逗号分隔',
     `note_type`   VARCHAR(20)  NOT NULL DEFAULT 'FIX'  COMMENT 'FIX 问题解决 / PITFALL 踩坑 / TIL 学习笔记 / SCRAP 碎片',
-    `visibility`  VARCHAR(20)  NOT NULL DEFAULT 'PRIVATE' COMMENT 'PUBLIC 公开 / PRIVATE 私有（仅作者可见）',
+    `visibility`  VARCHAR(20)  NOT NULL DEFAULT 'PUBLIC' COMMENT 'PUBLIC 公开（默认）/ PRIVATE 私有（仅作者可见）',
     `status`      TINYINT      NOT NULL DEFAULT 0      COMMENT '0 草稿 / 1 已发布',
     `word_count`  INT          DEFAULT 0               COMMENT '字数（正文去空白字符）',
     `view_count`  INT          NOT NULL DEFAULT 0      COMMENT '浏览量（仅公开笔记计数）',
@@ -36,7 +37,7 @@ SET @sql = IF(
     EXISTS(SELECT 1 FROM information_schema.COLUMNS
            WHERE TABLE_SCHEMA = @schema_name AND TABLE_NAME = 'note' AND COLUMN_NAME = 'visibility'),
     'SELECT 1',
-    'ALTER TABLE `note` ADD COLUMN `visibility` VARCHAR(20) NOT NULL DEFAULT ''PRIVATE'' COMMENT ''PUBLIC 公开 / PRIVATE 私有'' AFTER `note_type`'
+    'ALTER TABLE `note` ADD COLUMN `visibility` VARCHAR(20) NOT NULL DEFAULT ''PUBLIC'' COMMENT ''PUBLIC 公开（默认）/ PRIVATE 私有'' AFTER `note_type`'
 );
 PREPARE statement FROM @sql;
 EXECUTE statement;

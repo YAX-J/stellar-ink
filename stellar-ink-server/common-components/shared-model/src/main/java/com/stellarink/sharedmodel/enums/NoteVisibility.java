@@ -48,4 +48,19 @@ public enum NoteVisibility {
         NoteVisibility visibility = parse(value);
         return visibility == null ? PRIVATE : visibility;
     }
+
+    /**
+     * 新建笔记时的默认可见性：**未显式指定**（{@code null} / 空白）取 {@link #PUBLIC}。
+     *
+     * <p>技术笔记的价值在于被读到、被搜到、被复用；默认私有会让「写了很多、没人看得见」
+     * 变成一种沉默的默认结果 —— 这正是它此前只能算「私人标本册」而不是技术博客的原因。
+     *
+     * <p>但**写错的值**（例如客户端传了 "publick"）仍回退 {@link #PRIVATE}：
+     * 那是客户端 bug 的信号，宁可让这条笔记更隐蔽，也不能因为一个拼写错误把它公开出去。
+     * 所以这里刻意不复用 {@link #parseOrDefault} —— 两者对 null 的取舍相反，
+     * 混用会把「没填」与「填错」当成同一件事。
+     */
+    public static NoteVisibility defaultForCreate(String value) {
+        return value == null || value.isBlank() ? PUBLIC : parseOrDefault(value);
+    }
 }

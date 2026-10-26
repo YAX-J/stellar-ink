@@ -14,6 +14,7 @@ import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.post.mapper.PostViewMapper;
 import com.stellarink.sharedmodel.dto.note.NoteUpdateDTO;
 import com.stellarink.sharedmodel.dto.note.NoteQueryDTO;
+import com.stellarink.sharedmodel.dto.note.NoteCreateDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
 import com.stellarink.sharedmodel.enums.NoteType;
 import com.stellarink.sharedmodel.enums.NoteVisibility;
@@ -25,6 +26,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
@@ -85,6 +87,64 @@ class NoteServiceImplTest {
         NoteQueryDTO query = new NoteQueryDTO();
         query.setTag(" java ");
         assertThat(noteService.page(query).getRecords()).isEmpty();
+    }
+
+    @Test
+    void shouldSearchKeywordAcrossTitleContentAndTags() {
+        when(noteMapper.selectPage(
+                Mockito.<Page<Note>>any(), Mockito.<LambdaQueryWrapper<Note>>any()))
+                .thenAnswer(invocation -> {
+                    LambdaQueryWrapper<Note> wrapper = invocation.getArgument(1);
+                    assertThat(wrapper.getSqlSegment())
+                            .as("关键词要能命中标签：技术读者最常搜的就是技术栈名")
+                            .contains("tags");
+                    assertThat(wrapper.getParamNameValuePairs().values())
+                            .as("关键词要以 LIKE 通配形式落在 SQL 参数里（title / content / tags 各一次）")
+                            .contains("%lettuce%");
+                    return new Page<Note>(1, 10);
+                });
+
+        NoteQueryDTO query = new NoteQueryDTO();
+        query.setKeyword("lettuce");
+        assertThat(noteService.page(query).getRecords()).isEmpty();
+    }
+
+    @Test
+    void shouldPreferPublicWhenCreatingNoteWithoutVisibility() {
+        NoteCreateDTO dto = new NoteCreateDTO();
+        dto.setTitle("新笔记");
+        dto.setContent("## 结论\n默认公开。");
+        when(noteMapper.insert(any(Note.class))).thenReturn(1);
+        ArgumentCaptor<Note> captor = ArgumentCaptor.forClass(Note.class);
+
+        try (MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            auth.when(AuthHelper::loginId).thenReturn(10L);
+            noteService.create(dto);
+        }
+
+        verify(noteMapper).insert(captor.capture());
+        assertThat(captor.getValue().getVisibility())
+                .as("未传可见性时默认公开：技术笔记要能被读到、被搜到")
+                .isEqualTo(NoteVisibility.PUBLIC.name());
+    }
+
+    @Test
+    void shouldStayPrivateWhenVisibilityValueIsUnreadable() {
+        NoteCreateDTO dto = new NoteCreateDTO();
+        dto.setTitle("拼错可见性的笔记");
+        dto.setContent("## 结论\n写错的值不能把笔记意外公开。");
+        /* 客户端 bug 的典型形态：拼写错误、传了旧枚举名 */
+        dto.setVisibility("publick");
+        when(noteMapper.insert(any(Note.class))).thenReturn(1);
+        ArgumentCaptor<Note> captor = ArgumentCaptor.forClass(Note.class);
+
+        try (MockedStatic<AuthHelper> auth = Mockito.mockStatic(AuthHelper.class)) {
+            auth.when(AuthHelper::loginId).thenReturn(10L);
+            noteService.create(dto);
+        }
+
+        verify(noteMapper).insert(captor.capture());
+        assertThat(captor.getValue().getVisibility()).isEqualTo(NoteVisibility.PRIVATE.name());
     }
 
     @Test

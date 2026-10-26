@@ -22,7 +22,9 @@ const title = ref('')
 const body = ref('')
 const tagInput = ref('')
 const noteType = ref('FIX')
-const visibility = ref('PRIVATE')
+/* 新建笔记默认公开：技术笔记的价值在于被读到、被搜到（与后端 NoteVisibility.defaultForCreate 一致）。
+ * 私有仍然一键可切 —— 只是不再是「不用想就替你选好」的那一档。 */
+const visibility = ref('PUBLIC')
 const published = ref(false)
 const savedAt = ref(nowTime())
 const saving = ref(false)
@@ -147,6 +149,8 @@ async function loadNote(id) {
     body.value = detail.content || ''
     tagInput.value = detail.tags.join(', ')
     noteType.value = detail.noteType || 'FIX'
+    /* 读已有笔记时缺字段回退私有（保守）：这条数据本来是什么可见性我们不知道，
+     * 不能在打开一篇旧笔记时擅自把它从私有改成公开 */
     visibility.value = detail.visibility || 'PRIVATE'
     published.value = detail.status === 1
     savedAt.value = nowTime()
@@ -180,7 +184,7 @@ function newNote() {
   body.value = ''
   tagInput.value = ''
   noteType.value = 'FIX'
-  visibility.value = 'PRIVATE'
+  visibility.value = 'PUBLIC'
   published.value = false
   editorKey.value += 1
 }
