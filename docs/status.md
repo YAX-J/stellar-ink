@@ -36,6 +36,11 @@
 - 文章评论一期：公开列表 + 登录发表 + 作者或 ADMIN 软删除（正文 ≤1000 字）。
 - 技术笔记一期 + 复核：`note` 表与 `/notes` 接口、公开/私有两档可见性（**私有一律 404**，ADMIN 也不越权）、
   180 天时效由 `verified_at` 实时派生、`/notes/mine?view=review` 四档筛选与就地「仍然有效」。
+- **技术线收口（2026-10，P0）**：① 笔记**新建默认公开**（`NoteVisibility.defaultForCreate`；
+  传了读不懂的值仍回退私有），库级默认同步进 `22_note_visibility_default.sql`（不 UPDATE 历史数据）；
+  ② 文章与笔记的 `keyword` 都匹配**标签**，兑现搜索框「标题、正文、报错原文、标签」的承诺；
+  ③ 新增 SEO 出口 `GET /sitemap.xml` + `GET /feed.xml`（`SeoController`，裸 XML、不进 Redis 缓存、
+  绝对链接只来自 `stellar.ink.site.base-url`），网关路由与 Nginx 精确反代同步落地。
 - 作者申请闭环：`PUT /user/role-apply`（提交/覆盖）+ `/cancel`（撤回），审核队列复用 `GET /user/list`，
   通过与驳回都走 `PUT /user/{id}/role`。
 - 头像：图片 + 底字双轨；`stellar.ink.storage.type` 两档（`local` 本地磁盘 / `cos` 腾讯云 + CF Worker）；
@@ -47,6 +52,12 @@
 - 页面：此刻 / 执笔 / 星图 / 寻星 / 笔记（列表·我的·详情·编辑）/ 流星 / 回声 / 星链 / 深读 /
   登录 / 注册 / 账号 / 搜索 / 404；全部经网关取数（`api/client.js` + Pinia stores）。
 - 阅读体验：Markdown 渲染 + 目录 + 阅读设置 + 阅读位置记忆；未登录可浏览公开页。
+- **阅读侧代码块（2026-10）**：行号 + 语法高亮（`utils/highlight.js`，覆盖 java/js/sql/yaml/json/bash/html），
+  **高亮器只在正文真的出现代码块时动态 import**（首屏不含它），加载失败自动退回纯文本；
+  编辑器的 CodeMirror 高亮仍然只用于写作侧。
+- **每页 meta（2026-10）**：`composables/usePageMeta` 写 title / description / og / canonical，
+  `router.afterEach` 先 `resetPageMeta()` 回站点缺省值，避免从文章页返回首页还挂着上一篇的分享卡片；
+  文章页、笔记详情、笔记列表各自覆盖摘要。`public/robots.txt` 指向 sitemap。
 - 技术笔记编辑器：CodeMirror 6 Live Preview（光标行源码、其余行渲染），**只用于笔记**。
 - 写作侧 AI：Copilot 侧栏（6 个功能、行级差异预览、逐条采纳）+ 只读「我的写作画像」折叠块；
   深读页「问星笺」用 SSE 流式渲染。

@@ -21,7 +21,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 |---|---|---|---|
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` `/uploads/**` | user |
-| content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` | post / note / meteor / echo / link |
+| content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` `/sitemap.xml` `/feed.xml` | post / note / meteor / echo / link |
 | ai-service | 8107 | `/ai/**`（网关上已接入，见 §AI） | `ai_*`（模型配置等 AI 域表；不碰业务表） |
 | stellar-ink-ai（Python） | 8200 | **不配网关路由、不对外暴露**，仅 ai-service 在编排网络内调用 | ai_*（M3 起） |
 
@@ -145,11 +145,15 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | POST | `/posts/{postId}/comments` | 发表评论 `{content}`，返回评论 | 登录（READER） |
 | DELETE | `/posts/{postId}/comments/{commentId}` | 软删除评论 | 评论作者或 ADMIN |
 | GET | `/tags` | 标签计数（星图页的「标签星座」筛选用） | 公开 |
-| GET | `/search?keyword=` | 标题/正文搜索 | 公开 |
+| GET | `/search?keyword=` | 关键词搜索；匹配**标题 / 正文 / 标签** | 公开 |
 
 - `orderBy` 取值：`latest` 最新（默认）/ `hottest` 最受回望（按 `glow`）/ `longest` 篇幅最长；一律追加 `id` 倒序保证分页稳定
 - 公开文章列表、搜索与详情使用 Redis 旁路缓存（1 分钟）；新增、更新、删除时推进缓存版本。浏览量和点赞仍先持久化 MySQL，详情缓存随写失效，列表计数最多延迟一个 TTL。
 - `tag` 使用 `FIND_IN_SET` 按逗号分隔成员精确匹配；标签本身禁止包含逗号
+- `keyword` 同时匹配标题、正文与**标签**（标签列是逗号分隔的 VARCHAR，用 LIKE 子串匹配，
+  这样「redis 超时」这类组合词也能命中；不做整词匹配）。`/search` 只覆盖文章，
+  笔记走 `GET /notes?keyword=`（前端「寻星」页把两者合并展示，分别带「文章 / 笔记」分组）
+- 全站搜索的**相关性**目前仍是 `id` 倒序（最新优先），不是相关度排序 —— 语义检索见 AI 域
 - 所有分页接口要求 `page >= 1`、`1 <= size <= 100`，越界返回参数错误；总条数从 `IPage.total` 取
 - 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数；闸门抢占与计数更新处于同一事务
 - 点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id, user_id)`，重复点击 `applied=false` 且不重复计数）；未登录访客一次点击一次计数，`liked` 恒为 `false`
@@ -165,13 +169,18 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/notes/mine` | 我的笔记（含私有与草稿）；`status/visibility/noteType/keyword` | AUTHOR |
 | GET | `/notes/review` | 我的已发布笔记复核队列；`reviewState/visibility/noteType/keyword/page/size`，默认 `reviewState=DUE`。前端已并入 `/notes/mine?view=review` 视图，接口不变 | AUTHOR |
 | GET | `/notes/{id}` | 详情；**私有笔记仅作者本人可读，其他人一律 404** | 按可见性 |
-| POST | `/notes` | 新建 `{title, content, tags[], noteType, visibility, status}`；**缺省 `visibility=PRIVATE`、`status=0` 草稿** | AUTHOR |
+| POST | `/notes` | 新建 `{title, content, tags[], noteType, visibility, status}`；**缺省 `visibility=PUBLIC`、`status=0` 草稿**（未传可见性时公开；传了无法识别的值仍回退 `PRIVATE`，见 `NoteVisibility.defaultForCreate`） | AUTHOR |
 | PUT / DELETE | `/notes/{id}` | 更新 / 删除；**只有作者本人**（ADMIN 也不行） | AUTHOR |
 | PUT | `/notes/{id}/verify` | 标记「结论仍然有效」，返回 `{verifiedAt}` | AUTHOR |
 | POST | `/notes/{id}/viewed` | 记录一次浏览，返回 `{counted}` | 公开 |
 
 - `noteType` 取值：`FIX` 问题解决 ❖ / `PITFALL` 踩坑记录 ⚠ / `TIL` 学习笔记 ✦ / `SCRAP` 碎片 ☄
 - `visibility` 取值：`PUBLIC` 公开 / `PRIVATE` 私有；`orderBy` 取值：`latest` / `hottest`（按 `viewCount`）/ `longest`
+- **默认可见性是公开**（2026-10 起）：技术笔记的价值在于被读到；私有不再是「不用想就替你选好」的那一档。
+  但两种「不明确」刻意区别对待 —— **没传** → `PUBLIC`；**传了但读不懂**（如 `publick`）→ `PRIVATE`
+  （客户端 bug 不该把一条笔记意外公开出去）。库级默认值同步为 `PUBLIC`（`deploy/sql/22_note_visibility_default.sql`，
+  只影响未来插入且未显式写该列的行，不 UPDATE 任何历史数据）
+- `keyword` 同时匹配标题、正文与标签（与文章同一口径）
 - **结构约定**：正文用 `## 现象 / ## 环境 / ## 排查 / ## 结论 / ## 参考` 章节表达，前端据此自动生成目录，不额外占用数据库列；列表 `summary` 优先截取「结论」章节
 - **私有隔离（硬性约束）**：`PRIVATE` 笔记不得出现在公开列表、标签聚合与搜索里；详情对非作者返回 404（不是 403，避免枚举存在性）；**ADMIN 也读不到他人私有笔记**
 - 公开笔记列表与详情使用 Redis 旁路缓存（1 分钟）；草稿、私有笔记、我的列表和复核队列不缓存。更新可见性、发布状态、正文或验证时间后推进缓存版本。
@@ -213,6 +222,24 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | GET | `/stats/overview` | 写作脉搏：totalPosts / totalWords / todayWords / streakDays / nightRatio / tagDistribution（**全站统计，不区分用户**） | 公开 |
 
 公开评论、回声使用 30 秒缓存；公开流星分页使用 1 分钟缓存；标签、已通过友链和写作统计使用 5 分钟缓存。相应写操作成功后立即失效。普通缓存读取失败会回源 MySQL，接口格式和错误语义不变。
+
+### content-service :8102 - SEO 出口（sitemap / RSS）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/sitemap.xml` | 公开可索引 URL 清单：首页、`/notes`、`/archive` + 全部已发布文章 + 全部公开已发布笔记（带 `lastmod`）。上限 1000 条 | 公开 |
+| GET | `/feed.xml` | RSS 2.0：文章与公开笔记合并、按创建时间倒序、最多 30 条 | 公开 |
+
+- 返回的是**裸 XML**（`application/xml` / `application/rss+xml`），不是 `{code,msg,data}` ——
+  爬虫与订阅器不解析统一响应体。
+- 绝对链接来自配置 `stellar.ink.site.base-url`（环境变量 `SITE_BASE_URL`，默认 `https://stellar.ink`）。
+  **不拼 `Host` / `X-Forwarded-*`**：同一个服务会经 Cloudflare、直连 IP、本机三种入口被访问，
+  拼出来的域名一旦是内网名或 IP，整份地图与订阅就都落在错误域名上。
+- 不进 Redis 读模型缓存（直接查库）：爬虫流量远低于页面，换来的是「文章一发出去就出现在地图里」。
+- 生产链路上还有两处必须一起存在，缺一处就退化成「返回 200 的 HTML」：
+  ① 网关 `content-service` 路由的 `Path` 里显式列出 `/sitemap.xml,/feed.xml`；
+  ② Nginx 为这两个精确路径反代到网关（否则落到 SPA 的 `try_files … /index.html`）。
+- 静态 `robots.txt` 在 `stellar-ink-web/public/robots.txt`（由 Nginx 直接托管），指向本 sitemap。
 
 ### ai-service :8107 - AI（A1：探活 + 模型配置面板；C：评测台）
 

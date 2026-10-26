@@ -418,6 +418,17 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - 技术笔记口径：`note.visibility` 为 `PRIVATE` 时**只有作者本人可读**，其他人（含 ADMIN）读详情一律 404，
   且不得出现在公开列表、标签聚合与搜索里；`note` 的归属判定 `ensureOwned` **比文章更严格**
   —— 只有作者本人能改/删，ADMIN 也不能操作他人笔记。
+  **新建默认公开**（`NoteVisibility.defaultForCreate`：未传 → PUBLIC，传了读不懂 → PRIVATE），
+  库级默认同步为 PUBLIC（`deploy/sql/22_note_visibility_default.sql`）；别再把「默认私有」当成有意设计。
+- **搜索必须命中标签**：文章与笔记的 `keyword` 都匹配 标题 / 正文 / `tags`（LIKE 子串，不做整词），
+  因为搜索框承诺了「标签」，而技术读者最常搜的恰恰是技术栈名。改关键词逻辑时两处一起改。
+- **SEO 出口（sitemap / feed）有四个必须同时成立的落点**，少一个就变成「返回 200 的 HTML」：
+  content-service 的 `SeoController` → 网关 `Path` 显式列 `/sitemap.xml,/feed.xml` →
+  Nginx 精确 `location` 反代 → 前端 `public/robots.txt` 指过去。
+  绝对链接只来自 `stellar.ink.site.base-url`，**不要拼 `Host`/`X-Forwarded-*`**（三种入口域名不同）。
+- **每页 meta 走 `composables/usePageMeta`**：`router.afterEach` 先 `resetPageMeta()` 回站点缺省值，
+  页面在自己的 setup 里传**函数**覆盖（正文异步到达后标题与摘要要跟着变）。
+  不要在视图里手写 `document.head` 操作。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 - **种子数据的 id 必须与时间同向递增**：文章/笔记/流星/回声的默认列表是 `ORDER BY id DESC`
   （见 `PostServiceImpl.applyOrder` 的 latest），id 与 `created_at` 反向排列会让首页「最近星尘」、
