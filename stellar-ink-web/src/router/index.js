@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { resetPageMeta } from '@/composables/usePageMeta'
 
 const routes = [
   { path: '/', name: 'home', component: () => import('@/views/home/HomeView.vue'), meta: { title: '此刻' } },
@@ -51,6 +52,9 @@ router.beforeEach((to) => {
 
 router.afterEach((to) => {
   document.title = to.meta.title ? `星笺 · ${to.meta.title}` : '星笺 · STELLAR INK'
+  /* 先把 head 里的标题/摘要/canonical 恢复成站点缺省值，
+   * 具体页面再在自己的 setup 里用 usePageMeta 覆盖（否则会残留上一页的分享卡片） */
+  resetPageMeta()
 })
 
 export default router

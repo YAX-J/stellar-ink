@@ -13,6 +13,7 @@ import { locateEvidence } from '@/utils/wiki'
 import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
+import { usePageMeta } from '@/composables/usePageMeta'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
@@ -33,6 +34,16 @@ const wikiStore = useWikiStore()
 const post = computed(() => postStore.byId(route.params.id))
 const prevPost = computed(() => post.value?.prev || null)
 const nextPost = computed(() => post.value?.next || null)
+
+/* 分享卡片与搜索结果里显示什么：标题 + 正文摘要（excerpt 来自详情接口），
+ * 传函数而不是对象 —— 正文是异步取回来的，对象会永远停在「加载中」那一版 */
+usePageMeta(() => ({
+  title: post.value?.title || '深读',
+  description: post.value?.excerpt || post.value?.content || '',
+  type: 'article',
+  url: `${location.origin}/read/${post.value?.id || route.params.id}`,
+}))
+
 const canEdit = computed(() => auth.isAdmin || (
   auth.isAuthorOrAbove && Number(auth.user?.id) === Number(post.value?.userId)
 ))

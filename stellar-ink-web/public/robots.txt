@@ -1,0 +1,15 @@
+# 星笺 · STELLAR INK
+# 只放行公开内容页；个人管理页与 AI 实验室对爬虫没有价值，且 /notes/mine 需要登录。
+# Sitemap 由 content-service 动态生成（经 Nginx 反代 / 网关），因此这里指向它即可。
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /register
+Disallow: /account
+Disallow: /write
+Disallow: /notes/mine
+Disallow: /ai-lab
+
+# 测试机用 IP 直连时这份文件同样会被访问到，Sitemap 指向生产域名会白白浪费抓取预算；
+# 换域名部署时记得同步改这里（或只在生产镜像里保留）。
+Sitemap: https://stellar.ink/sitemap.xml

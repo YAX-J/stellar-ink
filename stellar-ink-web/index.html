@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>星笺 · STELLAR INK — 把思绪挂成星图</title>
+<!-- 站点级缺省元信息：具体页面（文章 / 笔记 / 笔记列表）会在 setup 里用
+     composables/usePageMeta.js 覆盖标题、摘要与 canonical。
+     这里必须有值 —— 从文章页跳回首页时，resetPageMeta() 会把它们恢复成这一份。 -->
+<meta name="description" content="把文章比作星辰的夜间写作与技术笔记博客：随笔、技术笔记与星图。">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="星笺 · STELLAR INK">
+<meta property="og:title" content="星笺 · STELLAR INK — 把思绪挂成星图">
+<meta property="og:description" content="把文章比作星辰的夜间写作与技术笔记博客：随笔、技术笔记与星图。">
+<link rel="alternate" type="application/rss+xml" title="星笺 · STELLAR INK" href="/feed.xml">
 <!-- 字体分两路：
      · 拉丁（Space Grotesk / JetBrains Mono）：已自托管，见 src/styles/fonts.css（合计约 205KB，按 unicode-range 分片按需下载）
      · 中文（Noto Sans SC / Noto Serif SC）：单字重 4.4-5.9 MB，不适合进仓库，仍走 Google Fonts；

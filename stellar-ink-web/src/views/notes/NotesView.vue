@@ -5,11 +5,19 @@ import { useNoteStore, NOTE_TYPES } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
 import NoteCard from '@/components/post/NoteCard.vue'
+import { usePageMeta } from '@/composables/usePageMeta'
 
 const route = useRoute()
 const router = useRouter()
 const noteStore = useNoteStore()
 const auth = useAuthStore()
+
+/* 技术笔记列表页的摘要：这一页是技术内容的总入口，值得有独立的 description */
+usePageMeta({
+  title: '技术笔记',
+  description: '现象 / 环境 / 排查 / 结论 / 参考：按技术栈与笔记类型整理的实战记录，每条结论都有验证时间。',
+  url: `${location.origin}/notes`,
+})
 
 const keyword = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const activeTag = ref(typeof route.query.tag === 'string' ? route.query.tag : '')

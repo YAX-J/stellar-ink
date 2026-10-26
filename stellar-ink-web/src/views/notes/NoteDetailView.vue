@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { fmt } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
+import { usePageMeta } from '@/composables/usePageMeta'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
 
@@ -20,6 +21,15 @@ const note = computed(() => noteStore.byId(route.params.id))
 const rendered = computed(() => parseMarkdown(note.value?.content || ''))
 const blocks = computed(() => rendered.value.blocks)
 const toc = computed(() => rendered.value.toc)
+
+/* 技术笔记是本站最该被搜索引擎收录的内容类型：摘要优先用「结论」那一段
+ * （列表接口已按此口径产出 excerpt），拿不到再退回正文开头 */
+usePageMeta(() => ({
+  title: note.value?.title || '技术笔记',
+  description: note.value?.excerpt || note.value?.content || '',
+  type: 'article',
+  url: `${location.origin}/note/${note.value?.id || route.params.id}`,
+}))
 
 const isOwner = computed(() => auth.isLoggedIn && Number(auth.user?.id) === Number(note.value?.userId))
 /* 只有作者能改删；私有笔记对其他人根本读不到（后端 404） */
