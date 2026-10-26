@@ -14,6 +14,9 @@ const routes = [
   { path: '/meteor', name: 'meteor', component: () => import('@/views/meteor/MeteorView.vue'), meta: { title: '流星' } },
   { path: '/echo', name: 'echo', component: () => import('@/views/echo/EchoView.vue'), meta: { title: '回声' } },
   { path: '/links', name: 'links', component: () => import('@/views/links/LinksView.vue'), meta: { title: '星链' } },
+  /* 系列是「内容的分组维度」，按导航规则不占一级位：入口在星图与笔记页 */
+  { path: '/series', name: 'series', component: () => import('@/views/series/SeriesListView.vue'), meta: { title: '系列' } },
+  { path: '/series/:id', name: 'series-detail', component: () => import('@/views/series/SeriesDetailView.vue'), meta: { title: '系列' } },
   /* 三个被合并掉的页面保留旧路径跳转，老书签/分享链接不会撞到 404 */
   { path: '/notes/review', redirect: { name: 'notes-mine', query: { view: 'review' } } },
   { path: '/spectrum', redirect: { name: 'archive' } },

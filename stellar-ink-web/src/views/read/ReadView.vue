@@ -383,6 +383,16 @@ onUnmounted(() => {
           <span v-if="post.tags.length">#{{ post.tags.join(' #') }}</span>
         </div>
 
+        <!-- 系列：只在这颗星属于某个系列时出现；index 为空说明它是草稿或未公开篇目 -->
+        <RouterLink v-if="post.series" class="series-strip reveal" style="--d:.14s" :to="`/series/${post.series.id}`">
+          <span class="ss-label">系列</span>
+          <span class="ss-title">{{ post.series.title }}</span>
+          <span class="ss-pos mono">
+            <template v-if="post.series.index">第 {{ post.series.index }} 篇 / 共 {{ post.series.total }} 篇</template>
+            <template v-else>共 {{ post.series.total }} 篇</template>
+          </span>
+        </RouterLink>
+
         <div ref="readBody" class="read-body reveal" style="--d:.18s">
           <MarkdownBody :blocks="blocks" empty-text="这颗星还没有留下正文。" />
         </div>
@@ -694,6 +704,15 @@ onUnmounted(() => {
 .toc-item.on{color:var(--primary); background:var(--primary-soft); box-shadow:inset 2px 0 0 var(--primary)}
 
 /* 顶部工具条：返回 + 阅读设置同排，贴在一起，不再各占一行留出大片空白 */
+/* 系列徽章：一条细横条，不抢标题；点击进入系列目录 */
+.series-strip{display:inline-flex; align-items:center; gap:10px; margin:14px 0 0; padding:7px 14px;
+  border:1px solid var(--line); border-radius:99px; background:var(--surface); color:var(--ink-dim);
+  font-size:12px; text-decoration:none; transition:border-color .2s var(--ease-standard)}
+.series-strip:hover{border-color:var(--primary); color:var(--ink)}
+.ss-label{font-family:var(--font-mono); font-size:10px; letter-spacing:.2em; color:var(--ink-faint)}
+.ss-title{font-family:var(--font-serif); font-weight:700; color:var(--ink)}
+.ss-pos{font-size:10px; letter-spacing:.08em; color:var(--ink-faint)}
+
 .read-bar{display:flex; align-items:center; justify-content:space-between; gap:16px;
   flex-wrap:wrap; margin-bottom:18px; max-width:var(--prose-max,100%)}
 .read-back{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);

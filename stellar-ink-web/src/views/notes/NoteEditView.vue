@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue
 import { useRoute, useRouter } from 'vue-router'
 import { useNoteStore, NOTE_TYPES, VISIBILITY_OPTIONS, NOTE_TEMPLATE } from '@/stores/notes'
 import { useAuthStore } from '@/stores/auth'
+import { useSeriesStore } from '@/stores/series'
 import { emit, TOAST } from '@/utils/bus'
 import { countWords } from '@/utils/wordCount'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -16,6 +17,13 @@ const noteStore = useNoteStore()
 const auth = useAuthStore()
 
 const canWrite = computed(() => auth.isLoggedIn && auth.isAuthorOrAbove)
+
+/* 系列：0 表示「不归系列」。只列自己的系列 —— 别人的系列不该出现在我的选择器里 */
+const seriesStore = useSeriesStore()
+const seriesId = ref(0)
+const seriesOptions = computed(() => seriesStore.list.filter(
+  (item) => Number(item.userId) === Number(auth.user?.id),
+))
 
 const noteId = ref(null)
 const title = ref('')
@@ -118,6 +126,7 @@ async function saveDraft() {
       tags: tags.value,
       noteType: noteType.value,
       visibility: visibility.value,
+      seriesId: seriesId.value || 0,
     })
     savedAt.value = nowTime()
     saveFailed.value = false
@@ -152,6 +161,7 @@ async function loadNote(id) {
     /* 读已有笔记时缺字段回退私有（保守）：这条数据本来是什么可见性我们不知道，
      * 不能在打开一篇旧笔记时擅自把它从私有改成公开 */
     visibility.value = detail.visibility || 'PRIVATE'
+    seriesId.value = detail.series?.id ? Number(detail.series.id) : 0
     published.value = detail.status === 1
     savedAt.value = nowTime()
     /* 换一篇笔记就重建编辑器实例：比往旧文档里灌内容更稳，不会留下错误的光标/撤销栈 */
@@ -185,6 +195,7 @@ function newNote() {
   tagInput.value = ''
   noteType.value = 'FIX'
   visibility.value = 'PUBLIC'
+  seriesId.value = 0
   published.value = false
   editorKey.value += 1
 }
@@ -211,6 +222,7 @@ async function publish() {
       tags: tags.value,
       noteType: noteType.value,
       visibility: visibility.value,
+      seriesId: seriesId.value || 0,
     })
     noteId.value = id
     published.value = true
@@ -241,6 +253,7 @@ async function removeNote() {
 }
 
 onMounted(async () => {
+  if (canWrite.value) seriesStore.fetchList().catch(() => {})
   await loadMine()
   if (route.query.id) await loadNote(route.query.id)
 })
@@ -288,6 +301,15 @@ onUnmounted(() => {
               :title="v.hint" @click="visibility = v.key; scheduleSave()"
             >{{ v.key === 'PRIVATE' ? '🔒' : '◉' }} {{ v.label }}</button>
           </div>
+          <!-- 系列：0 表示不归系列；只列自己的系列 -->
+          <select
+            v-if="seriesOptions.length" v-model.number="seriesId"
+            class="series-select" title="把这个系列串成一条阅读线"
+            @change="scheduleSave()"
+          >
+            <option :value="0">不归系列</option>
+            <option v-for="s in seriesOptions" :key="s.id" :value="s.id">{{ s.title }}</option>
+          </select>
         </div>
 
         <input v-model="title" class="title-input" placeholder="标题：建议直接写报错原文或一句话症状" @input="onInput">
@@ -381,6 +403,10 @@ onUnmounted(() => {
   background:linear-gradient(180deg,var(--bg-2),var(--bg)); padding:clamp(24px,3.2vw,42px);
   display:flex; flex-direction:column; min-height:70vh}
 .desk-top{display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:22px}
+.series-select{height:28px; border:1px solid var(--line); border-radius:99px;
+  background:var(--surface); color:var(--ink-dim); font:11px var(--font-mono); padding:0 10px;
+  max-width:190px; cursor:pointer}
+.series-select:hover{border-color:var(--primary); color:var(--ink)}
 .type-row,.vis-row{display:flex; gap:8px; flex-wrap:wrap}
 .type-chip,.vis-chip{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim);
   border-radius:99px; padding:7px 14px; font-size:12px; cursor:pointer;

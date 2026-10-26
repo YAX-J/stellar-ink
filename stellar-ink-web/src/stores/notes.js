@@ -279,7 +279,7 @@ export const useNoteStore = defineStore('notes', {
     },
 
     /** 保存草稿（自动保存走这里）：返回笔记 id */
-    async saveDraft({ id, title, body, tags, noteType, visibility }) {
+    async saveDraft({ id, title, body, tags, noteType, visibility, seriesId }) {
       this.error = ''
       const payload = {
         title: title?.trim() || '未命名笔记',
@@ -290,6 +290,7 @@ export const useNoteStore = defineStore('notes', {
         visibility: visibility || 'PUBLIC',
         status: 0,
       }
+      if (seriesId !== undefined) payload.seriesId = seriesId
       try {
         if (id) {
           await request(`/notes/${Number(id)}`, { method: 'PUT', body: payload })
@@ -307,7 +308,7 @@ export const useNoteStore = defineStore('notes', {
     },
 
     /** 发布（自动保存只在草稿态发生，发布必须由作者显式触发） */
-    async publish({ id, title, body, tags, noteType, visibility }) {
+    async publish({ id, title, body, tags, noteType, visibility, seriesId }) {
       this.error = ''
       const payload = {
         title: title?.trim() || '未命名笔记',
@@ -317,6 +318,7 @@ export const useNoteStore = defineStore('notes', {
         visibility: visibility || 'PUBLIC',
         status: 1,
       }
+      if (seriesId !== undefined) payload.seriesId = seriesId
       try {
         if (id) {
           await request(`/notes/${Number(id)}`, { method: 'PUT', body: payload })

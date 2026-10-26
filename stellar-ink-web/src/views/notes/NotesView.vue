@@ -114,6 +114,7 @@ watch(() => route.query, (query) => {
         <button :class="{ on: view === 'list' }" @click="view = 'list'">☰ 全部</button>
       </div>
       <RouterLink v-if="canWrite" class="btn btn-primary write-note" to="/note/edit">✎ 写一条笔记</RouterLink>
+      <RouterLink class="btn btn-ghost" to="/series">系列</RouterLink>
       <RouterLink v-if="auth.isLoggedIn" class="btn btn-ghost" to="/notes/mine">我的笔记</RouterLink>
     </div>
 

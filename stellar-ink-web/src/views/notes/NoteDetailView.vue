@@ -179,6 +179,16 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
           <span v-for="t in note.tags" :key="t" class="meta-tag">{{ t }}</span>
         </div>
 
+        <!-- 系列：私有/草稿笔记的 index 为空，只显示总数，不编造位置 -->
+        <RouterLink v-if="note.series" class="series-strip" :to="`/series/${note.series.id}`">
+          <span class="ss-label">系列</span>
+          <span class="ss-title">{{ note.series.title }}</span>
+          <span class="ss-pos mono">
+            <template v-if="note.series.index">第 {{ note.series.index }} 篇 / 共 {{ note.series.total }} 篇</template>
+            <template v-else>共 {{ note.series.total }} 篇</template>
+          </span>
+        </RouterLink>
+
         <!-- 验证状态：笔记最容易失效的地方，单独一行显式呈现 -->
         <div class="verify-row" :class="{ stale: verifyInfo.stale }">
           <span class="verify-dot" aria-hidden="true"></span>
@@ -261,6 +271,15 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
   border-radius:99px; padding:8px 18px; font-size:13px; cursor:pointer; margin-bottom:18px;
   transition:all .25s; font-family:var(--font-body)}
 .read-back:hover{color:var(--primary); border-color:var(--primary); transform:translateX(-3px)}
+
+/* 系列徽章：一条细横条，不抢标题；点击进入系列目录 */
+.series-strip{display:inline-flex; align-items:center; gap:10px; margin:14px 0 0; padding:7px 14px;
+  border:1px solid var(--line); border-radius:99px; background:var(--surface); color:var(--ink-dim);
+  font-size:12px; text-decoration:none; transition:border-color .2s var(--ease-standard)}
+.series-strip:hover{border-color:var(--primary); color:var(--ink)}
+.ss-label{font-family:var(--font-mono); font-size:10px; letter-spacing:.2em; color:var(--ink-faint)}
+.ss-title{font-family:var(--font-serif); font-weight:700; color:var(--ink)}
+.ss-pos{font-size:10px; letter-spacing:.08em; color:var(--ink-faint)}
 
 .note-head{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
 .nh-type{font-family:var(--font-mono); font-size:11px; letter-spacing:.2em; color:var(--teal)}
