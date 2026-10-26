@@ -155,7 +155,7 @@ export const usePostStore = defineStore('posts', {
       }
     },
 
-    async saveDraft({ id, title, body, tag }) {
+    async saveDraft({ id, title, body, tag, seriesId }) {
       this.error = ''
       const payload = {
         title: title?.trim() || '未命名草稿',
@@ -163,6 +163,7 @@ export const usePostStore = defineStore('posts', {
         tags: tag ? [tag] : [],
         status: 0,
       }
+      if (seriesId !== undefined) payload.seriesId = seriesId
       try {
         if (id) {
           await request('/posts/' + Number(id), { method: 'PUT', body: payload })
@@ -179,7 +180,7 @@ export const usePostStore = defineStore('posts', {
       }
     },
 
-    async publishDraft({ id, title, body, tag }) {
+    async publishDraft({ id, title, body, tag, seriesId }) {
       this.error = ''
       const payload = {
         title: title?.trim() || '无题的一夜',
@@ -187,13 +188,14 @@ export const usePostStore = defineStore('posts', {
         tags: tag ? [tag] : [],
         status: 1,
       }
+      if (seriesId !== undefined) payload.seriesId = seriesId
       try {
         if (id) {
           await request('/posts/' + Number(id), { method: 'PUT', body: payload })
           await this.fetchDetail(id)
           return Number(id)
         }
-        return this.publish({ title, body, tag })
+        return this.publish({ title, body, tag, seriesId })
       } catch (error) {
         this.error = error.message
         throw error
@@ -213,7 +215,7 @@ export const usePostStore = defineStore('posts', {
       }
     },
 
-    async publish({ title, body, tag }) {
+    async publish({ title, body, tag, seriesId }) {
       this.error = ''
       try {
         const data = await request('/posts', {
@@ -223,6 +225,7 @@ export const usePostStore = defineStore('posts', {
             content: body?.trim() || '',
             tags: tag ? [tag] : [],
             status: 1,
+            ...(seriesId !== undefined ? { seriesId } : {}),
           },
         })
         const id = Number(data?.id)

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePostStore } from '@/stores/posts'
 import { useAuthStore } from '@/stores/auth'
+import { useSeriesStore } from '@/stores/series'
 import { PROMPTS } from '@/api/mock'
 import { countWords } from '@/utils/wordCount'
 import { MAX_TITLE_LENGTH } from '@/utils/copilot-action'
@@ -14,6 +15,16 @@ const router = useRouter()
 const route = useRoute()
 const postStore = usePostStore()
 const auth = useAuthStore()
+const seriesStore = useSeriesStore()
+
+/* 系列：0 = 不归系列；只列自己的系列（别人的系列不该出现在我的选择器里） */
+const seriesId = ref(0)
+const seriesOptions = computed(() => seriesStore.list.filter(
+  (item) => Number(item.userId) === Number(auth.user?.id),
+))
+onMounted(() => {
+  if (canWrite.value) seriesStore.fetchList().catch(() => {})
+})
 
 /* 读者（或未登录）进入执笔舱时给明确说明，而不是被静默重定向 */
 const canWrite = computed(() => auth.isLoggedIn && auth.isAuthorOrAbove)
@@ -79,6 +90,7 @@ async function saveDraft() {
       title: title.value,
       body: body.value,
       tag: activeMood.value.tag,
+      seriesId: seriesId.value || 0,
     })
     savedAt.value = nowTime()
     saveFailed.value = false
@@ -151,6 +163,7 @@ async function startNewDraft() {
   title.value = ''
   body.value = ''
   activeMood.value = moods[0]
+  seriesId.value = 0
 }
 async function loadPublished(id) {
   try {
@@ -161,6 +174,7 @@ async function loadPublished(id) {
     body.value = detail.content || ''
     const mood = moods.find((item) => item.tag === detail.tags?.[0])
     if (mood) activeMood.value = mood
+    seriesId.value = detail.series?.id ? Number(detail.series.id) : 0
   } catch {
     router.replace('/archive')
   }
@@ -177,7 +191,13 @@ async function launch() {
   if (saveTimer) clearTimeout(saveTimer)
   publishing.value = true
   try {
-    await postStore.publishDraft({ id: draftId.value, title: title.value, body: body.value, tag: activeMood.value.tag })
+    await postStore.publishDraft({
+      id: draftId.value,
+      title: title.value,
+      body: body.value,
+      tag: activeMood.value.tag,
+      seriesId: seriesId.value || 0,
+    })
     emit(TOAST, { type: 'success', message: editingPublished.value ? '这颗星已更新' : '已发射到星图' })
     router.push('/archive')
   } catch {
@@ -260,6 +280,14 @@ onUnmounted(() => {
             class="mood" :class="{ on: activeMood === m }" @click="selectMood(m)"
           >{{ m.label }}</button>
         </div>
+        <!-- 系列：0 = 不归系列；只有自己建过系列时才出现 -->
+        <div v-if="seriesOptions.length" class="series-row">
+          <span class="series-hint">系列</span>
+          <select v-model.number="seriesId" class="series-select" @change="scheduleSave()">
+            <option :value="0">不归系列</option>
+            <option v-for="s in seriesOptions" :key="s.id" :value="s.id">{{ s.title }}</option>
+          </select>
+        </div>
         <input v-model="title" class="title-input" placeholder="给今晚的思绪起个名字…" @input="onInput">
         <div class="quill-line"></div>
         <textarea
@@ -338,6 +366,11 @@ onUnmounted(() => {
   background:radial-gradient(600px 300px at 85% -10%,var(--mood,var(--primary-soft)),transparent 70%);
 }
 .mood-row{display:flex; gap:10px; margin-bottom:26px; flex-wrap:wrap; position:relative}
+.series-row{display:flex; align-items:center; gap:8px; margin:-16px 0 18px}
+.series-hint{font-family:var(--font-mono); font-size:10px; letter-spacing:.2em; color:var(--ink-faint)}
+.series-select{height:28px; border:1px solid var(--line); border-radius:99px; background:var(--surface);
+  color:var(--ink-dim); font:11px var(--font-mono); padding:0 10px; max-width:220px; cursor:pointer}
+.series-select:hover{border-color:var(--primary); color:var(--ink)}
 .mood{
   border:1px solid var(--line); background:var(--surface); border-radius:99px;
   padding:8px 16px; font-size:13px; color:var(--ink-dim); cursor:pointer;

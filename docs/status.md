@@ -43,10 +43,9 @@
   绝对链接只来自 `stellar.ink.site.base-url`），网关路由与 Nginx 精确反代同步落地。
 - **系列/专栏（P1）**：`series` 表 + `post/note` 的 `series_id/series_order`（`23_series.sql`），
   `/series` 列表/详情/增改删、内容保存时挂载（`null` 不改 / `0` 移出 / `>0` 挂载），
-  详情 VO 带 `series` 徽章 `{id,title,index,total}`。前端：`/series` 列表（作者可就地新建）、
-  `/series/:id` 详情（按序篇目 + 创建者可删）、深读页与笔记详情页的系列徽章、
-  笔记编辑页的系列选择（含「不归系列」）、笔记页「系列」入口。
-  **未接**：执笔页（文章）的系列选择 —— 文章的系列只能先经 API 指定。
+  **前端**：`/series` 列表（作者可就地新建）、`/series/:id` 详情（按序篇目 + 创建者可删）、
+  深读页与笔记详情页的系列徽章、笔记编辑页与**执笔页**的系列选择（含「不归系列」）、笔记页「系列」入口；
+  系列服务 4 个单测盯住归属/排序/计数。**未做**：星图入口。
 - 作者申请闭环：`PUT /user/role-apply`（提交/覆盖）+ `/cancel`（撤回），审核队列复用 `GET /user/list`，
   通过与驳回都走 `PUT /user/{id}/role`。
 - 头像：图片 + 底字双轨；`stellar.ink.storage.type` 两档（`local` 本地磁盘 / `cos` 腾讯云 + CF Worker）；
