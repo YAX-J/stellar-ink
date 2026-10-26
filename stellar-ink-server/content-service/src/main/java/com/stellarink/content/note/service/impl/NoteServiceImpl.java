@@ -88,6 +88,13 @@ public class NoteServiceImpl implements NoteService {
         return cached.toPage();
     }
 
+    @Override
+    public IPage<NoteVO> search(String keyword, Integer page, Integer size) {
+        Pagination.requireValid(page, size);
+        /* 不进缓存（关键词维度无限）；排序与「已发布 + 公开」都在 NoteMapper.searchPage 里 */
+        return noteMapper.searchPage(new Page<>(page, size), keyword).convert(this::toVO);
+    }
+
     private IPage<NoteVO> loadPublicPage(NoteQueryDTO query) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getStatus, PUBLISHED)

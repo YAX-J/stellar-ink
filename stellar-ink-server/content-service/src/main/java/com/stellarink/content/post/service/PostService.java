@@ -13,6 +13,12 @@ public interface PostService {
     /** 分页查询（星图 / 星尘卡片 / 长卷共用） */
     IPage<PostVO> page(PostQueryDTO query);
 
+    /**
+     * 关键词搜索：按相关度排序（标题 &gt; 标签 &gt; 正文），而不是 id 倒序。
+     * 与 {@link #page} 分开：搜索只有关键词一个条件，不该背上年份/标签/排序档位。
+     */
+    IPage<PostVO> search(String keyword, Integer page, Integer size);
+
     /** 当前作者自己的草稿列表 */
     IPage<PostVO> mine(PostQueryDTO query);
 

@@ -145,7 +145,8 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 | POST | `/posts/{postId}/comments` | 发表评论 `{content}`，返回评论 | 登录（READER） |
 | DELETE | `/posts/{postId}/comments/{commentId}` | 软删除评论 | 评论作者或 ADMIN |
 | GET | `/tags` | 标签计数（星图页的「标签星座」筛选用） | 公开 |
-| GET | `/search?keyword=` | 关键词搜索；匹配**标题 / 正文 / 标签** | 公开 |
+| GET | `/search?keyword=` | 关键词搜索（文章）；匹配**标题 / 正文 / 标签**，按相关度排序 | 公开 |
+| GET | `/search/notes?keyword=` | 关键词搜索（公开笔记）；同一套相关度口径 | 公开 |
 
 - `orderBy` 取值：`latest` 最新（默认）/ `hottest` 最受回望（按 `glow`）/ `longest` 篇幅最长；一律追加 `id` 倒序保证分页稳定
 - 公开文章列表、搜索与详情使用 Redis 旁路缓存（1 分钟）；新增、更新、删除时推进缓存版本。浏览量和点赞仍先持久化 MySQL，详情缓存随写失效，列表计数最多延迟一个 TTL。
@@ -153,7 +154,11 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - `keyword` 同时匹配标题、正文与**标签**（标签列是逗号分隔的 VARCHAR，用 LIKE 子串匹配，
   这样「redis 超时」这类组合词也能命中；不做整词匹配）。`/search` 只覆盖文章，
   笔记走 `GET /notes?keyword=`（前端「寻星」页把两者合并展示，分别带「文章 / 笔记」分组）
-- 全站搜索的**相关性**目前仍是 `id` 倒序（最新优先），不是相关度排序 —— 语义检索见 AI 域
+- 全站搜索按**相关度**排序：标题命中 3 分 + 标签命中 2 分 + 正文命中 1 分，同分按 `id` 倒序；
+  排序写在 `PostMapper.searchPage` / `NoteMapper.searchPage` 的 SQL 里，关键词用 `#{}` 绑定
+  （**不要**改成 `last()` 拼字符串 —— 那是注入面）。搜索不进 Redis 缓存（关键词维度无限）。
+- `/search` 与 `/search/notes` 是**两条独立出口**，前端「寻星」页合并展示。
+  `/notes?keyword=` 仍保留「最新优先」的列表语义，不承担搜索排序。
 - 所有分页接口要求 `page >= 1`、`1 <= size <= 100`，越界返回参数错误；总条数从 `IPage.total` 取
 - 浏览量口径：登录用户在 `post_view` 闸门表里按天去重（同一人同一天多次刷新只计一次），未登录访客每次计数；闸门抢占与计数更新处于同一事务
 - 点赞口径：登录用户一人一赞（`post_glow` 唯一键 `(post_id, user_id)`，重复点击 `applied=false` 且不重复计数）；未登录访客一次点击一次计数，`liked` 恒为 `false`

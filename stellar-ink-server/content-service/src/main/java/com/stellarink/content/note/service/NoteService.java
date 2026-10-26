@@ -12,6 +12,12 @@ public interface NoteService {
     /** 公开笔记列表：强制「已发布 + 公开」，不接受调用方指定可见性 */
     IPage<NoteVO> page(NoteQueryDTO query);
 
+    /**
+     * 关键词搜索：与文章同一套相关度口径（标题 3 / 标签 2 / 正文 1），
+     * 且强制「已发布 + 公开」—— 私有笔记不得出现在任何搜索里。
+     */
+    IPage<NoteVO> search(String keyword, Integer page, Integer size);
+
     /** 我的笔记（含私有与草稿），只返回当前登录用户自己的 */
     IPage<NoteVO> mine(NoteQueryDTO query);
 

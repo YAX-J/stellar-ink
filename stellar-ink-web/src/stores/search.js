@@ -71,7 +71,7 @@ export const useSearchStore = defineStore('search', {
       try {
         const [postPage, notePage] = await Promise.all([
           request('/search', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true }),
-          request('/notes', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true }),
+          request('/search/notes', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true }),
         ])
         if (sequence !== this.sequence) return
         const postData = pageData(postPage, normalizePost, 1)
@@ -105,7 +105,7 @@ export const useSearchStore = defineStore('search', {
       const keyword = this.keyword
       try {
         const nextPage = (isPost ? this.postPage : this.notePage) + 1
-        const page = await request(isPost ? '/search' : '/notes', {
+        const page = await request(isPost ? '/search' : '/search/notes', {
           query: { keyword, page: nextPage, size: PAGE_SIZE },
           silent: true,
         })

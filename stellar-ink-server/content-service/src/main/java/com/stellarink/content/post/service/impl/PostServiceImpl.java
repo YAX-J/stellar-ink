@@ -110,6 +110,15 @@ public class PostServiceImpl implements PostService {
         return cached.toPage();
     }
 
+    @Override
+    public IPage<PostVO> search(String keyword, Integer page, Integer size) {
+        Pagination.requireValid(page, size);
+        /* 搜索不进缓存：关键词来自用户输入，缓存键会随输入无限增长，命中率还极低。
+         * 排序口径在 PostMapper.searchPage 的 SQL 里（标题 3 / 标签 2 / 正文 1），
+         * 那边用 #{} 绑定，不拼字符串。 */
+        return postMapper.searchPage(new Page<>(page, size), keyword).convert(this::toVO);
+    }
+
     private IPage<PostVO> loadPublicPage(PostQueryDTO query) {
         String tag = StringUtils.trimWhitespace(query.getTag());
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
