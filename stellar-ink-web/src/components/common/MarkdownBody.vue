@@ -1,10 +1,11 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { emit, TOAST } from '@/utils/bus'
 
 /* 正文渲染：接收 parseMarkdown 的块级结构，按白名单标签输出。
  * 文章（深读页）与技术笔记详情共用，保证正文排版与代码块行为只有一份实现。
- * 安全前提：块的 html 字段已由 utils/markdown.js 转义 + 白名单，见该文件头部说明。 */
+ * 安全前提：块的 html 字段已由 utils/markdown.js 转义 + 白名单，见该文件头部说明。
+ * 代码块的高亮由 utils/highlight.js 动态提供（先转义再包 span），因此 v-html 是安全的。 */
 const props = defineProps({
   blocks: { type: Array, default: () => [] },
   emptyText: { type: String, default: '这里还没有留下正文。' },
@@ -29,6 +30,45 @@ async function copyCode(code, index) {
     emit(TOAST, { type: 'warn', message: '浏览器没有授予剪贴板权限，请手动选中复制' })
   }
 }
+
+/* ---- 代码块：行号 + 语法高亮 ----
+ * 高亮器只在**真的出现代码块**时才动态 import：首页/星图/笔记列表页不加载它。
+ * 加载失败或还没加载完时退回纯文本 —— 高亮是增强，不能成为「代码看不见」的原因。 */
+const highlighter = shallowRef(null)
+let loadingHighlighter = false
+const hasCode = computed(() => props.blocks.some((block) => block.type === 'code'))
+
+async function loadHighlighter() {
+  if (highlighter.value || loadingHighlighter || !hasCode.value) return
+  loadingHighlighter = true
+  try {
+    const mod = await import('@/utils/highlight')
+    highlighter.value = mod.highlight
+  } catch {
+    highlighter.value = false
+  } finally {
+    loadingHighlighter = false
+  }
+}
+
+onMounted(loadHighlighter)
+watch(hasCode, (value) => { if (value) loadHighlighter() })
+
+const codeHtml = computed(() => {
+  const hl = highlighter.value
+  if (!hl) return {}
+  const map = {}
+  props.blocks.forEach((block, index) => {
+    if (block.type === 'code') map[index] = hl(block.text, block.lang)
+  })
+  return map
+})
+
+/** 行号列：用 <pre> 直接输出，跟正文同一行高，对齐不靠布局算法 */
+function gutter(block) {
+  const count = block.text ? block.text.split('\n').length : 1
+  return Array.from({ length: count }, (_, i) => i + 1).join('\n')
+}
 </script>
 
 <template>
@@ -51,7 +91,10 @@ async function copyCode(code, index) {
             @click="copyCode(block.text, index)"
           >{{ copiedIndex === index ? '✓ 已复制' : '⧉ 复制' }}</button>
         </div>
-        <pre><code>{{ block.text }}</code></pre>
+        <div class="code-body">
+          <pre class="code-gutter" aria-hidden="true">{{ gutter(block) }}</pre>
+          <pre class="code-main"><code v-if="codeHtml[index]" v-html="codeHtml[index]"></code><code v-else>{{ block.text }}</code></pre>
+        </div>
       </div>
 
       <ol v-else-if="block.type === 'list' && block.ordered" class="md-list">
@@ -118,4 +161,25 @@ async function copyCode(code, index) {
 .code-copy.done{color:var(--teal)}
 .code-block pre{margin:0; padding:16px; overflow-x:auto}
 .code-block code{background:transparent; color:var(--ink-dim); padding:0; font-size:12.5px; line-height:1.9}
+
+/* 代码体：左侧行号 + 右侧代码，两者共用同一个滚动容器（各自滚动会错位）。
+ * 背景用 --bg-2 而不是纯黑：破晓主题下也读得清。 */
+.code-body{display:flex; align-items:flex-start; overflow-x:auto; background:var(--bg-2)}
+.code-body pre{margin:0; padding:16px 0; overflow:visible;
+  font-size:12.5px; line-height:1.9; font-family:var(--font-mono)}
+.code-gutter{flex:0 0 auto; padding-left:16px; padding-right:12px; text-align:right;
+  color:var(--ink-faint); opacity:.55; user-select:none; border-right:1px solid var(--line);
+  min-width:3.4em; white-space:pre}
+.code-main{padding-left:14px; padding-right:18px; color:var(--ink-dim)}
+
+/* 高亮用的语义色：全部走主题变量，因此破晓（浅色）下自动换成深色字。
+ * 注释刻意压低对比度 —— 它是背景信息，不该和代码正文抢注意力。 */
+.code-block :deep(.hl-com){color:var(--ink-faint); font-style:italic}
+.code-block :deep(.hl-str){color:var(--teal)}
+.code-block :deep(.hl-num){color:var(--amber)}
+.code-block :deep(.hl-key){color:var(--primary)}
+.code-block :deep(.hl-ann){color:var(--rose)}
+.code-block :deep(.hl-attr){color:var(--teal)}
+.code-block :deep(.hl-fn){color:var(--amber)}
+.code-block :deep(.hl-var){color:var(--rose)}
 </style>
