@@ -55,3 +55,6 @@ docs/*
 # 其余 docs/ 顶层文件（安全审查报告等）仍按上面的规则不入库。
 !docs/status.md
 !docs/troubleshooting.md
+
+# 本地测试产物（部署冒烟截图等）
+.artifacts/
