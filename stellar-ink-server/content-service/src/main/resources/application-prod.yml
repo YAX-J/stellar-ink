@@ -87,3 +87,6 @@ stellar:
       keepalive:
         enabled: true
         interval: 30s
+    # 站点对外地址：sitemap.xml / feed.xml 的绝对链接来源（换域名时改环境变量 SITE_BASE_URL）
+    site:
+      base-url: ${SITE_BASE_URL:https://stellar.ink}

@@ -117,3 +117,9 @@ stellar:
       keepalive:
         enabled: true
         interval: 30s
+    # 站点对外地址：/sitemap.xml 与 /feed.xml 里的**绝对链接**用它拼。
+    # 不拼请求头（Host / X-Forwarded-*）—— 经 Cloudflare、直连 IP、本机三种入口各不相同，
+    # 拼错一次，地图与订阅就全落在内网名或 IP 上（爬虫只认这里写的东西）。
+    # 测试机 / 换域名时用环境变量 SITE_BASE_URL 覆盖，不改代码。
+    site:
+      base-url: ${SITE_BASE_URL:https://stellar.ink}

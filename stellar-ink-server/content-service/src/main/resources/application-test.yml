@@ -166,3 +166,7 @@ stellar:
       keepalive:
         enabled: true
         interval: 30s
+    # 站点对外地址：sitemap.xml / feed.xml 的绝对链接来源。
+    # 测试机用 IP 或临时域名访问时，务必用 SITE_BASE_URL 覆盖（否则订阅里的链接指向生产域名）。
+    site:
+      base-url: ${SITE_BASE_URL:https://stellar.ink}
