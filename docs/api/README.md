@@ -21,7 +21,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 |---|---|---|---|
 | gateway-nacos-sentinel | 8080 | 对外唯一入口 | - |
 | user-service | 8101 | `/auth/**` `/user/**` `/uploads/**` | user |
-| content-service | 8102 | `/posts/**` `/notes/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` `/sitemap.xml` `/feed.xml` | post / note / meteor / echo / link |
+| content-service | 8102 | `/posts/**` `/notes/**` `/series/**` `/tags/**` `/search/**` `/meteors/**` `/echos/**` `/links/**` `/stats/**` `/sitemap.xml` `/feed.xml` | post / note / series / meteor / echo / link |
 | ai-service | 8107 | `/ai/**`（网关上已接入，见 §AI） | `ai_*`（模型配置等 AI 域表；不碰业务表） |
 | stellar-ink-ai（Python） | 8200 | **不配网关路由、不对外暴露**，仅 ai-service 在编排网络内调用 | ai_*（M3 起） |
 
@@ -188,6 +188,30 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - `reviewState` 取值：`DUE` 待复核查询（`UNVERIFIED + EXPIRED`）/ `UNVERIFIED` 从未验证 / `EXPIRED` 超过 180 天 / `FRESH` 有效期内；`DUE` 只作为筛选值，不会出现在单条笔记响应中
 - 笔记列表与详情返回 `verifiedAt/reviewState/reviewDueAt`；180 天口径由服务端统一计算，`PUT /notes/{id}/verify` 会从当前时间重新续期
 - 笔记一期**不做点赞**
+
+### content-service :8102 - 系列 / 专栏
+
+一个系列可以把**文章与笔记**串成一条有序的阅读线（技术博客常见：教程长文 + 踩坑短记）。
+篇目顺序存在内容表自己的 `series_order` 里，系列表只管标题与简介。
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/series` | 系列列表（`page/size`），带 `postCount/noteCount/itemCount`。计数只算**已发布文章 + 公开已发布笔记** | 公开 |
+| GET | `/series/{id}` | 系列详情 + 按 `(series_order, id)` 排好的篇目（`kind=post/note`） | 公开 |
+| POST | `/series` | 新建 `{title, description}`，返回 `{id}` | AUTHOR |
+| PUT | `/series/{id}` | 改标题/简介；**只有创建者**（ADMIN 也不行） | AUTHOR |
+| DELETE | `/series/{id}` | 删除系列；**先把篇目移出**（`series_id` 置空）再删 | AUTHOR |
+
+- **挂载发生在内容保存里**：`POST/PUT /posts` 与 `POST/PUT /notes` 的 `seriesId/seriesOrder`：
+  - 新建：`seriesId` 缺省 = 不挂；`>0` = 挂到自己的系列；`seriesOrder` 不传则追加到末尾（两表最大序号 + 1）。
+  - 更新：`seriesId` 为 `null` = **不修改**；`0` = 移出系列；`>0` = 挂载/移动。用两个值区分，
+    是因为 `null` 已经承担了「局部更新时别动它」的语义。
+  - 归属校验：只能把自己的内容放进**自己**的系列（系列不存在 400、不是自己的 403）。
+  - 移出用单独一条 `UPDATE ... SET series_id = NULL`：MyBatis-Plus 的 `updateById` 忽略 null 字段，
+    直接 `setSeriesId(null)` 等于没改。
+- 阅读页详情（`/posts/{id}`、`/notes/{id}`）新增 `series` 徽章：`{id, title, index, total}`。
+  不属于任何系列时为 `null`；草稿/私有笔记不在公开篇目里时 `index` 为 `null`（只显示「共 N 篇」，不编造位置）。
+- 序号为 NULL 的老数据排在最后，而不是被当成 0 插到最前：「没排过」与「排第一」是两件事。
 
 ### content-service :8102 - 流星
 

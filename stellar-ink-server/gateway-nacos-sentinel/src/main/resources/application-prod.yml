@@ -52,7 +52,7 @@ spring:
           predicates:
             # /sitemap.xml 与 /feed.xml 是 SEO 出口（content-service 动态生成，Nginx 反代到这里），
             # 站点根路径必须显式列出，否则会被 SPA 的 index.html 接走
-            - Path=/posts/**,/notes/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**,/sitemap.xml,/feed.xml
+            - Path=/posts/**,/notes/**,/tags/**,/search/**,/meteors/**,/echos/**,/links/**,/stats/**,/series/**,/sitemap.xml,/feed.xml
         # AI 业务服务：对外唯一入口是 /ai/**；Python（8200）不配路由，只能由 ai-service 内网调用。
         # 公开性/角色门槛在 SaTokenConfigure 里按路径判定（/ai/health 公开，/ai/admin/** 需 ADMIN）
         - id: ai-service

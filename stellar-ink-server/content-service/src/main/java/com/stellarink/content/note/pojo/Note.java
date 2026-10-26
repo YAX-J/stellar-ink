@@ -30,6 +30,12 @@ public class Note {
     /** 技术栈标签，逗号分隔 */
     private String tags;
 
+    /** 所属系列（NULL = 不属任何系列） */
+    private Long seriesId;
+
+    /** 系列内序号（小到大）；NULL 表示没排过，阅读页排在最后 */
+    private Integer seriesOrder;
+
     /** FIX / PITFALL / TIL / SCRAP */
     private String noteType;
 

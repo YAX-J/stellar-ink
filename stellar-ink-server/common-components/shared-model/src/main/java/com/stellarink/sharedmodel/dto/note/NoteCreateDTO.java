@@ -39,4 +39,11 @@ public class NoteCreateDTO {
     @Min(value = 0, message = "状态只能是 0（草稿）或 1（发布）。")
     @Max(value = 1, message = "状态只能是 0（草稿）或 1（发布）。")
     private Integer status;
+
+    /** 所属系列：缺省 null = 不挂系列；>0 = 挂到自己的系列（服务端校验归属） */
+    private Long seriesId;
+
+    /** 系列内序号；不传则自动追加到该系列末尾（最大序号 + 1） */
+    @Min(value = 1, message = "系列序号从 1 开始。")
+    private Integer seriesOrder;
 }

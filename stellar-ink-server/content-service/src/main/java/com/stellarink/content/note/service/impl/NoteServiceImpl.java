@@ -16,6 +16,7 @@ import com.stellarink.content.note.mapper.NoteMapper;
 import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.note.service.NoteService;
 import com.stellarink.content.post.mapper.PostViewMapper;
+import com.stellarink.content.series.service.SeriesService;
 import com.stellarink.sharedmodel.dto.note.NoteCreateDTO;
 import com.stellarink.sharedmodel.dto.note.NoteQueryDTO;
 import com.stellarink.sharedmodel.dto.note.NoteUpdateDTO;
@@ -69,6 +70,7 @@ public class NoteServiceImpl implements NoteService {
     private final NoteMapper noteMapper;
     /** 浏览量闸门与文章共用：该表只记「某用户某天已计过一次」，与内容类型无关 */
     private final PostViewMapper postViewMapper;
+    private final SeriesService seriesService;
     private final ContentCache cache;
     private final MeterRegistry meterRegistry;
 
@@ -212,6 +214,7 @@ public class NoteServiceImpl implements NoteService {
         vo.setDate(note.getCreatedAt().toLocalDate().format(DATE_FMT));
         vo.setVerifiedAt(note.getVerifiedAt());
         applyReviewState(vo, note.getVerifiedAt());
+        vo.setSeries(seriesService.brief(note.getSeriesId(), note.getId(), "note"));
         vo.setPrev(neighbor(note.getId(), true));
         vo.setNext(neighbor(note.getId(), false));
         return vo;
@@ -237,6 +240,7 @@ public class NoteServiceImpl implements NoteService {
         entity.setWordCount(countWords(content));
         entity.setViewCount(0);
         entity.setVerifiedAt(null);
+        attachSeries(entity, dto.getSeriesId(), dto.getSeriesOrder());
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         noteMapper.insert(entity);
@@ -274,12 +278,31 @@ public class NoteServiceImpl implements NoteService {
         if (dto.getStatus() != null) {
             note.setStatus(dto.getStatus());
         }
+        /* 系列：null = 不动；0 = 移出；>0 = 挂到自己的系列。
+         * 移出单独一条 UPDATE —— updateById 忽略 null 字段，直接 setSeriesId(null) 不生效。 */
+        boolean clearSeries = dto.getSeriesId() != null && dto.getSeriesId() == 0L;
+        if (dto.getSeriesId() != null && !clearSeries) {
+            seriesService.assertAttachable(dto.getSeriesId());
+            boolean sameSeries = dto.getSeriesId().equals(note.getSeriesId());
+            note.setSeriesId(dto.getSeriesId());
+            if (dto.getSeriesOrder() != null) {
+                note.setSeriesOrder(dto.getSeriesOrder());
+            } else if (!sameSeries) {
+                note.setSeriesOrder(seriesService.nextOrder(dto.getSeriesId()));
+            }
+        }
         // 发布前必须真正有内容：草稿可以空，发布的笔记本一定不能空
         if (Integer.valueOf(PUBLISHED).equals(note.getStatus())) {
             requireContent(note.getContent());
         }
         note.setUpdatedAt(LocalDateTime.now());
         noteMapper.updateById(note);
+        if (clearSeries) {
+            noteMapper.update(null, new LambdaUpdateWrapper<Note>()
+                    .eq(Note::getId, id)
+                    .set(Note::getSeriesId, null)
+                    .set(Note::getSeriesOrder, null));
+        }
         invalidatePublicCaches();
         log.info("更新笔记 id={} visibility={} status={} title={}",
                 id, note.getVisibility(), note.getStatus(), note.getTitle());
@@ -355,8 +378,17 @@ public class NoteServiceImpl implements NoteService {
         cache.invalidate(CACHE_NAMESPACE);
     }
 
-    private Note requireNote(Long id) {
-        Note note = noteMapper.selectById(id);
+    /** 新建时的系列挂载：0 / null 都视为「不挂」；序号不传就追加到末尾 */
+    private void attachSeries(Note note, Long seriesId, Integer seriesOrder) {
+        if (seriesId == null || seriesId == 0L) {
+            return;
+        }
+        seriesService.assertAttachable(seriesId);
+        note.setSeriesId(seriesId);
+        note.setSeriesOrder(seriesOrder != null ? seriesOrder : seriesService.nextOrder(seriesId));
+    }
+
+    private Note requireNote(Long id) {        Note note = noteMapper.selectById(id);
         if (note == null) {
             throw BusinessExceptionHelper.of(ErrorCode.NOT_FOUND, "这条笔记不存在");
         }

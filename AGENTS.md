@@ -429,6 +429,15 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **每页 meta 走 `composables/usePageMeta`**：`router.afterEach` 先 `resetPageMeta()` 回站点缺省值，
   页面在自己的 setup 里传**函数**覆盖（正文异步到达后标题与摘要要跟着变）。
   不要在视图里手写 `document.head` 操作。
+- **系列/专栏口径**：`series` 表只管标题与简介，篇目归属在内容表自己的
+  `post.series_id` / `post.series_order`、`note.series_id` / `note.series_order` 上 ——
+  一个系列可以**混排文章与笔记**（教程长文 + 踩坑短记），排序 `(series_order, id)`，序号 NULL 排最后。
+  三条不许放松：
+  ① 更新时 `seriesId = null` 表示「不修改」、`0` 表示「移出」，两者不能混用（null 已承担局部更新语义）；
+  ② **移出必须用 `LambdaUpdateWrapper` 显式 `set(..., null)`** —— `updateById` 忽略 null 字段，
+     直接 `setSeriesId(null)` 等于没改（与头像同一个坑）；
+  ③ 对外计数/篇目只算**已发布文章 + 公开已发布笔记**，草稿与私有笔记不进任何数字；
+     只有系列创建者能改删（ADMIN 也不行）。
 - 已知坑：`user` 在部分环境是保留字，DDL/实体用反引号 `` @TableName("`user`") ``。
 - **种子数据的 id 必须与时间同向递增**：文章/笔记/流星/回声的默认列表是 `ORDER BY id DESC`
   （见 `PostServiceImpl.applyOrder` 的 latest），id 与 `created_at` 反向排列会让首页「最近星尘」、

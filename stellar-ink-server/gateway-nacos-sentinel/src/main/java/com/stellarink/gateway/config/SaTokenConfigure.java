@@ -54,6 +54,9 @@ public class SaTokenConfigure {
     /** 笔记标记已验证：/notes/{id}/verify（需 AUTHOR） */
     private static final Pattern NOTE_VERIFY_PATH = Pattern.compile("^/notes/\\d+/verify$");
 
+    /** 系列单条路径：/series/{id}（PUT 改名 / DELETE 删除，需 AUTHOR；归属由服务层复核） */
+    private static final Pattern SERIES_ID_PATH = Pattern.compile("^/series/\\d+$");
+
     /** 笔记记录浏览：公开写接口 */
     private static final Pattern NOTE_VIEWED_PATH = Pattern.compile("^/notes/\\d+/viewed$");
 
@@ -274,14 +277,16 @@ public class SaTokenConfigure {
         }
     }
 
-    /** 需 AUTHOR（含 ADMIN）的写操作：文章/流星/笔记的新增与维护 */
+    /** 需 AUTHOR（含 ADMIN）的写操作：文章/流星/笔记/系列的新增与维护 */
     private static boolean requiresAuthor(String method, String path) {
         if ("POST".equalsIgnoreCase(method)) {
-            return "/posts".equals(path) || "/meteors".equals(path) || "/notes".equals(path);
+            return "/posts".equals(path) || "/meteors".equals(path)
+                    || "/notes".equals(path) || "/series".equals(path);
         }
         if ("PUT".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method)) {
             return POST_ID_PATH.matcher(path).matches()
                     || NOTE_ID_PATH.matcher(path).matches()
+                    || SERIES_ID_PATH.matcher(path).matches()
                     || ("PUT".equalsIgnoreCase(method) && NOTE_VERIFY_PATH.matcher(path).matches())
                     || ("DELETE".equalsIgnoreCase(method) && METEOR_ID_PATH.matcher(path).matches());
         }

@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS `post` (
     `title`      VARCHAR(200) NOT NULL                COMMENT '标题',
     `content`    TEXT                                  COMMENT '正文',
     `tags`       VARCHAR(200)                          COMMENT '标签，逗号分隔',
+    `series_id`  BIGINT                                  COMMENT '所属系列（NULL = 不属任何系列）',
+    `series_order` INT                                   COMMENT '系列内序号（小到大；NULL 排最后）',
     `word_count` INT          DEFAULT 0               COMMENT '字数（正文去空白字符）',
     `status`     TINYINT      DEFAULT 1               COMMENT '0 草稿 / 1 已发布',
     `glow`       INT          DEFAULT 0               COMMENT '补充光芒数',
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS `post` (
     PRIMARY KEY (`id`),
     KEY `idx_user_status_id` (`user_id`, `status`, `id`),
     KEY `idx_status_id` (`status`, `id`),
-    KEY `idx_created_at` (`created_at`)
+    KEY `idx_created_at` (`created_at`),
+    KEY `idx_series_order` (`series_id`, `series_order`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '文章';
 
 -- -------------------------------------------------------------
@@ -88,8 +91,10 @@ CREATE TABLE IF NOT EXISTS `note` (
     `title`       VARCHAR(200) NOT NULL                COMMENT '标题（建议写报错原文或一句话症状）',
     `content`     TEXT                                  COMMENT '正文（Markdown）',
     `tags`        VARCHAR(200)                          COMMENT '技术栈标签，逗号分隔',
+    `series_id`   BIGINT                                  COMMENT '所属系列（NULL = 不属任何系列）',
+    `series_order` INT                                    COMMENT '系列内序号（小到大；NULL 排最后）',
     `note_type`   VARCHAR(20)  NOT NULL DEFAULT 'FIX'  COMMENT 'FIX 问题解决 / PITFALL 踩坑 / TIL 学习笔记 / SCRAP 碎片',
-    `visibility`  VARCHAR(20)  NOT NULL DEFAULT 'PRIVATE' COMMENT 'PUBLIC 公开 / PRIVATE 私有（仅作者可见）',
+    `visibility`  VARCHAR(20)  NOT NULL DEFAULT 'PUBLIC' COMMENT 'PUBLIC 公开（默认）/ PRIVATE 私有（仅作者可见）',
     `status`      TINYINT      NOT NULL DEFAULT 0      COMMENT '0 草稿 / 1 已发布',
     `word_count`  INT          DEFAULT 0               COMMENT '字数（正文去空白字符）',
     `view_count`  INT          NOT NULL DEFAULT 0      COMMENT '浏览量（仅公开笔记计数）',
@@ -100,8 +105,24 @@ CREATE TABLE IF NOT EXISTS `note` (
     KEY `idx_user_vis_status_id` (`user_id`, `visibility`, `status`, `id`),
     KEY `idx_vis_status_id` (`visibility`, `status`, `id`),
     KEY `idx_note_type` (`note_type`),
-    KEY `idx_created_at` (`created_at`)
+    KEY `idx_created_at` (`created_at`),
+    KEY `idx_series_order` (`series_id`, `series_order`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '技术笔记';
+
+-- -------------------------------------------------------------
+-- 系列 / 专栏：文章与笔记可以挂在同一条阅读线上
+-- 篇目顺序存在内容表自己的 series_order 里，这里只管系列本身的标题与简介
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `series` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT       NOT NULL                COMMENT '创建者用户 ID',
+    `title`       VARCHAR(100) NOT NULL                COMMENT '系列标题',
+    `description` VARCHAR(300)                         COMMENT '系列简介',
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '系列/专栏';
 
 -- -------------------------------------------------------------
 -- 流星备忘录（碎片）

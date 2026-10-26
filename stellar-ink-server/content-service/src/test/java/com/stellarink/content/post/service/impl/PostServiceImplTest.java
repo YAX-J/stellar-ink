@@ -14,6 +14,7 @@ import com.stellarink.content.post.mapper.PostGlowMapper;
 import com.stellarink.content.post.mapper.PostMapper;
 import com.stellarink.content.post.mapper.PostViewMapper;
 import com.stellarink.content.post.pojo.Post;
+import com.stellarink.content.series.service.SeriesService;
 import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
 import com.stellarink.sharedmodel.dto.post.PostQueryDTO;
 import com.stellarink.sharedmodel.enums.ErrorCode;
@@ -47,13 +48,14 @@ class PostServiceImplTest {
     private final PostGlowMapper postGlowMapper = mock(PostGlowMapper.class);
     private final PostViewMapper postViewMapper = mock(PostViewMapper.class);
     private final CommentMapper commentMapper = mock(CommentMapper.class);
+    private final SeriesService seriesService = mock(SeriesService.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
 
     /** 真的注册表（而不是 mock）：浏览/点赞的指标断言要读它的实际计数 */
     private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, meterRegistry));
     private final PostServiceImpl postService = new PostServiceImpl(
-            postMapper, postGlowMapper, postViewMapper, commentMapper, cache, meterRegistry);
+            postMapper, postGlowMapper, postViewMapper, commentMapper, seriesService, cache, meterRegistry);
 
     @BeforeAll
     static void initializeMybatisMetadata() {

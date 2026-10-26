@@ -20,6 +20,7 @@ import com.stellarink.content.post.mapper.PostViewMapper;
 import com.stellarink.content.post.pojo.Post;
 import com.stellarink.content.post.pojo.PostGlow;
 import com.stellarink.content.post.service.PostService;
+import com.stellarink.content.series.service.SeriesService;
 import com.stellarink.sharedmodel.dto.post.PostCreateDTO;
 import com.stellarink.sharedmodel.dto.post.PostQueryDTO;
 import com.stellarink.sharedmodel.dto.post.PostUpdateDTO;
@@ -87,6 +88,7 @@ public class PostServiceImpl implements PostService {
     private final PostGlowMapper postGlowMapper;
     private final PostViewMapper postViewMapper;
     private final CommentMapper commentMapper;
+    private final SeriesService seriesService;
     private final ContentCache cache;
     private final MeterRegistry meterRegistry;
 
@@ -196,7 +198,18 @@ public class PostServiceImpl implements PostService {
         vo.setLiked(false);
         vo.setPrev(neighbor(post.getId(), true));
         vo.setNext(neighbor(post.getId(), false));
+        vo.setSeries(seriesService.brief(post.getSeriesId(), post.getId(), "post"));
         return vo;
+    }
+
+    /** 新建时的系列挂载：0 / null 都视为「不挂」；序号不传就追加到末尾 */
+    private void attachSeries(Post post, Long seriesId, Integer seriesOrder) {
+        if (seriesId == null || seriesId == 0L) {
+            return;
+        }
+        seriesService.assertAttachable(seriesId);
+        post.setSeriesId(seriesId);
+        post.setSeriesOrder(seriesOrder != null ? seriesOrder : seriesService.nextOrder(seriesId));
     }
 
     @Override
@@ -238,6 +251,7 @@ public class PostServiceImpl implements PostService {
         entity.setStatus(dto.getStatus() != null ? dto.getStatus() : 1);
         entity.setGlow(0);
         entity.setViewCount(0);
+        attachSeries(entity, dto.getSeriesId(), dto.getSeriesOrder());
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         postMapper.insert(entity);
@@ -270,8 +284,28 @@ public class PostServiceImpl implements PostService {
         if (dto.getStatus() != null) {
             post.setStatus(dto.getStatus());
         }
+        /* 系列：null = 不动；0 = 移出；>0 = 挂到自己的系列。
+         * 移出必须单独一条 UPDATE —— updateById 会忽略 null 字段，
+         * 直接 setSeriesId(null) 等于没改（「接口成功、刷新又回来」的老坑）。 */
+        boolean clearSeries = dto.getSeriesId() != null && dto.getSeriesId() == 0L;
+        if (dto.getSeriesId() != null && !clearSeries) {
+            seriesService.assertAttachable(dto.getSeriesId());
+            boolean sameSeries = dto.getSeriesId().equals(post.getSeriesId());
+            post.setSeriesId(dto.getSeriesId());
+            if (dto.getSeriesOrder() != null) {
+                post.setSeriesOrder(dto.getSeriesOrder());
+            } else if (!sameSeries) {
+                post.setSeriesOrder(seriesService.nextOrder(dto.getSeriesId()));
+            }
+        }
         post.setUpdatedAt(LocalDateTime.now());
         postMapper.updateById(post);
+        if (clearSeries) {
+            postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                    .eq(Post::getId, id)
+                    .set(Post::getSeriesId, null)
+                    .set(Post::getSeriesOrder, null));
+        }
         invalidatePublicCaches();
         log.info("更新文章 id={} title={}", id, post.getTitle());
     }

@@ -1,6 +1,7 @@
 package com.stellarink.sharedmodel.vo.note;
 
 import lombok.Data;
+import com.stellarink.sharedmodel.vo.series.SeriesBriefVO;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -54,6 +55,9 @@ public class NoteDetailVO {
     private NeighborVO prev;
 
     private NeighborVO next;
+
+    /** 所属系列徽章；不属于任何系列时为 null（前端整块不出现） */
+    private SeriesBriefVO series;
 
     @Data
     public static class NeighborVO {

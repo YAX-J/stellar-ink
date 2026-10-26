@@ -34,4 +34,11 @@ public class NoteUpdateDTO {
     @Min(value = 0, message = "状态只能是 0（草稿）或 1（发布）。")
     @Max(value = 1, message = "状态只能是 0（草稿）或 1（发布）。")
     private Integer status;
+
+    /** 所属系列：{@code null} = 不修改；{@code 0} = 移出系列；{@code >0} = 挂到自己的系列 */
+    private Long seriesId;
+
+    /** 系列内序号；挂载时不传则追加到末尾，已在本系列且不传则保持原序号 */
+    @Min(value = 1, message = "系列序号从 1 开始。")
+    private Integer seriesOrder;
 }

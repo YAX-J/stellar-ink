@@ -12,6 +12,7 @@ import com.stellarink.content.cache.ContentCache;
 import com.stellarink.content.note.mapper.NoteMapper;
 import com.stellarink.content.note.pojo.Note;
 import com.stellarink.content.post.mapper.PostViewMapper;
+import com.stellarink.content.series.service.SeriesService;
 import com.stellarink.sharedmodel.dto.note.NoteUpdateDTO;
 import com.stellarink.sharedmodel.dto.note.NoteQueryDTO;
 import com.stellarink.sharedmodel.dto.note.NoteCreateDTO;
@@ -47,13 +48,14 @@ class NoteServiceImplTest {
 
     private final NoteMapper noteMapper = mock(NoteMapper.class);
     private final PostViewMapper postViewMapper = mock(PostViewMapper.class);
+    private final SeriesService seriesService = mock(SeriesService.class);
     private final RedisUtils redisUtils = mock(RedisUtils.class);
     private final ContentCache cache = new ContentCache(new RedisCache(redisUtils, new SimpleMeterRegistry()));
 
     /** 真的注册表（不是 mock）：笔记浏览的指标断言要读它的实际计数 */
     private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final NoteServiceImpl noteService = new NoteServiceImpl(
-            noteMapper, postViewMapper, cache, meterRegistry);
+            noteMapper, postViewMapper, seriesService, cache, meterRegistry);
 
     @BeforeAll
     static void initializeMybatisMetadata() {
