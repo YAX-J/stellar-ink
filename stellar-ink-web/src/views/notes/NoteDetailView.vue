@@ -61,8 +61,7 @@ function backToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-/** 验证新鲜度：技术笔记最怕的是结论悄悄失效 */
-const verifyInfo = computed(() => {
+/** 验证新鲜度：技术笔记最怕的是结论悄悄失效 */const verifyInfo = computed(() => {
   const at = note.value?.verifiedAt
   if (note.value?.reviewState === 'UNVERIFIED' || !at) {
     return { text: '尚未验证', stale: true, days: null }
@@ -73,6 +72,22 @@ const verifyInfo = computed(() => {
     stale: note.value?.reviewState === 'EXPIRED',
     days,
   }
+})
+
+/** 从正文 `## 环境` 章节摘出适用版本；取不到就整行不出现（不编造） */
+const environment = computed(() => {
+  const lines = String(note.value?.content || '').split(/\r?\n/)
+  const start = lines.findIndex((line) => /^#{1,6}\s*环境\s*$/.test(line.trim()))
+  if (start < 0) return ''
+  const items = []
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (/^#{1,6}\s/.test(line)) break
+    if (!line) continue
+    items.push(line.replace(/^[-*+]\s*/, '').replace(/`/g, '').trim())
+    if (items.length >= 3) break
+  }
+  return items.filter(Boolean).join(' · ').slice(0, 140)
 })
 
 async function markVerified() {
@@ -201,6 +216,13 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
           </button>
         </div>
 
+        <!-- 适用环境：从正文 `## 环境` 章节摘出来单独一行。
+             技术读者第一眼要判断的是「这条结论在不在我的版本上」，让他不必往下翻。 -->
+        <p v-if="environment" class="env-row">
+          <span class="env-label mono">适用</span>
+          <span class="env-text">{{ environment }}</span>
+        </p>
+
         <MarkdownBody :blocks="blocks" empty-text="这条笔记还没有正文。" class="note-body" />
 
         <div class="read-actions">
@@ -296,6 +318,12 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
   max-width:var(--prose-max,100%)}
 .meta-tag{font-family:var(--font-mono); font-size:10px; padding:3px 9px; border-radius:99px;
   background:var(--primary-soft); color:var(--primary)}
+
+.env-row{display:flex; align-items:flex-start; gap:10px; margin:-10px 0 26px; padding:10px 14px;
+  border-left:2px solid var(--teal); background:var(--surface); border-radius:0 var(--r-sm) var(--r-sm) 0;
+  color:var(--ink-dim); font-size:12px; line-height:1.8}
+.env-label{font-size:10px; letter-spacing:.2em; color:var(--teal); flex-shrink:0; padding-top:1px}
+.env-text{min-width:0}
 
 .verify-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:16px 0 34px;
   padding:10px 14px; border:1px dashed var(--line); border-radius:var(--r-sm);
