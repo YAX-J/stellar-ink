@@ -21,10 +21,9 @@ import java.util.List;
  * 而「什么算可见内容」的规则只能有一份 —— 所以规则留在 content-service，这里只取结果。
  *
  * <p><b>为什么用 url 而不是服务名（刻意，不是偷懒）</b>：
- * 本仓库 dev/test 共用同一个 Nacos 命名空间，用 {@code name = "content-service"} 走服务发现时，
- * 本机 ai-service 可能被路由到**测试机上**的 content-service —— 那是另一个库、另一批文章，
- * 表现为「同步过来的语料跟本机库对不上」，且日志里没有任何异常。
- * 这与 AGENTS 里「Python 地址只有一个键」是同一个思路：地址显式、可配置、可预测。
+ * 内容服务地址由 CONTENT_SERVICE_URL 显式指定，与 Python 的公开状态复核使用同一键。
+ * dev 默认本机回环，Docker 使用 content-service:8102；环境与注册空间同时隔离，
+ * 避免投影同步与公开状态复核查询到不同环境的数据。
  *
  * <p><b>为什么没有 FallbackFactory（刻意）</b>：本模块没有 circuit breaker 依赖，
  * 而 Spring Cloud OpenFeign 在缺少它时会**忽略** {@code fallbackFactory} —— 降级方法永远不会被调用，
@@ -49,7 +48,9 @@ public interface ContentCorpusClient {
             @RequestParam(value = "since", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime since,
             @RequestParam(value = "ids", required = false) List<Long> ids,
-            @RequestParam(value = "limit", required = false, defaultValue = "0") int limit);
+            @RequestParam(value = "limit", required = false, defaultValue = "0") int limit,
+            @RequestParam(value = "afterKind", required = false) String afterKind,
+            @RequestParam(value = "afterId", required = false) Long afterId);
 
     /** 单篇正文（嵌入用）。草稿 / 私有 / 已删除在 content-service 侧就是 404。 */
     @GetMapping("/internal/corpus/{kind}/{id}")

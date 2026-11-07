@@ -53,8 +53,10 @@ public class InternalCorpusController {
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime since,
             @RequestParam(required = false) List<Long> ids,
-            @RequestParam(required = false, defaultValue = "0") int limit) {
-        return Response.success(internalCorpusService.slice(since, ids, limit));
+            @RequestParam(required = false, defaultValue = "0") int limit,
+            @RequestParam(required = false) String afterKind,
+            @RequestParam(required = false) Long afterId) {
+        return Response.success(internalCorpusService.slice(since, ids, limit, afterKind, afterId));
     }
 
     /**

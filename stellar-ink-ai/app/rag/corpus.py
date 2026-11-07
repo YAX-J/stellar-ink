@@ -1,23 +1,11 @@
-"""语料的**唯一缓存**：问答、Agent、评测、画像共用同一份内容口径。
+"""语料的唯一缓存与公开视图。
 
-来源优先级（见 `content_source`）：
-1. **线上投影表** `ai_content_snapshot`（已发布文章 + 已发布且 PUBLIC 的笔记，由 ai-service 投影）；
-2. 读不到线上（迁移没跑 / 连不上库 / 缺列）时回退**种子包** `deploy/sql/02_init-data.sql`，
-   并且 `corpus_source()` 会如实说明是哪一种 —— 评测响应里带着它，
-   否则「这批数字是在哪份数据上算的」永远说不清。
+线上只读 ai_content_snapshot；空库保持空，读取失败明确报错。
+只有显式 AI_CORPUS_SOURCE=seed 的离线开发使用种子，test/prod 禁止 seed。
 
-三个刻意的口径：
-
-1. **`EPOCH` 是语料版本号**，换代（`reset_corpus()` 或 TTL 到期）才递增，检索管道按它做
-   缓存键的一部分：语料换了而管道还拿着旧下标，引用就会指向另一段文字 ——
-   这类错「看起来一切正常」，所以宁可让缓存键跟着语料一起换代。
-2. **语料有有效期（TTL，`AI_CORPUS_TTL_SECONDS`，默认 60 秒）**：ai-service 每 5 分钟刷一遍投影表，
-   但它**不会通知本进程**。没有 TTL 时语料只在首次请求时装一次、之后永不重读，后果是双向的：
-   新发布的内容问不到；而**下架 / 已删 / 笔记转私有**的内容会继续被回答 ——
-   最后一条是隐私问题：`CorpusSyncServiceImpl` 删掉投影行，本意就是让私有内容不再被引用，
-   而本进程缓存里那份正文还在 —— 这不是新鲜度问题。
-   `AI_CORPUS_TTL_SECONDS<=0` 表示永不过期，供离线脚本与单测使用。
-3. **调用方不得修改返回的列表**。它们是共享的进程级对象，就地排序一次就会污染所有调用方。
+TTL 控制投影新鲜度；每次使用语料还要向内容服务实时复核公开版本。
+撤回或正文改变会淘汰公开视图和旧检索管道，不等待同步任务与 TTL。
+调用方不得修改共享列表；EPOCH 随投影换代或公开视图变化递增。
 """
 
 from __future__ import annotations
@@ -35,6 +23,7 @@ from app.rag.content_source import (
     load_snapshot_docs,
 )
 from app.rag.pipeline import IndexedChunk, PostLike, build_corpus
+from app.rag.public_corpus import visible_docs
 from app.rag.seed_corpus import SeedPost, default_seed_sql, load_seed_posts
 
 logger = logging.getLogger(__name__)
@@ -57,6 +46,20 @@ _SOURCE = ""
 #: 语料装入时刻（**单调时钟**，不是墙上时间：改系统时间不该让缓存永远不过期）。
 #: `None` 表示还没装过 —— 此时没有必要判断过期。
 _LOADED_AT: float | None = None
+
+# 只有这份已复核的视图能交给调用方，底层 TTL 缓存不得直接进入模型上下文。
+_VISIBLE_POSTS: tuple[PostLike, ...] = ()
+_VISIBLE_INITIALIZED = False
+
+
+def source_mode() -> str:
+    """线上默认严格读取；离线测试必须显式选择 seed，生产禁止种子模式。"""
+    mode = os.environ.get("AI_CORPUS_SOURCE", "online").strip().lower()
+    if mode not in {"online", "seed"}:
+        raise CorpusSourceUnavailable("AI_CORPUS_SOURCE 只接受 online / seed")
+    if mode == "seed" and os.environ.get("AI_APP_ENV", "dev").lower() in {"prod", "test"}:
+        raise CorpusSourceUnavailable("测试与生产环境禁止使用种子语料，请配置线上语料")
+    return mode
 
 
 def ttl_seconds() -> float:
@@ -113,27 +116,11 @@ def _online_posts() -> tuple[SnapshotDoc, ...] | None:
     """线上语料（投影表）。
 
     :return 文档元组；**表存在但没有内容时返回空元组**（那是「站内确实没有公开内容」），
-        读不到（迁移没跑 / 连不上 / 缺列）时返回 None，调用方回退种子包。
+        离线模式返回 None；线上读取失败直接抛错，禁止种子回退。
     """
-    try:
-        docs = load_snapshot_docs()
-    except CorpusSourceUnavailable as error:
-        logger.warning("读不到线上语料，本次回退种子包：%s", error)
+    if source_mode() == "seed":
         return None
-    if not docs:
-        # ⚠️ 空快照 → **回退种子包**（2026-10-05 修正）：
-        # 曾经把「表存在但没有行」当成「站内确实没有公开内容」而返回空语料。结果是
-        # 「SQL 跑完、第一次同步还没成功」的那段窗口里整个知识库为空：每次提问都变成
-        # 「没有依据」，画像类接口直接失去全部样本（实测：4 条 API 用例因此变红，
-        # 正好把这个窗口暴露了出来 —— 它在真实部署里同样存在）。
-        # 取舍：宁可让种子包顶上（种子内容本来就是本站自己的公开内容），也不让应用
-        # 「什么都不知道」。隐私口径不受影响：私有/草稿的排除发生在上游投影，与本回退无关。
-        logger.warning(
-            "ai_content_snapshot 是空的（第一次同步还没成功跑过？）→ 本次回退种子包；"
-            "若站内确实没有公开文章，这条会一直出现，可以忽略"
-        )
-        return None
-    return tuple(docs)
+    return tuple(load_snapshot_docs())
 
 
 def _kind_of(doc: object) -> str:
@@ -155,15 +142,15 @@ def cached_posts(*, kinds: Sequence[str] | None = None) -> tuple[PostLike, ...]:
     每次调用都会先判断 TTL（见模块 docstring 第 2 条），所以**它可能换代**——
     调用方不要把它当成「一个请求内恒定不变」的东西。
     """
-    _expire_if_stale()
+    _refresh_visibility()
     if kinds is None:
-        return _load_posts()
+        return _VISIBLE_POSTS
     return _filtered_posts(tuple(sorted(set(kinds))))
 
 
 @lru_cache(maxsize=4)
 def _filtered_posts(kinds: tuple[str, ...]) -> tuple[PostLike, ...]:
-    return tuple(doc for doc in _load_posts() if _kind_of(doc) in kinds)
+    return tuple(doc for doc in _VISIBLE_POSTS if _kind_of(doc) in kinds)
 
 
 @lru_cache(maxsize=1)
@@ -174,7 +161,7 @@ def _load_posts() -> tuple[PostLike, ...]:
     online = _online_posts()
     docs: tuple[PostLike, ...]
     if online is None:
-        _SOURCE = f"seed-sql:{default_seed_sql().name}（线上语料不可用，已回退）"
+        _SOURCE = f"seed-sql:{default_seed_sql().name}（显式离线模式）"
         docs = _seed_posts()
     else:
         _SOURCE = describe_source()
@@ -195,7 +182,7 @@ def cached_corpus(*, kinds: Sequence[str] | None = None) -> list[IndexedChunk]:
     与 `cached_posts()` 一样会先判断 TTL：切块结果与语料必须一起换代，
     否则「块下标」与「文档」会对不上（引用指到别的段落）。
     """
-    _expire_if_stale()
+    _refresh_visibility()
     if kinds is None:
         return _load_corpus()
     return _filtered_corpus(tuple(sorted(set(kinds))))
@@ -208,7 +195,23 @@ def _filtered_corpus(kinds: tuple[str, ...]) -> list[IndexedChunk]:
 
 @lru_cache(maxsize=1)
 def _load_corpus() -> list[IndexedChunk]:
-    return build_corpus(list(_load_posts()))
+    return build_corpus(list(_VISIBLE_POSTS))
+
+
+def _refresh_visibility() -> None:
+    """每次使用都复核；撤回导致视图换代，旧检索管道随后按 EPOCH 淘汰。"""
+    global EPOCH, _VISIBLE_POSTS, _VISIBLE_INITIALIZED  # noqa: PLW0603
+    _expire_if_stale()
+    docs = _load_posts()
+    current = docs if source_mode() == "seed" else visible_docs(docs)
+    if not _VISIBLE_INITIALIZED or current != _VISIBLE_POSTS:
+        _VISIBLE_POSTS = current
+        if _VISIBLE_INITIALIZED:
+            EPOCH += 1
+        _VISIBLE_INITIALIZED = True
+        _load_corpus.cache_clear()
+        _filtered_posts.cache_clear()
+        _filtered_corpus.cache_clear()
 
 
 def corpus_source() -> str:
@@ -223,9 +226,13 @@ def reset_corpus() -> None:
     global EPOCH  # noqa: PLW0603 - 它就是「当前语料是哪一份」的唯一记号
     global _SOURCE  # noqa: PLW0603 - 来源与语料一起换代，否则会报上一次的来源
     global _LOADED_AT  # noqa: PLW0603 - 换掉了就没有装入时刻可言
+    global _VISIBLE_POSTS  # noqa: PLW0603 - 不允许复用上一代公开视图
+    global _VISIBLE_INITIALIZED  # noqa: PLW0603
     EPOCH += 1
     _SOURCE = ""
     _LOADED_AT = None
+    _VISIBLE_POSTS = ()
+    _VISIBLE_INITIALIZED = False
     _online_posts.cache_clear()
     _load_posts.cache_clear()
     _load_corpus.cache_clear()

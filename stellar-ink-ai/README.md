@@ -1,5 +1,10 @@
 # 星笺 AI 编排服务（stellar-ink-ai）
 
+
+语料默认 `AI_CORPUS_SOURCE=online`，只读 AI 投影并通过 `CONTENT_SERVICE_URL` 实时复核公开版本。
+撤回/私有化/旧版本会立即从新检索中排除；内容服务不可达时报 503，空库保持空，不自动使用种子。
+离线开发显式设置 `AI_CORPUS_SOURCE=seed`（test/prod 环境禁止）。单测由 conftest 显式隔离真实语料。
+
 Python AI 服务，**仅内网可达**：模型网关、RAG、Agent 与知识管道。浏览器不直连本服务，
 对外协议、鉴权与 `Response<T>` 由 Java `ai-service :8107` 提供。
 

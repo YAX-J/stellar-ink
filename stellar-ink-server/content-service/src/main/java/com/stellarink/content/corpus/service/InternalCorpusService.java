@@ -18,14 +18,19 @@ import java.util.List;
 public interface InternalCorpusService {
 
     /**
-     * 语料清单（不含正文），按 updatedAt 升序。
+     * 语料清单（不含正文），按 kind 字面量与 ID 升序。
      *
-     * @param since 只取该时间**之后**修改过的（游标续拉用；null = 全量）
+     * @param since 只取该时间**之后**修改过的（仅作时间过滤；null = 全量）
      * @param ids   只取这些 id（null/空 = 不限）。注意文章与笔记的 id 各自自增，
      *              所以这里是「两种 kind 里 id 命中的都要」，需要精确定位时用 {@link #content}
      * @param limit 上限，会被夹到 [1, {@value #MAX_LIMIT}]
      */
-    CorpusSliceVO slice(LocalDateTime since, List<Long> ids, int limit);
+    default CorpusSliceVO slice(LocalDateTime since, List<Long> ids, int limit) {
+        return slice(since, ids, limit, null, null);
+    }
+
+    /** afterKind / afterId 必须成对传入；since 只过滤修改时间，不承担分页语义。 */
+    CorpusSliceVO slice(LocalDateTime since, List<Long> ids, int limit, String afterKind, Long afterId);
 
     /**
      * 单篇正文。**草稿、已删除、私有笔记一律 NOT_FOUND** —— 即使 id 正确。

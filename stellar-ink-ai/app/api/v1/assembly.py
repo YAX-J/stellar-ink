@@ -105,9 +105,6 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
     reranker = registry.rerank_model() if config.enable_rerank else None
 
     chunks = corpus_module.cached_corpus()
-    if not chunks:
-        # 空语料不会报错，只会让每次检索都「无依据地拒答」—— 看起来像模型不行
-        raise CorpusError("语料为空：检索没有可查的内容（种子内容包没读到？）")
 
     with _lock:
         key = (corpus_module.EPOCH, config, runtime.fingerprint(), DENSE_STORE_ENABLED)
@@ -124,6 +121,7 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
                 embedder=embedder,
                 reranker=reranker,
                 dense_store=_shared_dense_store() if DENSE_STORE_ENABLED else None,
+                refresh_corpus=corpus_module.cached_corpus,
             )
             _pipelines[key] = cached
         return cached

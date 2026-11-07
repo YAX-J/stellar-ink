@@ -14,12 +14,17 @@ import com.stellarink.sharedmodel.vo.corpus.CorpusSyncResultVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 语料投影同步实现。
@@ -50,7 +55,8 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
     private final AiContentSnapshotMapper snapshotMapper;
 
     @Override
-    public CorpusSyncResultVO sync() {
+    @Transactional(rollbackFor = Exception.class)
+    public synchronized CorpusSyncResultVO sync() {
         LocalDateTime startedAt = LocalDateTime.now();
         CorpusSyncResultVO result = new CorpusSyncResultVO();
         result.setSyncedAt(startedAt);
@@ -66,6 +72,8 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
         result.setUpstream(upstream.size());
 
         List<AiContentSnapshot> local = snapshotMapper.selectList(new LambdaQueryWrapper<>());
+        Map<String, AiContentSnapshot> byKey = local.stream().collect(Collectors.toMap(
+                row -> key(row.getKind(), row.getContentId()), Function.identity()));
         Set<String> upstreamKeys = new HashSet<>();
         List<AiContentSnapshot> toInsert = new ArrayList<>();
         List<AiContentSnapshot> toUpdate = new ArrayList<>();
@@ -81,11 +89,8 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
                 if (key == null) {
                     continue;
                 }
-                AiContentSnapshot existing = local.stream()
-                        .filter(row -> key.equals(key(row.getKind(), row.getContentId())))
-                        .findFirst()
-                        .orElse(null);
-                boolean changed = existing == null || !existing.getDocHash().equals(item.getDocHash());
+                AiContentSnapshot existing = byKey.get(key);
+                boolean changed = existing == null || !Objects.equals(existing.getDocHash(), item.getDocHash());
 
                 // 正文只在**新增/变更**时回取：docHash 没变就说明上游那篇一字未动，沿用已存的正文即可
                 //（否则每轮都要把整库正文搬一遍，而语料之后可能上千篇）。
@@ -96,28 +101,29 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
                         // 清单里有、正文却取不到 = 上游认为它已不可公开（典型并发：刚转私有 / 刚下架）。
                         // **从严处理**：不把它算进 upstreamKeys —— 删除侧于是会清掉旧行。
                         // 绝不能沿用旧正文，那正是「私有内容继续被问答引用」的成因。
-                    skipped++;
+                        skipped++;
+                        continue;
+                    }
+                }
+                upstreamKeys.add(key);
+                if (existing == null) {
+                    toInsert.add(newRow(item, content, startedAt));
                     continue;
                 }
-            }
-
-            upstreamKeys.add(key);
-            if (existing == null) {
-                toInsert.add(newRow(item, content, startedAt));
-                continue;
-            }
-            if (changed) {
-                existing.setTitle(item.getTitle());
-                existing.setContent(content);
-                existing.setTags(item.getTags());
-                existing.setAuthorId(item.getAuthorId());
-                existing.setDocHash(item.getDocHash());
-                existing.setUpdatedAt(item.getUpdatedAt());
-                existing.setSyncedAt(startedAt);
-                toUpdate.add(existing);
-                continue;
-            }
-            unchanged++;
+                boolean metadataChanged = !Objects.equals(existing.getTags(), item.getTags())
+                        || !Objects.equals(existing.getAuthorId(), item.getAuthorId());
+                if (changed || metadataChanged) {
+                    existing.setTitle(item.getTitle());
+                    if (changed) existing.setContent(content);
+                    existing.setTags(item.getTags());
+                    existing.setAuthorId(item.getAuthorId());
+                    existing.setDocHash(item.getDocHash());
+                    existing.setUpdatedAt(item.getUpdatedAt());
+                    existing.setSyncedAt(startedAt);
+                    toUpdate.add(existing);
+                    continue;
+                }
+                unchanged++;
             }
         } catch (RuntimeException error) {
             return failed(result, "回取正文失败", error);
@@ -176,27 +182,46 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
     /** 翻页拉全量清单（清单不含正文，所以可以放心一次拉 1000 条）。 */
     private List<CorpusItemVO> fetchAll() {
         List<CorpusItemVO> all = new ArrayList<>();
-        LocalDateTime cursor = null;
+        String afterKind = null;
+        Long afterId = null;
+        Set<String> seen = new HashSet<>();
         for (int page = 0; page < MAX_PAGES; page++) {
-            Response<CorpusSliceVO> response = contentCorpusClient.slice(cursor, null, PAGE_LIMIT);
-            CorpusSliceVO slice = response == null ? null : response.getData();
-            if (slice == null || slice.getItems() == null || slice.getItems().isEmpty()) {
-                return all;
+            Response<CorpusSliceVO> response = contentCorpusClient.slice(null, null, PAGE_LIMIT, afterKind, afterId);
+            if (response == null || !Objects.equals(response.getCode(), 0) || response.getData() == null) {
+                throw new IllegalStateException("语料清单返回失败，禁止用部分清单执行删除");
+            }
+            CorpusSliceVO slice = response.getData();
+            if (slice.getItems() == null || slice.getTruncated() == null) {
+                throw new IllegalStateException("语料清单缺少条目或完整性标记");
+            }
+            String previousKind = afterKind;
+            Long previousId = afterId;
+            for (CorpusItemVO item : slice.getItems()) {
+                String kind = item == null || item.getKind() == null ? null : item.getKind().key();
+                Long id = item == null ? null : item.getId();
+                if (kind == null || id == null || id < 1 || item.getDocHash() == null
+                        || !advances(previousKind, previousId, kind, id)
+                        || !seen.add(key(kind, id))) {
+                    throw new IllegalStateException("语料清单条目无效、重复或游标未推进");
+                }
+                previousKind = kind;
+                previousId = id;
             }
             all.addAll(slice.getItems());
-            if (!Boolean.TRUE.equals(slice.getTruncated())) {
-                return all;
+            if (!slice.getTruncated()) return all;
+            if (slice.getItems().isEmpty() || !Objects.equals(previousKind, slice.getNextKind())
+                    || !Objects.equals(previousId, slice.getNextId())) {
+                throw new IllegalStateException("语料清单被截断但缺少有效的下一页游标");
             }
-            LocalDateTime next = slice.getMaxUpdatedAt();
-            if (next == null || next.equals(cursor)) {
-                // 游标没推进：再拉就是同一页。停下并留痕，别死循环
-                log.warn("语料清单翻页游标未推进（page={}，cursor={}），提前结束本轮拉取", page, cursor);
-                return all;
-            }
-            cursor = next;
+            afterKind = slice.getNextKind();
+            afterId = slice.getNextId();
         }
-        log.warn("语料清单翻页超过 {} 页，提前结束本轮拉取（已取 {} 条）", MAX_PAGES, all.size());
-        return all;
+        throw new IllegalStateException("语料清单超过翻页上限，禁止用部分清单执行删除");
+    }
+
+    private boolean advances(String previousKind, Long previousId, String kind, Long id) {
+        return previousKind == null || kind.compareTo(previousKind) > 0
+                || (kind.equals(previousKind) && id > previousId);
     }
 
     /**
@@ -210,7 +235,7 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
         Response<CorpusContentVO> response =
                 contentCorpusClient.content(item.getKind().key(), item.getId());
         if (response == null) {
-            return null;
+            throw new IllegalStateException("正文接口没有返回有效响应");
         }
         // ⚠️ 必须用 equals：ErrorCode.getCode() 是 Integer，404 超出 Integer 缓存区间（-128..127），
         // 用 `==` 比较装箱值**永远为假** —— 那这条分支与它的告警日志就永远不会生效。
@@ -220,7 +245,13 @@ public class CorpusSyncServiceImpl implements CorpusSyncService {
             return null;
         }
         CorpusContentVO data = response.getData();
-        return data == null ? null : data.getContent();
+        if (!Objects.equals(response.getCode(), 0) || data == null || data.getContent() == null) {
+            throw new IllegalStateException("正文接口返回失败，保留本轮快照");
+        }
+        if (!Objects.equals(data.getDocHash(), item.getDocHash())) {
+            throw new IllegalStateException("清单与正文版本不一致，请重试同步");
+        }
+        return data.getContent();
     }
 
     private AiContentSnapshot newRow(CorpusItemVO item, String content, LocalDateTime syncedAt) {

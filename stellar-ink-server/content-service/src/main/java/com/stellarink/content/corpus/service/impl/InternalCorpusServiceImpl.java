@@ -47,15 +47,26 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
     private final NoteMapper noteMapper;
 
     @Override
-    public CorpusSliceVO slice(LocalDateTime since, List<Long> ids, int limit) {
+    public CorpusSliceVO slice(LocalDateTime since, List<Long> ids, int limit, String afterKind, Long afterId) {
+        if ((afterKind == null) != (afterId == null)
+                || (afterKind != null && !List.of("note", "post").contains(afterKind))
+                || (afterId != null && afterId < 1)) {
+            throw BusinessExceptionHelper.of(ErrorCode.PARAM_ERROR, "afterKind / afterId 必须是完整有效的游标");
+        }
         int effectiveLimit = clampLimit(limit);
         List<Long> effectiveIds = (ids == null || ids.isEmpty()) ? null : ids;
 
         // 各取 limit+1：任何一个 kind 单独超过上限，都能被下面的 size > limit 判出来
-        List<Post> posts = postMapper.selectList(
-                postWrapper(since, effectiveIds).last("LIMIT " + (effectiveLimit + 1)));
-        List<Note> notes = noteMapper.selectList(
-                noteWrapper(since, effectiveIds).last("LIMIT " + (effectiveLimit + 1)));
+        LambdaQueryWrapper<Post> postQuery = postWrapper(since, effectiveIds);
+        LambdaQueryWrapper<Note> noteQuery = noteWrapper(since, effectiveIds);
+        if ("post".equals(afterKind)) {
+            postQuery.gt(Post::getId, afterId);
+        } else if ("note".equals(afterKind)) {
+            noteQuery.gt(Note::getId, afterId);
+        }
+        List<Post> posts = postMapper.selectList(postQuery.last("LIMIT " + (effectiveLimit + 1)));
+        List<Note> notes = "post".equals(afterKind) ? List.of()
+                : noteMapper.selectList(noteQuery.last("LIMIT " + (effectiveLimit + 1)));
 
         List<CorpusItemVO> merged = new ArrayList<>(posts.size() + notes.size());
         posts.forEach(post -> merged.add(toItem(CorpusKind.POST, post.getId(), post.getTitle(),
@@ -63,7 +74,7 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
         notes.forEach(note -> merged.add(toItem(CorpusKind.NOTE, note.getId(), note.getTitle(),
                 note.getContent(), note.getTags(), note.getUserId(), note.getUpdatedAt())));
         merged.sort(Comparator
-                .comparing(CorpusItemVO::getUpdatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .comparing((CorpusItemVO item) -> item.getKind().key())
                 .thenComparing(CorpusItemVO::getId));
 
         boolean truncated = merged.size() > effectiveLimit;
@@ -75,7 +86,13 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
         slice.setItems(items);
         slice.setTruncated(truncated);
         slice.setLimit(effectiveLimit);
-        slice.setMaxUpdatedAt(items.isEmpty() ? null : items.get(items.size() - 1).getUpdatedAt());
+        slice.setMaxUpdatedAt(items.stream().map(CorpusItemVO::getUpdatedAt)
+                .filter(java.util.Objects::nonNull).max(Comparator.naturalOrder()).orElse(null));
+        if (!items.isEmpty()) {
+            CorpusItemVO last = items.get(items.size() - 1);
+            slice.setNextKind(last.getKind().key());
+            slice.setNextId(last.getId());
+        }
         return slice;
     }
 
@@ -115,7 +132,7 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
         if (ids != null) {
             wrapper.in(Post::getId, ids);
         }
-        return wrapper.orderByAsc(Post::getUpdatedAt).orderByAsc(Post::getId);
+        return wrapper.orderByAsc(Post::getId);
     }
 
     /** 笔记：已发布 **且** 公开。少任何一个条件都意味着私有内容会进知识库。 */
@@ -129,7 +146,7 @@ public class InternalCorpusServiceImpl implements InternalCorpusService {
         if (ids != null) {
             wrapper.in(Note::getId, ids);
         }
-        return wrapper.orderByAsc(Note::getUpdatedAt).orderByAsc(Note::getId);
+        return wrapper.orderByAsc(Note::getId);
     }
 
     private CorpusItemVO toItem(CorpusKind kind, Long id, String title, String content,

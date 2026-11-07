@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -229,6 +229,8 @@ class RetrievalPipeline:
     dense_store: VectorStore | None = None
     #: 并发闸门：`None` = 不限制（单测与离线脚本用）
     max_concurrency: int | None = None
+    #: 线上装配注入实时公开视图；离线评测不需要网络复核。
+    refresh_corpus: Callable[[], list[IndexedChunk]] | None = None
     _gate: asyncio.Semaphore | None = field(default=None, init=False)
     _queue_times: list[float] = field(default_factory=list, init=False)
     _sparse: Bm25Index | None = field(default=None, init=False)
@@ -275,6 +277,8 @@ class RetrievalPipeline:
         换模型之后两边不在同一空间，而检索不会报错 —— 只会返回错的结果，
         所以这层校验是那种「链路全对、结果全错」唯一能自动发现的地方。
         """
+        if not self.corpus:
+            return
         if self.dense_store is not None and not self._fingerprint_checked:
             await self.dense_store.assert_model_fingerprint()
             self._fingerprint_checked = True
@@ -301,10 +305,23 @@ class RetrievalPipeline:
     async def retrieve(self, question: str, *, top_k: int) -> RetrievalOutcome:
         if top_k < 1:
             raise ValueError("top_k 必须为正")
+        visible = self._visible_positions()
+        if len(visible) != len(self.corpus):
+            # 不修改共享管道：同一实例可能正被另一请求使用。
+            current = RetrievalPipeline(
+                corpus=[chunk for index, chunk in enumerate(self.corpus) if index in visible],
+                config=self.config, embedder=self.embedder, reranker=self.reranker,
+                dense_store=self.dense_store, refresh_corpus=self.refresh_corpus,
+            )
+            return await current.retrieve(question, top_k=top_k)
+        if not self.corpus:
+            return RetrievalOutcome(posts=[], chunks=[], refused=True, latency_ms=0)
         await self.prepare()
         started = time.perf_counter()
 
         candidates = await self._gated(self._recall(question))
+        visible = self._visible_positions()
+        candidates = [candidate for candidate in candidates if candidate.chunk_index in visible]
         if not candidates:
             # 没有候选就是「没有依据」，如实拒答；不得返回空列表装作「待评估」
             record_event(
@@ -320,6 +337,8 @@ class RetrievalPipeline:
             )
 
         ranked = await self._rerank(question, candidates)
+        visible = self._visible_positions()
+        ranked = [candidate for candidate in ranked if candidate.chunk_index in visible]
 
         def key_of(candidate: ScoredChunk) -> tuple[str, int]:
             """文档标识：`(kind, id)`。文章 3 与笔记 3 是两个文档。"""
@@ -369,10 +388,16 @@ class RetrievalPipeline:
             # 笔记命中在 hits 里，每条带 kind —— 引用组装与提示词用的是那一份。
             posts=[post_id for kind, post_id in accepted if kind == "post"],
             chunks=chunks,
-            refused=False,
+            refused=not accepted,
             latency_ms=_elapsed_ms(started),
             hits=hits,
         )
+
+    def _visible_positions(self) -> set[int]:
+        if self.refresh_corpus is None:
+            return set(range(len(self.corpus)))
+        allowed = {chunk.chunk_id for chunk in self.refresh_corpus()}
+        return {index for index, chunk in enumerate(self.corpus) if chunk.chunk_id in allowed}
 
     async def _gated(self, work: Awaitable[list[ScoredChunk]]) -> list[ScoredChunk]:
         """并发闸门：只包住**召回**这一段。
@@ -434,6 +459,7 @@ class RetrievalPipeline:
                     source="dense",
                 )
                 for hit in hits
+                if hit.chunk_id in self._positions or self.refresh_corpus is None
             ]
 
         if self._vectors is None:  # pragma: no cover - prepare() 已算好

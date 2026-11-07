@@ -69,8 +69,8 @@ class InternalCorpusServiceImplTest {
         CorpusSliceVO slice = service.slice(null, null, 10);
 
         assertThat(slice.getItems()).hasSize(2);
-        assertThat(slice.getItems().get(0).getKind()).isEqualTo(CorpusKind.POST);
-        assertThat(slice.getItems().get(1).getKind()).isEqualTo(CorpusKind.NOTE);
+        assertThat(slice.getItems().get(0).getKind()).isEqualTo(CorpusKind.NOTE);
+        assertThat(slice.getItems().get(1).getKind()).isEqualTo(CorpusKind.POST);
 
         String postSql = capturedWrapper(postMapper).getSqlSegment();
         assertThat(postSql).contains("status");
@@ -148,6 +148,44 @@ class InternalCorpusServiceImplTest {
         assertThat(service.slice(null, null, 99999).getLimit())
                 .isEqualTo(InternalCorpusService.MAX_LIMIT);
         assertThat(service.slice(null, null, 5).getTruncated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("同一秒的一千零一篇不会被时间游标跳过，续页只按 ID 推进")
+    void pagesAcrossIdenticalTimestamps() {
+        List<Post> posts = new ArrayList<>();
+        LocalDateTime same = LocalDateTime.of(2026, 11, 7, 10, 0);
+        for (long id = 1; id <= 1001; id++) {
+            Post post = post(id, "标题", "正文", 1);
+            post.setUpdatedAt(same);
+            posts.add(post);
+        }
+        when(postMapper.selectList(any())).thenReturn(posts, List.of(posts.get(1000)));
+        when(noteMapper.selectList(any())).thenReturn(List.of());
+        CorpusSliceVO first = service.slice(null, null, 1000);
+        CorpusSliceVO second = service.slice(null, null, 1000, first.getNextKind(), first.getNextId());
+        assertThat(first.getItems()).hasSize(1000);
+        assertThat(first.getNextKind()).isEqualTo("post");
+        assertThat(first.getNextId()).isEqualTo(1000L);
+        assertThat(second.getItems()).extracting(value -> value.getId()).containsExactly(1001L);
+        assertThat(second.getTruncated()).isFalse();
+        ArgumentCaptor<LambdaQueryWrapper<Post>> captor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        org.mockito.Mockito.verify(postMapper, org.mockito.Mockito.times(2)).selectList(captor.capture());
+        String sql = captor.getAllValues().get(1).getSqlSegment();
+        assertThat(sql).contains("id >").doesNotContain("updated_at >");
+    }
+
+    @Test
+    @DisplayName("类型跨页与同号内容互不跳过；不完整游标拒绝执行")
+    void cursorIncludesKindAndRejectsPartialValues() {
+        when(noteMapper.selectList(any())).thenReturn(List.of(note(1L, "笔记", "正文", NoteVisibility.PUBLIC, 1)));
+        when(postMapper.selectList(any())).thenReturn(List.of(post(1L, "文章", "正文", 1)));
+        CorpusSliceVO first = service.slice(null, null, 1);
+        assertThat(first.getNextKind()).isEqualTo("note");
+        CorpusSliceVO next = service.slice(null, null, 1, "post", 1L);
+        assertThat(next.getNextKind()).isEqualTo("post");
+        assertThatThrownBy(() -> service.slice(null, null, 1, "post", null))
+                .isInstanceOf(BusinessException.class);
     }
 
     @Test

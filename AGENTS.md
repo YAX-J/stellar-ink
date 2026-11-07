@@ -282,7 +282,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   注册固定 READER，种子账号 stellar 为 ADMIN。
 - ⚠️ **角色变更需重新登录才生效**：`PUT /user/{id}/role` 只改库、不重签 JWT，而网关读的是 token 里的
   `role` extra。调整角色后必须让该用户重新登录，新角色才会生效（后续可考虑实现「重新签发 token」）。
-- 当前两个业务服务之间没有同步调用；将来确需跨服务调用时再建立独立契约模块，
+- user 与 content 不互调；ai-service 通过独立 `stellar-ink-content-client` 读取公开语料，
   使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
 
@@ -478,6 +478,14 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   改判定只改 `JwtSecretPolicy` 一处，两侧单测（`SecretGuardTest` / `GatewaySecretGuardTest`）同时盯住。
 
 ### AI 模块口径（M0 起建立，后续按里程碑扩展）
+
+- **语料完整性与撤回（2026-11-07）**：内部清单按 `(kind, id)` 稳定分页，`since` 仅过滤修改时间；
+  `truncated=true` 必须携带 `nextKind/nextId` 续拉。任何业务错误、缺游标、重复/倒退、超页数均整轮失败，
+  不得用部分清单执行删除；快照写入有事务，标签与作者等元数据单独同步。
+  Python 在使用语料及检索阶段实时向 content-service 复核公开版本（`CONTENT_SERVICE_URL` 与 Java 同键），
+  撤回/旧版本不得继续进入模型。内容服务不可达时 fail-closed；TTL 只控制投影新鲜度。
+  `AI_CORPUS_SOURCE` 默认 `online`，空库保持空、来源失败报 503；`seed` 仅显式用于离线开发/测试，
+  `AI_APP_ENV=test/prod` 禁用 seed，禁止把种子回退当线上恢复措施。
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、
   切块、Embedding、向量检索、BM25/RRF、Rerank、引用组装、Agent 状态图与工具、记忆、GraphRAG、
   评测与 Trace，全部只在 `stellar-ink-ai` 实现。Java 侧（`ai-service` / `stellar-ink-ai-client`）

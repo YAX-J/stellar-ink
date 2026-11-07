@@ -16,15 +16,21 @@ import java.util.List;
 @Data
 public class CorpusSliceVO {
 
-    /** 本页条目（按 updatedAt 升序，id 升序；便于用 updatedAt 做游标续拉）。 */
+    /** 本页条目按 kind 的字面量、id 升序；修改时间不参与翻页，避免同秒更新漏项。 */
     private List<CorpusItemVO> items;
 
-    /** 是否还有没返回的条目（true 时用 {@link #maxUpdatedAt} 作为下次的 since）。 */
+    /** 是否还有条目；为 true 时必须携带 nextKind / nextId 续拉。 */
     private Boolean truncated;
 
     /** 本次实际生效的上限（回显，便于调用方判断是不是自己传的值被夹住了）。 */
     private Integer limit;
 
-    /** 本页里最大的 updatedAt（游标）。没有条目时为 null。 */
+    /** 本页最大的修改时间，仅作信息展示，不再作为翻页游标。 */
     private LocalDateTime maxUpdatedAt;
+
+    /** 本页最后一条的内容类型；与 nextId 组成稳定游标。 */
+    private String nextKind;
+
+    /** 本页最后一条的 ID；文章与笔记即使同号，也不会相互跳过。 */
+    private Long nextId;
 }

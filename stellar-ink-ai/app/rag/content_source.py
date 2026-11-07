@@ -16,7 +16,7 @@
 索引删除也要按 `(kind, id)` 删 —— 只按数字 id 删，重建笔记会顺手删掉同号文章。
 
 ⚠️ 与 `kind` 无关的一条既有保证：**投影表里没有的东西，本模块不会变出来**
-（种子包回退只用于「迁移没跑 / 连不上库」，详见 `corpus.py`）。
+（线上来源失败必须报错，显式离线 seed 模式才读取种子包，详见 `corpus.py`）。
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def load_snapshot_docs() -> list[SnapshotDoc]:
     """读投影表里的已发布文档（文章 + 公开笔记）。
 
     :raises CorpusSourceUnavailable: 表不存在 / 连不上库 / 没装 PyMySQL
-        —— 都表示「这次读不到线上语料」（调用方据此回退种子包）
+        —— 都表示「这次读不到线上语料」，调用方必须停止使用旧内容
     """
     if not mysql_configured():
         raise CorpusSourceUnavailable(

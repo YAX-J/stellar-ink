@@ -35,6 +35,7 @@ from app.providers.errors import (
     ProviderRateLimitError,
     UnsupportedCapabilityError,
 )
+from app.rag.content_source import CorpusSourceUnavailable
 from app.schemas.common import AiErrorCode
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,15 @@ def create_app(verifier: InternalRequestVerifier | None = None) -> FastAPI:
         redoc_url=None,
     )
     resolved_verifier = verifier if verifier is not None else build_verifier()
+
+    @application.exception_handler(CorpusSourceUnavailable)
+    async def handle_corpus_unavailable(_: Request, error: CorpusSourceUnavailable) -> JSONResponse:
+        logger.warning("语料来源或公开状态复核不可用：%s", error)
+        return JSONResponse(status_code=503, content={
+            "code": "AI_SERVICE_UNAVAILABLE",
+            "message": "语料暂时不可用，请检查语料同步与内容服务后重试",
+            "traceId": current_trace_id(),
+        })
 
     # 中间件顺序：先追溯 traceId，再验签（验签失败日志里也要有 traceId 才能对读两侧日志）
     application.add_middleware(InternalAuthMiddleware, verifier=resolved_verifier)

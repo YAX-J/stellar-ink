@@ -58,7 +58,9 @@ def _install_docs(monkeypatch: pytest.MonkeyPatch, docs: list[SnapshotDoc]) -> d
         calls["n"] += 1
         return list(docs)
 
+    monkeypatch.setenv("AI_CORPUS_SOURCE", "online")
     monkeypatch.setattr(corpus_module, "load_snapshot_docs", loader)
+    monkeypatch.setattr(corpus_module, "visible_docs", lambda values: tuple(values))
     return calls
 
 

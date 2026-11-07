@@ -132,6 +132,52 @@ def test_corpus_keeps_child_chunks_with_title_prefix() -> None:
     assert corpus[0].chunk_id.endswith(":c0") or ":c" in corpus[0].chunk_id
 
 
+async def test_withdrawn_text_is_not_returned_from_stale_store() -> None:
+    """旧 Qdrant 点仍在，也不能让已撤回的正文重新进入上下文。"""
+    chunks = build_corpus([A, B, C])
+    visible = [chunks[0], chunks[2]]
+    store = _VectorStore([
+        _Hit(chunk_id=chunks[1].chunk_id, post_id=2, score=0.99),
+        _Hit(chunk_id=chunks[0].chunk_id, post_id=1, score=0.8),
+    ])
+    pipeline = _pipeline(RetrievalConfig(enable_sparse=False, enable_dense=True),
+                         embedder=_Embedder(_vector_for), dense_store=store, corpus=chunks)
+    pipeline.refresh_corpus = lambda: visible
+    result = await pipeline.retrieve("苹果", top_k=2)
+    assert result.posts == [1]
+    assert all(hit.post_id != 2 for hit in result.hits)
+
+
+async def test_withdrawal_during_recall_never_reaches_reranker() -> None:
+    chunks = build_corpus([A, B, C])
+    visible = list(chunks)
+
+    class WithdrawingStore(_VectorStore):
+        async def search(self, vector, *, top_k, score_threshold=None):
+            visible.clear()
+            return self._hits
+
+    store = WithdrawingStore([_Hit(chunk_id=chunks[0].chunk_id, post_id=1, score=0.9)])
+    reranker = _Reranker()
+    pipeline = _pipeline(
+        RetrievalConfig(enable_sparse=False, enable_dense=True, enable_rerank=True),
+        embedder=_Embedder(_vector_for), dense_store=store, reranker=reranker, corpus=chunks,
+    )
+    pipeline.refresh_corpus = lambda: visible
+    result = await pipeline.retrieve("苹果", top_k=2)
+    assert result.refused
+    assert result.hits == []
+    assert reranker.seen == []
+
+
+async def test_empty_public_corpus_refuses_without_model_calls() -> None:
+    embedder = _Embedder(_vector_for)
+    pipeline = _pipeline(RetrievalConfig(enable_dense=True), embedder=embedder, corpus=[])
+    result = await pipeline.retrieve("苹果", top_k=2)
+    assert result.refused
+    assert embedder.calls == []
+
+
 def test_config_rejects_empty_and_negative_settings() -> None:
     with pytest.raises(ValueError, match="至少要启用一路召回"):
         RetrievalConfig(enable_sparse=False, enable_dense=False)

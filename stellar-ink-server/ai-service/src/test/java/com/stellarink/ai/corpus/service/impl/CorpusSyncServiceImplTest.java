@@ -119,7 +119,7 @@ class CorpusSyncServiceImplTest {
     @DisplayName("拉取失败：一行都不删、不写，只如实回报失败原因")
     void neverWipesWhenUpstreamFails() {
         when(mapper.selectCount(any())).thenReturn(3L);
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenThrow(new IllegalStateException("connect timed out"));
 
         CorpusSyncResultVO result = service.sync();
@@ -138,8 +138,8 @@ class CorpusSyncServiceImplTest {
         CorpusSliceVO first = slice(List.of(item(CorpusKind.POST, 1L, "一", "h1")),
                 true, LocalDateTime.of(2026, 10, 4, 10, 0));
         CorpusSliceVO second = slice(List.of(item(CorpusKind.POST, 2L, "二", "h2")), false, null);
-        when(client.slice(isNull(), isNull(), anyInt())).thenReturn(Response.success(first));
-        when(client.slice(LocalDateTime.of(2026, 10, 4, 10, 0), null, 1000))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull())).thenReturn(Response.success(first));
+        when(client.slice(null, null, 1000, "post", 1L))
                 .thenReturn(Response.success(second));
         when(client.content("post", 1L))
                 .thenReturn(Response.success(contentVO(CorpusKind.POST, 1L, "正文一")));
@@ -157,23 +157,25 @@ class CorpusSyncServiceImplTest {
     @DisplayName("游标不推进时提前结束，不死循环（上游有 bug 也不能把服务挂住）")
     void stopsWhenCursorDoesNotAdvance() {
         LocalDateTime stuck = LocalDateTime.of(2026, 10, 4, 10, 0);
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenReturn(Response.success(slice(List.of(item(CorpusKind.POST, 1L, "一", "h1")), true, stuck)));
-        when(client.slice(stuck, null, 1000))
+        when(client.slice(null, null, 1000, "post", 1L))
                 .thenReturn(Response.success(slice(List.of(item(CorpusKind.POST, 1L, "一", "h1")), true, stuck)));
 
         CorpusSyncResultVO result = service.sync();
 
         // 只应拉两页就停（第一页 + 游标不动的那一页），而不是 MAX_PAGES 页
-        verify(client, times(2)).slice(any(), any(), anyInt());
-        assertThat(result.isFailed()).isFalse();
+        verify(client, times(2)).slice(any(), any(), anyInt(), any(), any());
+        assertThat(result.isFailed()).isTrue();
+        verify(mapper, never()).deleteByIds(any());
+        verify(mapper, never()).insert(any(AiContentSnapshot.class));
     }
 
     @Test
     @DisplayName("上游为空 = 真的没有公开内容：删除全部（隐私优先于可恢复成本）")
     void emptyUpstreamRemovesEverything() {
         when(mapper.selectList(any())).thenReturn(List.of(row(10L, "post", 1L, "h1")));
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenReturn(Response.success(slice(List.of(), false, null)));
 
         CorpusSyncResultVO result = service.sync();
@@ -222,7 +224,7 @@ class CorpusSyncServiceImplTest {
     void unavailableContentIsTreatedAsNotPublic() {
         when(mapper.selectList(any())).thenReturn(List.of(row(11L, "note", 2L, "hash-old")));
         CorpusItemVO item = item(CorpusKind.NOTE, 2L, "笔记二", "hash-new");
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenReturn(Response.success(slice(List.of(item), false, null)));
         Response<CorpusContentVO> notFound = new Response<>();
         notFound.setCode(404);
@@ -243,7 +245,7 @@ class CorpusSyncServiceImplTest {
     void contentFetchFailureAbortsRound() {
         when(mapper.selectCount(any())).thenReturn(1L);
         CorpusItemVO item = item(CorpusKind.POST, 1L, "文章一", "hash-1");
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenReturn(Response.success(slice(List.of(item), false, null)));
         when(client.content("post", 1L)).thenThrow(new IllegalStateException("read timed out"));
 
@@ -256,33 +258,94 @@ class CorpusSyncServiceImplTest {
     }
 
     private void mockUpstream(List<CorpusItemVO> items) {
-        when(client.slice(isNull(), isNull(), anyInt()))
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
                 .thenReturn(Response.success(slice(items, false, null)));
         // 正文按单篇回取（清单不含正文）—— 默认给一条可用的正文
         for (CorpusItemVO item : items) {
             when(client.content(item.getKind().key(), item.getId()))
                     .thenReturn(Response.success(contentVO(item.getKind(), item.getId(),
-                            "正文-" + item.getId())));
+                            "正文-" + item.getId(), item.getDocHash())));
         }
     }
 
+    @Test
+    @DisplayName("HTTP 200 但业务失败不等于空清单，禁止清库")
+    void businessFailureNeverDeletesSnapshots() {
+        Response<CorpusSliceVO> response = new Response<>();
+        response.setCode(500);
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull())).thenReturn(response);
+        assertThat(service.sync().isFailed()).isTrue();
+        verify(mapper, never()).deleteByIds(any());
+        verify(mapper, never()).insert(any(AiContentSnapshot.class));
+    }
+
+    @Test
+    @DisplayName("被截断但无游标的清单不能进入删除阶段")
+    void missingCursorNeverDeletesSnapshots() {
+        CorpusSliceVO page = slice(List.of(item(CorpusKind.POST, 1L, "一", "h1")), true, null);
+        page.setNextId(null);
+        when(client.slice(isNull(), isNull(), anyInt(), isNull(), isNull()))
+                .thenReturn(Response.success(page));
+        assertThat(service.sync().isFailed()).isTrue();
+        verify(mapper, never()).deleteByIds(any());
+    }
+
+    @Test
+    @DisplayName("只改标签仍更新投影，不重复拉取正文")
+    void metadataChangesDoNotRequireAnotherContentFetch() {
+        AiContentSnapshot row = row(10L, "post", 1L, "hash-1");
+        row.setTags("旧标签");
+        when(mapper.selectList(any())).thenReturn(List.of(row));
+        mockUpstream(List.of(item(CorpusKind.POST, 1L, "文章一", "hash-1")));
+        assertThat(service.sync().getUpdated()).isEqualTo(1);
+        verify(client, never()).content("post", 1L);
+        verify(mapper).updateById(row);
+        assertThat(row.getTags()).isEqualTo("写作,效率");
+    }
+
+    @Test
+    @DisplayName("正文接口业务失败或正文版本改变时保留快照，不能当成撤回")
+    void failedOrRacingContentNeverDeletesSnapshots() {
+        mockUpstream(List.of(item(CorpusKind.POST, 1L, "一", "h1")));
+        Response<CorpusContentVO> response = new Response<>();
+        response.setCode(500);
+        when(client.content("post", 1L)).thenReturn(response);
+        assertThat(service.sync().isFailed()).isTrue();
+        when(client.content("post", 1L))
+                .thenReturn(Response.success(contentVO(CorpusKind.POST, 1L, "新版正文", "h2")));
+        assertThat(service.sync().isFailed()).isTrue();
+        verify(mapper, never()).deleteByIds(any());
+        verify(mapper, never()).insert(any(AiContentSnapshot.class));
+    }
+
     private CorpusContentVO contentVO(CorpusKind kind, Long id, String content) {
+        return contentVO(kind, id, content, "h" + id);
+    }
+
+    private CorpusContentVO contentVO(CorpusKind kind, Long id, String content, String hash) {
         CorpusContentVO vo = new CorpusContentVO();
         vo.setKind(kind);
         vo.setId(id);
         vo.setTitle("标题");
         vo.setContent(content);
-        vo.setDocHash("hash");
+        vo.setDocHash(hash);
         vo.setUpdatedAt(LocalDateTime.of(2026, 10, 4, 10, 0));
         return vo;
     }
 
     private CorpusSliceVO slice(List<CorpusItemVO> items, boolean truncated, LocalDateTime maxUpdatedAt) {
         CorpusSliceVO slice = new CorpusSliceVO();
-        slice.setItems(new ArrayList<>(items));
+        List<CorpusItemVO> sorted = new ArrayList<>(items);
+        sorted.sort(java.util.Comparator.comparing((CorpusItemVO value) -> value.getKind().key())
+                .thenComparing(CorpusItemVO::getId));
+        slice.setItems(sorted);
         slice.setTruncated(truncated);
         slice.setLimit(1000);
         slice.setMaxUpdatedAt(maxUpdatedAt);
+        if (!items.isEmpty()) {
+            slice.setNextKind(items.get(items.size() - 1).getKind().key());
+            slice.setNextId(items.get(items.size() - 1).getId());
+        }
         return slice;
     }
 
@@ -305,6 +368,8 @@ class CorpusSyncServiceImplTest {
         row.setContentId(contentId);
         row.setTitle("标题");
         row.setDocHash(docHash);
+        row.setTags("写作,效率");
+        row.setAuthorId(7L);
         row.setWordCount(0);
         row.setUpdatedAt(LocalDateTime.of(2026, 10, 4, 10, 0));
         row.setSyncedAt(LocalDateTime.of(2026, 10, 4, 10, 0));

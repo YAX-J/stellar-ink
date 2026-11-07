@@ -1248,16 +1248,17 @@ curl -s http://127.0.0.1:8080/ai/admin/trace/<traceId> -H "Authorization: <ADMIN
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/internal/corpus` | 语料清单（**不含正文**）：`{items:[{kind,id,title,docHash,updatedAt}], truncated, limit, maxUpdatedAt}` |
+| GET | `/internal/corpus` | 语料清单（**不含正文**）：`{items:[{kind,id,title,docHash,updatedAt}], truncated, limit, maxUpdatedAt, nextKind, nextId}` |
 | GET | `/internal/corpus/{kind}/{id}` | 单篇正文（嵌入用）：`{kind,id,title,content,tags,docHash,updatedAt}`；草稿/私有/已删除一律 404 |
 
 `/internal/corpus` 查询参数：
 
 | 参数 | 说明 |
 |---|---|
-| `since` | ISO-8601（`2026-10-04T18:00:00`）。只返回该时间**之后**修改的（**严格大于**），用于游标续拉 |
+| `since` | ISO-8601（`2026-10-04T18:00:00`）。只返回该时间**之后**修改的（**严格大于**），仅用于时间过滤；不再用它翻页 |
+| `afterKind` / `afterId` | 稳定的复合游标，必须成对提供；类型为 note/post、ID > 0。排序为 kind 字面量升序、ID 升序，同号与同秒修改均不会漏项 |
 | `ids` | 如 `?ids=1,2,3`。注意文章与笔记 id 各自自增，这里是「两种 kind 里 id 命中的都要」；要精确定位用单篇接口 |
-| `limit` | 默认 500、上限 1000；传 0 或负数按默认值处理。`truncated=true` 时用返回的 `maxUpdatedAt` 作为下次的 `since` |
+| `limit` | 默认 500、上限 1000；传 0 或负数按默认值处理。`truncated=true` 时用返回的 `nextKind/nextId` 续拉，保留原来的 since/ids 条件 |
 
 ```bash
 # 全量清单（本机直连，不经网关）
@@ -1269,6 +1270,11 @@ curl -s "http://127.0.0.1:8102/internal/corpus/post/1"
 ⚠️ `docHash` 是**整篇**（标题+正文）的 SHA-256，用途是「这篇有没有变」；
 它与索引 payload 里**每个子块**的 `contentHash`（Python 切块时算的，用途是「索引锚点还对得上原文吗」）
 **不是一回事**，不要互换使用。
+
+语料同步只在拿到完整清单后写入；HTTP 200 + 业务失败、缺少游标、重复/倒退条目或达到翻页上限均中止，
+保留快照。清单与正文版本不一致同样中止；明确 404 才按撤回清理。
+Python 使用投影语料前通过同一个清单接口实时复核 `(kind,id,docHash)`；不可公开或正文版本已变则排除，
+复核失败返回 503。投影为空时保持空语料，新检索返回无依据；不自动回退种子包。
 
 ## 数据库
 

@@ -63,10 +63,9 @@ stellar-ink-ai/                Python AI 编排服务（8200，M0-1 起；仅内
 > `post`（星/文章）与 `note`（标本/技术笔记）是两张独立表：文章重文笔、天然公开；
 > 笔记结构化、**可私有**（`visibility`）、会过期（`verified_at`）。两者边界不同，因此不合并为一张表。
 
-**AI 边界**（与其它两个业务服务的区别）：ai-service 不拥有任何业务表，
-**没有数据源与 Redis 依赖**（`DataSourceAutoConfiguration` 与公共模块的 MyBatis-Plus/Redis Bean 被显式排除），
-也不直接读写 `post`/`user`。文章数据将来由 content-service 的内部契约提供（M3），
-草稿只随当前作者请求临时传输。
+**AI 边界**：ai-service 拥有 `ai_*` 表，使用数据源、MyBatis-Plus 与 Redis 配额计数，
+不直接读写 `post`/`note`/`user`。公开内容由 `stellar-ink-content-client` 内部契约读取并投影，
+Python 只读 AI 投影表；草稿只随当前作者请求临时传输。
 
 **AI 能力的代码归属**：模型调用与厂商 SDK、Prompt、结构化输出校验、切块与嵌入、检索与重排、
 引用组装、Agent 与工具、记忆、GraphRAG、评测 Trace **一律写在 Python（`stellar-ink-ai`）**；
@@ -76,6 +75,15 @@ Java 的 `ai-service` 只负责鉴权与角色、配额与审计、HTTP/SSE 协�
 AI 技术路线与实施顺序见
 [docs/ai/README.md](../ai/README.md) 与 [docs/ai/implementation-roadmap.md](../ai/implementation-roadmap.md)，
 每轮开发流程见 [docs/ai/development-workflow.md](../ai/development-workflow.md)。
+## 语料一致性与环境隔离（2026-11-07）
+
+- 清单按 `(kind,id)` 分页，不用易重复且会变动的更新时间作游标。只有完整拉取成功才允许删除旧投影，
+  所有快照写入处于同一事务；元数据更新不强迫重新取正文。
+- 投影的五分钟同步与 Python 的六十秒 TTL 只影响新鲜度。Python 使用语料及检索阶段实时读取
+  content-service 的公开版本，剔除已撤回与已修改的旧正文；复核失败停止请求。
+  已经发出的模型调用与已经交付给用户的内容不能追溯收回。
+- 线上无种子自动回退；只有显式的离线 `AI_CORPUS_SOURCE=seed` 使用种子，test/prod 拒绝此模式。
+  Java 和 Python 的内容服务地址统一为 `CONTENT_SERVICE_URL`，Docker 显式注入 `http://content-service:8102`。
 
 ## 为什么收敛为两个业务服务
 
@@ -126,7 +134,7 @@ AI 技术路线与实施顺序见
 > `cos` 腾讯云对象存储（生产用香港桶，图片域名经 Cloudflare Worker 代理暴露，见 `deploy/cloudflare/README.md`）。
 > 方案、部署形态、迁移与回滚见 [avatar-minio.md](avatar-minio.md)。
 
-当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表，也没有同步服务调用。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
+当前使用一个 `stellar_ink` 数据库。服务之间不直接访问对方负责的表；ai-service 经内部契约调用 content-service，同步公开语料。统计逻辑与文章同进程，直接通过 `PostMapper` 查询已发布文章。
 
 ## 空闲保活：远端 Redis / MySQL 都躲不开的那件事
 
