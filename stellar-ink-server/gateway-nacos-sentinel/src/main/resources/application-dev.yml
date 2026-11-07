@@ -12,18 +12,18 @@ spring:
       config:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         file-extension: yaml  # 明确指定为 yaml
-        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}  # 命名空间（默认 public）
+        namespace: ${NACOS_NAMESPACE:stellar-ink-test}  # 本机命名空间
         group: DEFAULT_GROUP
         refresh-enabled: true  # 开启配置动态刷新
       # 服务发现
       discovery:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
-        server-addr: ${NACOS_ADDR:124.221.158.32:8848}
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         group: DEFAULT_GROUP
-        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        namespace: ${NACOS_NAMESPACE:stellar-ink-test}
 
     # 网关配置
     gateway:

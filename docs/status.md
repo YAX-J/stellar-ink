@@ -8,6 +8,9 @@
 
 ## 1. 平台与基础设施
 
+- 本机命名空间按用户要求统一为 `stellar-ink-test`（config/discovery、启动脚本与 IDEA 配置同步）；
+  开发仍连本机 Nacos，测试机仍连测试机 Nacos，同名空间由不同地址隔离。
+
 - 后端微服务化完成：网关 `:8080`（路由 / CORS / Sa-Token 鉴权 / Sentinel）+ user `:8101` +
   content `:8102` + ai `:8107`，注册与配置走 Nacos，Python `stellar-ink-ai :8200` 仅内网可达。
 - 鉴权：Sa-Token JWT 无状态；**JWT 可撤销**（登出/改密把令牌摘要写 Redis，网关路由前校验，fail-closed）；
@@ -25,7 +28,13 @@
   Druid 连接池、AI 配额触顶四档、AI 成本与两个成本缺口、Python 可用性。
   **通知通道默认关闭**（需要你填接收地址，模板见 `observability/alertmanager/*.example`）——
   这是刻意的，不是缺陷。口径见 [`architecture/observability.md`](architecture/observability.md)。
-- 本机开发默认连本机 Redis + MySQL、Nacos 留远端；**本机库与服务器库是两份数据，互不同步**。
+- 本机开发默认连本机 Redis / MySQL / Nacos，本机 dev/stellar-ink-test 与测试机 test/stellar-ink-test 由不同 Nacos 地址隔离；
+  四个 Java 服务默认地址统一，Compose 显式共用 profile 与 namespace。本机库与服务器库互不同步。
+- 2026-11-07：内部语料改为 kind+id 稳定分页，异常/截断不完整时禁止删除快照，写入事务化；
+  AI 实时复核公开版本，撤回不再等待五分钟同步与 TTL，线上空库/失败不回退种子。
+  Docker 新库自动补齐全部 AI 表，旧库有统一清单驱动的幂等迁移脚本。
+  验证：Java 500 项、Python 997 项（跳过 1 项）、前端 check 通过；真实 MySQL 初始化及重复迁移、
+  网关分页与热缓存撤回冒烟通过。本机已有库已补齐 AI 迁移，测试 Nacos 已创建独立空间；未部署生产。
 
 ## 2. 后端功能
 
@@ -62,6 +71,7 @@
 - 友链审核闭环：公开只返回已接入项，ADMIN 在账号页通过/驳回。
 
 ## 3. 前端
+
 
 - 页面：此刻 / 执笔 / 星图 / 寻星 / 笔记（列表·我的·详情·编辑）/ 流星 / 回声 / 星链 / 深读 /
   登录 / 注册 / 账号 / 搜索 / 404；全部经网关取数（`api/client.js` + Pinia stores）。

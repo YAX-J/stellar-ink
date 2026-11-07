@@ -81,12 +81,31 @@ vi .env
 
 > ⚠️ 别忘了把 Cloudflare Origin 证书放到 `data/certs/origin.pem` 与 `origin.key`（第五节第 1 条），否则 web 容器起不来。
 
+### 环境切换
+
+开发默认本机 Nacos/stellar-ink-test。测试部署在同一份 .env 里设置 `SPRING_PROFILES_ACTIVE=test`、
+`NACOS_NAMESPACE=stellar-ink-test`、`AI_APP_ENV=test`；先针对目标 Nacos 执行
+`python deploy/scripts/init-nacos-namespace.py`。生产使用模板里的 prod 与生产 namespace。
+四个 Java 服务（含 ai-service）共用这些变量，测试不能沿用生产 namespace。
+宿主机提供中间件时设置 NACOS_ADDR / MYSQL_HOST / REDIS_HOST 为 host.docker.internal；
+selfcontained 档保留容器服务名。Python 的语料复核只通过编排内网 content-service，不暴露新公网路由。
+
 ### 2. 数据库初始化：首次启动自动完成
 
 `mysql` 容器**首次启动**（数据卷为空）时会自动按文件名顺序执行挂载到 `/docker-entrypoint-initdb.d` 的：
 
 - `01_schema.sql` —— 建表（当前完整结构）
 - `02_init-data.sql` —— 种子内容（文章/笔记/流星/回声/友链/评论/用户）
+- `mysql/03_ai.sh` —— 按 `deploy/sql/ai-migrations.txt` 顺序执行全部 AI 迁移（10–21）
+
+现有数据卷不会重新运行初始化脚本。已有库补齐 AI 表可执行：
+
+```bash
+docker compose exec mysql bash /docker-entrypoint-initdb.d/03_ai.sh
+```
+
+宿主机/Windows 使用 `MYSQL_*` 环境变量与 `python deploy/scripts/migrate-ai.py`，必须显式设置 MYSQL_DB。
+两条路径使用同一份迁移清单，可重复执行，不重置模型、记忆或内容。不要为补表删除数据卷。
 
 库名取自 `MYSQL_DB`，业务账号由容器按 `MYSQL_USER` / `MYSQL_PASSWORD` 自动创建并授权。
 
@@ -107,7 +126,7 @@ vi .env
 >   stellar_ink -e "SELECT id, LEFT(title,20) AS title FROM post ORDER BY id DESC LIMIT 3;"
 > ```
 
-**只挂这两个文件是刻意的**：`01_schema.sql` 已包含全部历史变更（`post_glow`、`post_view`、`post_comment`、
+**博客基础脚本与 AI 迁移分开执行**：`01_schema.sql` 已包含全部历史变更（`post_glow`、`post_view`、`post_comment`、
 `note`、`user.avatar_url`、`user.role_applied_at` 都在里面），而 `03`–`09` 是给**早期已有库**做增量升级的，
 在全新库上重复执行会报「列已存在」。
 

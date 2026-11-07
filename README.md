@@ -1,6 +1,6 @@
 # 星笺 · STELLAR INK
 
-星笺是一个将文章比作星辰的夜间写作博客。前端以深色星空、缓慢和诗意为视觉基调；后端使用 Spring Cloud Alibaba，将运行边界收敛为网关、用户服务和内容服务。
+星笺是一个将文章比作星辰的夜间写作博客。前端以深色星空、缓慢和诗意为视觉基调；后端使用 Spring Cloud Alibaba，按网关、身份、内容和 AI 划分运行边界，Python 负责 AI 编排。
 
 ## 当前架构
 
@@ -13,7 +13,8 @@ Vue 3 + Nginx
   ▼
 gateway-nacos-sentinel :8080
   ├── user-service    :8101  认证、用户、角色
-  └── content-service :8102  文章、流星、回声、星链、统计
+  ├── content-service :8102  文章、笔记、系列、评论、流星、回声、星链、统计
+  └── ai-service      :8107  鉴权、模型配置、配额、审计 → Python :8200
                 │
                 ▼
           MySQL stellar_ink
@@ -38,9 +39,12 @@ gateway-nacos-sentinel :8080
 - Java 17、Maven 3.9+
 - Node.js 20+、npm
 - MySQL 8，数据库名默认 `stellar_ink`
-- Nacos，默认 `127.0.0.1:8848`
+- Nacos，默认 `127.0.0.1:8848`；dev 使用本机 `stellar-ink-test`，test 使用独立 `stellar-ink-test`
+- Python 3.11+、uv（AI 服务）；测试空间可用 `python deploy/scripts/init-nacos-namespace.py` 幂等创建
 
-按顺序执行 [`deploy/sql/`](deploy/sql) 中的数据库脚本（`01` → `11`，后两个是 AI 域的表）。已有旧库还必须执行 `03_multi-author.sql`，否则文章和流星查询会因缺少 `user_id` 失败。
+新库先执行 `deploy/sql/01_schema.sql`，按需导入 `02_init-data.sql`，再设置 `MYSQL_*` 并执行
+`python deploy/scripts/migrate-ai.py`，按统一清单补齐全部 AI 表。已有库只运行适合当前版本的迁移，
+不要把 `03`–`09` 的博客历史 ALTER 重复应用到新库。Docker 新库会自动完成博客与 AI 初始化。
 
 ### 2. 构建后端
 
@@ -77,7 +81,7 @@ cd ../stellar-ink-web && npm run build
 
 ## 生产部署
 
-生产环境使用 [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml)，启动前端 Nginx、网关和三个业务服务（user / content / ai），复用宿主机已有的 Nacos 与 MySQL。具体变量和命令见 [`deploy/docker/README.md`](deploy/docker/README.md)。
+生产环境使用 [`deploy/docker/docker-compose.yml`](deploy/docker/docker-compose.yml)，启动前端 Nginx、网关、三个业务服务（user / content / ai）及 Python AI。`selfcontained` 档包含全部中间件，也可通过变量连接宿主机中间件。具体变量和命令见 [`deploy/docker/README.md`](deploy/docker/README.md)。
 
 ## 开发约定
 

@@ -38,7 +38,7 @@ spring:
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         file-extension: yaml
-        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        namespace: ${NACOS_NAMESPACE:stellar-ink-test}
         group: DEFAULT_GROUP
         refresh-enabled: true
       # 服务发现
@@ -46,7 +46,7 @@ spring:
         username: ${NACOS_USERNAME:nacos}
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
-        namespace: ${NACOS_NAMESPACE:f0350c82-5ee7-4eef-86e9-905613ce5902}
+        namespace: ${NACOS_NAMESPACE:stellar-ink-test}
         group: DEFAULT_GROUP
 
   datasource:

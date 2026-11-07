@@ -9,3 +9,4 @@
 # 仓库里仍按 LF 存储（git 会归一化），差异不会因此变大。
 *.bat text eol=crlf
 *.cmd text eol=crlf
+*.sh text eol=lf

@@ -75,6 +75,7 @@ Java 的 `ai-service` 只负责鉴权与角色、配额与审计、HTTP/SSE 协�
 AI 技术路线与实施顺序见
 [docs/ai/README.md](../ai/README.md) 与 [docs/ai/implementation-roadmap.md](../ai/implementation-roadmap.md)，
 每轮开发流程见 [docs/ai/development-workflow.md](../ai/development-workflow.md)。
+
 ## 语料一致性与环境隔离（2026-11-07）
 
 - 清单按 `(kind,id)` 分页，不用易重复且会变动的更新时间作游标。只有完整拉取成功才允许删除旧投影，
@@ -84,6 +85,10 @@ AI 技术路线与实施顺序见
   已经发出的模型调用与已经交付给用户的内容不能追溯收回。
 - 线上无种子自动回退；只有显式的离线 `AI_CORPUS_SOURCE=seed` 使用种子，test/prod 拒绝此模式。
   Java 和 Python 的内容服务地址统一为 `CONTENT_SERVICE_URL`，Docker 显式注入 `http://content-service:8102`。
+- 四个 Java 服务默认 Nacos 地址均为回环；命名空间为 dev=`stellar-ink-test`、test=`stellar-ink-test`、
+  prod=`140e3d39-2520-4d07-a08a-f4b2451109c8`。测试空间用 `deploy/scripts/init-nacos-namespace.py` 创建。
+- Compose 所有 Java 服务共用 profile、namespace 与容器内中间件地址；Python 的 `AI_APP_ENV` 同步设置。
+  新库自动执行统一 AI 清单；已有库用 `deploy/scripts/migrate-ai.py` 补齐。
 
 ## 为什么收敛为两个业务服务
 
@@ -381,7 +386,7 @@ JDK 17 的默认字符集是 GBK**（JDK 18+ 起 `file.encoding` 默认才是 UT
 - `user-service-dev.yaml`
 - `content-service-dev.yaml`
 
-生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、两个业务服务和前端 Nginx。MySQL、Redis 与 Nacos 继续复用宿主机现有实例。
+生产环境由 [docker-compose.yml](../../deploy/docker/docker-compose.yml) 编排网关、user/content/ai、Python AI 和前端 Nginx。中间件由 selfcontained 档拉起，或通过环境变量指向宿主机实例。
 
 前端 history 路由 `/notes`、`/links`、`/search` 与后端 API 前缀重名。Vite 与生产 Nginx 通过
 `GET + Accept: text/html` 识别浏览器页面导航并回退 `index.html`；`fetch` 的 `Accept: */*`

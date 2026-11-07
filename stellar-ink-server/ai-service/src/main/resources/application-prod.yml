@@ -18,7 +18,7 @@ spring:
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         file-extension: yaml
-        namespace: ${NACOS_NAMESPACE:public}
+        namespace: ${NACOS_NAMESPACE:140e3d39-2520-4d07-a08a-f4b2451109c8}
         group: DEFAULT_GROUP
         refresh-enabled: true
       discovery:
@@ -26,7 +26,7 @@ spring:
         password: ${NACOS_PASSWORD:nacos}
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         group: DEFAULT_GROUP
-        namespace: ${NACOS_NAMESPACE:public}
+        namespace: ${NACOS_NAMESPACE:140e3d39-2520-4d07-a08a-f4b2451109c8}
 
   # AI 配额与并发闸门的计数（E3-2）。生产里 Redis 由 compose 拉起，服务名就是 redis。
   data:
@@ -51,7 +51,7 @@ spring:
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:stellar_ink}?zeroDateTimeBehavior=convertToNull&serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&useSSL=false&nullCatalogMeansCurrent=true&connectTimeout=3000&socketTimeout=15000
     username: ${MYSQL_USER:stellar}
     # 必须注入；未设置时 Spring 不保证报错（占位符可能被原样当值），届时表现为连不上生产库
     password: ${MYSQL_PASSWORD}
@@ -83,14 +83,14 @@ stellar:
     #    服务发现可能把本机 ai-service 路由到**测试机**上的实例（另一个库、另一批文章），
     #    表现为「同步过来的语料跟本机库对不上」且日志里没有任何异常。
     content:
-      base-url: ${CONTENT_SERVICE_URL:http://content-service:8102}
+      base-url: ${CONTENT_SERVICE_URL:http://127.0.0.1:8102}
       # 定时对账式同步：只调 content-service 清单接口 + 写自己的 ai_* 表，不消耗模型额度
       sync-enabled: ${AI_CORPUS_SYNC_ENABLED:true}
       sync-interval-ms: ${AI_CORPUS_SYNC_INTERVAL_MS:300000}
       sync-initial-delay-ms: ${AI_CORPUS_SYNC_INITIAL_DELAY_MS:30000}
     ai:
       # Docker 编排内的服务名；部署时由 compose 注入
-      python-base-url: ${AI_PYTHON_BASE_URL:http://stellar-ink-ai:8200}
+      python-base-url: ${AI_PYTHON_BASE_URL:http://127.0.0.1:8200}
       # 配额（E3-2）：0 = 不限。生产默认收紧，且全部可用环境变量覆盖（改完不用重新打包）。
       quota:
         enabled: ${AI_QUOTA_ENABLED:true}

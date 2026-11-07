@@ -73,31 +73,17 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 | 测试 test | **124.221.158.32** | 测试服务器（此前文档里写作「远端服务器」的就是它） |
 | 生产 prod | **103.14.33.78** | 生产服务器，`deploy/docker` 整栈部署 |
 
-- 三套环境的**数据是分开的**（本机库 ≠ 测试库 ≠ 生产库），但 **Nacos（配置 + 注册中心）
-  目前「开发 = 测试」共用**：`application-dev.yml` 默认 `NACOS_ADDR=124.221.158.32:8848`
-  + 命名空间 `f0350c82-…`，与测试环境同机同空间（生产是另一台 `103.14.33.78` + 命名空间 `140e3d39-…`）。
-  ⚠️ 后果：本机启动的服务会**注册进测试环境的注册中心**。测试机一旦也跑起同名服务，
-  网关 `lb://` 就会在「本机实例 / 测试机实例」之间轮询，而两边连的又不是同一个 MySQL ——
-  表现为「接口时好时坏、数据对不上」，且日志里看不出异常。测试机目前只跑中间件（应用端口全未监听），
-  所以这个坑还没被触发，但它是现行配置的必然结果。
-- 换环境只改 `NACOS_ADDR` / `NACOS_NAMESPACE` / `MYSQL_HOST` / `REDIS_HOST` 等环境变量，不改代码。
-- **三档 profile 与剩下的待做**：代码里已有 `dev` / `test` / `prod` 三档
-  （`application-{dev,test,prod}.yml` + `nacos-application-{dev,test,prod}.yml`，每服务 8 件）。
-  `test` 档面向「应用与中间件**同机**跑在测试机」：地址默认 `127.0.0.1`，
-  `SA_TOKEN_JWT_SECRET` 与 `MYSQL_PASSWORD` 必须显式注入（⚠️「无默认值」**不等于** fail-fast，
-  见 §5「安全」的实测结论），起法：`java -jar xxx.jar --spring.profiles.active=test`。
-  ⚠️ **单测的 profile 名是 `unittest`**（`src/test/resources/application-unittest.yml`，H2 内存库）：
-  `test` 已被「测试环境档」占用，两者同名会互相遮蔽（同名资源只取 classpath 里的第一个）**且不报错** ——
-  表现是「单测莫名连上真库」或「测试机起来却用了 H2」。写测试一律 `@ActiveProfiles("unittest")`。
-  待做 ①：本机起 `tools/nacos`，dev 指向 `127.0.0.1:8848`（现状 dev 仍连测试机 Nacos）；
-  待做 ②：测试机建独立命名空间（test 档现与 dev 共用 `f0350c82-…`，只需改默认值一处）。
-- 测试与生产的 Nacos 8848 / MySQL 3306 / Redis 6379 / Qdrant 6333 **只应绑定宿主机
-  `127.0.0.1`**，本机经 SSH 隧道访问（隧道命令见 `deploy/docker/.env.example` 末节）。
-  这套编排文件里已经这么写了，端口对公网开放属于部署环节走样，不是配置缺失。
-- ⚠️ **prod 默认值四个服务不统一（配置债，被 compose 的 env 兜住）**：ai-service 的
-  `application-prod.yml` 是 Nacos `127.0.0.1:8848` + 命名空间 `public` + JDBC 默认 `mysql`，
-  而 content / user / gateway 是 `103.14.33.78:8848` + `140e3d39-…`（content/user 的 JDBC 默认
-  `127.0.0.1`）。不走 compose 直接跑 jar 时，ai-service 会去连不存在的 Nacos。
+- 环境隔离（2026-11-07）：四个 Java 服务的 dev 默认 Nacos 为 `127.0.0.1:8848` + `stellar-ink-test`；
+  test 为 `127.0.0.1:8848` + `stellar-ink-test`；prod 为 `127.0.0.1:8848` +
+  `140e3d39-2520-4d07-a08a-f4b2451109c8`。config/discovery 必须同空间，四个服务一起切换。
+  测试空间先在目标 Nacos 上执行 `python deploy/scripts/init-nacos-namespace.py` 创建；脚本幂等，
+  使用 `NACOS_ADDR/USERNAME/PASSWORD`，不会搬迁旧配置或修改已有实例。
+- 本机 MySQL/Redis/Nacos 均使用回环地址。受 gitignore 管理的 `start-all.bat` 与 IDEA `.run/`
+  已同步本机默认值；旧终端如仍导出了远端 `NACOS_ADDR/NACOS_NAMESPACE`，需先清除旧覆盖值。
+- Docker 四个 Java 服务共用 `SPRING_PROFILES_ACTIVE` 与 `NACOS_NAMESPACE`，Python 的
+  `AI_APP_ENV` 同步切换；测试部署设置 `test / stellar-ink-test / test`，生产保持模板的 prod。
+  生产与测试中间件只绑定宿主机回环；容器间走服务名，不依赖公网地址。
+- 单测 profile 仍为 `unittest`（H2），不得使用已被测试部署占用的 `test`。
 
 ## 3. 通用工程规范
 
@@ -314,7 +300,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 | `logback-spring.xml` | 控制台 + 异步文件 `./logs/<app>.log`（UTF-8，按天 + 100MB 滚动，保留 7 天，总上限 2G） |
 
 - Nacos 地址统一用环境变量 `NACOS_ADDR`（默认 127.0.0.1:8848）、命名空间 `NACOS_NAMESPACE`
-  （默认 public，config 与 discovery 必须同空间，3 个服务要一起设）；
+  （dev=stellar-ink-test / test=stellar-ink-test / prod=140e3d39-2520-4d07-a08a-f4b2451109c8，config 与 discovery 必须同空间，四个服务一起设）；
   MySQL 用 `MYSQL_HOST/PORT/DB/USER/PASSWORD`；JWT 密钥用 `SA_TOKEN_JWT_SECRET`。
 - **网络超时必须显式配**（本地跨公网连服务器时尤其重要：曾因链路抖动十几秒 + 默认无限等，
   把 `/tags` 挂到 23s）。约定：Redis `timeout` dev `500ms` / prod `1s`、`connect-timeout: 2s`
@@ -486,6 +472,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   撤回/旧版本不得继续进入模型。内容服务不可达时 fail-closed；TTL 只控制投影新鲜度。
   `AI_CORPUS_SOURCE` 默认 `online`，空库保持空、来源失败报 503；`seed` 仅显式用于离线开发/测试，
   `AI_APP_ENV=test/prod` 禁用 seed，禁止把种子回退当线上恢复措施。
+- **数据库初始化**：Docker 新库依次执行 `01_schema.sql`、`02_init-data.sql`、`mysql/03_ai.sh`；
+  AI 迁移唯一清单为 `deploy/sql/ai-migrations.txt`（10–21）。已有库用
+  `python deploy/scripts/migrate-ai.py`（先显式设置 `MYSQL_DB` 和凭据）补齐，不重跑种子与 03–09 的旧 ALTER。
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、
   切块、Embedding、向量检索、BM25/RRF、Rerank、引用组装、Agent 状态图与工具、记忆、GraphRAG、
   评测与 Trace，全部只在 `stellar-ink-ai` 实现。Java 侧（`ai-service` / `stellar-ink-ai-client`）
