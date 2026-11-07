@@ -702,7 +702,7 @@ curl -s "http://127.0.0.1:8080/ai/admin/usage/summary?days=7" -H "Authorization:
 
 配额不是接口，而是**所有 `/ai/**` 业务出口的前置检查**，收口在 `AiUsageService`：一次性调用走
 `around`（检查 → 调用 → 记账），**SSE 流式问答走同一道闸门的 `acquireQuota` / `releaseQuota`**
-（流式是同步逐帧转发，「客户端主动断开」按既有口径不算失败，因此不复用 `around` 的记账分支）：
+（流式在独立线程中逐帧转发，「客户端主动断开」按既有口径不算失败，因此不复用 `around` 的记账分支）：
 
 | 维度 | 触发条件 | 返回 |
 |---|---|---|
@@ -782,6 +782,10 @@ curl -N -s -X POST http://127.0.0.1:8080/ai/qa/stream \
 
 - **事件体原样透传**：ai-service 用 `ResponseBodyEmitter` 逐帧转发，不解析、不重新编码
   （`QaSseFrame.raw()`）。Java 只解析出 `type` 用于日志与审计 —— 少一层映射就少一处会与 Python 契约分叉的地方。
+- **响应先返回，再转发上游**：有界执行器最多 16 条流且不排队，提交被拒绝时在开流前返回繁忙
+  （业务码 503）并释放配额。不能在控制器返回前读完整个上游，否则 emitter 的早期缓存会让回答整段返回。
+  正常开流响应明确带 `text/event-stream;charset=UTF-8`、`Cache-Control: no-cache, no-transform`
+  和 `X-Accel-Buffering: no`。助手浮层普通问答也走此接口。
 - 为什么不用 `SseEmitter`：它会**按事件名分帧**（`event:` 头 + data），而本协议刻意把类型放在 JSON 里。
 - 为什么不用 Feign 拉这条流：Feign 的解码器是「拿到完整 body」语义，会把 SSE 退化成一次性响应 ——
   用户仍要等模型把整段话说完。这里用 JDK 自带的 `java.net.http.HttpClient`（**不引新依赖**）单独开一条通道。

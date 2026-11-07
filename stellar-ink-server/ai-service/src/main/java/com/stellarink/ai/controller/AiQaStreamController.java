@@ -13,9 +13,12 @@ import com.stellarink.sharedmodel.dto.ai.AiAskDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.stellarink.common.exception.BusinessExceptionHelper;
+import com.stellarink.sharedmodel.enums.ErrorCode;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,6 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 星海问答的流式出口：把 Python 的 SSE 帧**逐帧**转给浏览器。
@@ -30,11 +36,9 @@ import java.io.IOException;
  * <p>这一层只做协议转换，四件事：**配额、转发、记账、取消**。**不解析事件体、不重新编码** ——
  * Python 的帧原样透传（{@link QaSseFrame#raw()}），少一层映射就少一处会与 Python 契约分叉的地方。
  *
- * <p>配额（E3-2）与转发在同一条线程上按序发生：这条路径的转发是**同步阻塞**的
- * （见下面「为什么不加 @Async」），请求进来就在当前线程一路读到流结束，
- * 因此「开流前申请、流结束后释放」不需要任何额外的线程模型或回调拼接。
- * 在接配额之前这里**只记账、不检查**：前端默认走流式，于是调用数、token、角色、并发
- * 四道闸门对流式用户全是空话 —— 「预算用尽」这类文案承诺了一个不存在的闸门。
+ * <p>开流前校验身份与配额，然后立即返回 emitter；下游读取由有界执行器完成。
+ * 不得在返回前同步读完整段回答：MVC 还没绑定响应，send 只会写进早期缓存，直到最后整段发出。
+ * 执行器显式传递 Servlet 请求与 MDC，保证内部签名、调用账仍使用当前用户与 traceId。
  *
  * <p>取消传播是这条链路的重点，也是它唯一容易做错的地方：
  * 浏览器关掉页面 → Spring 在下一次 {@code send} 时抛 {@link IOException}
@@ -46,15 +50,11 @@ import java.io.IOException;
  * 而我们的协议刻意把类型放在 JSON 里（见 `docs/api/README.md`）。
  * 用 {@link ResponseBodyEmitter} 才能保证「Python 发什么，浏览器收到什么」。
  *
- * <p>为什么**不加** {@code @Async}：返回 {@code ResponseBodyEmitter} 时 MVC 本来就进入异步模式
- * （Servlet 异步 + 容器线程归还），而把整个方法丢到线程池只会引入第二个线程模型与新的竞态。
- * 代价是转发期间占一个容器线程 —— 当前量级（单机、读者问答）可以接受，
- * 真需要并发上千路时应当换成 WebFlux 或显式的事件循环，而不是在这里加个注解。
+ * <p>转发结束、出错或提交被拒绝时均释放配额；客户端写入失败时关闭下游句柄。
  */
 @Slf4j
 @RestController
 @RequestMapping("/ai/qa")
-@RequiredArgsConstructor
 @Tag(name = "AI 星海问答", description = "登录用户就全站文章提问；流式版本逐帧转发引用与答案")
 public class AiQaStreamController {
 
@@ -69,11 +69,22 @@ public class AiQaStreamController {
 
     private final AiUsageService usageService;
 
+    private final Executor streamExecutor;
+
+    public AiQaStreamController(QaStreamClient qaStreamClient, AiMemoryService memoryService,
+                                AiUsageService usageService,
+                                @Qualifier("qaStreamExecutor") Executor streamExecutor) {
+        this.qaStreamClient = qaStreamClient;
+        this.memoryService = memoryService;
+        this.usageService = usageService;
+        this.streamExecutor = streamExecutor;
+    }
+
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(
             summary = "就全站文章提问（SSE 流式）",
             description = "事件顺序固定 meta → citation* → delta* → done；error 为旁路事件（之后不会有 done）")
-    public ResponseBodyEmitter stream(@Valid @RequestBody AiAskDTO request) {
+    public ResponseEntity<ResponseBodyEmitter> stream(@Valid @RequestBody AiAskDTO request) {
         Long userId = AuthHelper.loginId();
 
         // 配额先行（E3-2）：触顶时**连 emitter 都不建、一个下游调用都不发**，
@@ -86,7 +97,8 @@ public class AiQaStreamController {
         // 客户端断开时 Spring 会调用它；真正的下游取消在 forwardFrames 的 IOException 分支里
         emitter.onError(error -> log.info("问答流被客户端中断：userId={} reason={}", userId, error.toString()));
 
-        QaStreamRequestDTO internal = QaStreamRequestDTO.builder()
+        try {
+            QaStreamRequestDTO internal = QaStreamRequestDTO.builder()
                 .question(request.getQuestion().trim())
                 .topK(request.getTopK())
                 // 长期记忆（M9）：与非流式同一份口径 —— 只影响语气与取舍，不进证据
@@ -94,8 +106,19 @@ public class AiQaStreamController {
                 // 多轮：与非流式同一份映射（见 AskHistoryMapper），避免两条出口分叉
                 .history(AskHistoryMapper.toInternal(request.getHistory()))
                 .build();
-        forwardFrames(emitter, internal, userId, ticket);
-        return emitter;
+            streamExecutor.execute(() -> forwardFrames(emitter, internal, userId, ticket));
+        } catch (RejectedExecutionException error) {
+            usageService.releaseQuota(ticket);
+            throw BusinessExceptionHelper.of(ErrorCode.SERVICE_UNAVAILABLE, "问答服务正在处理较多请求，请稍后再试");
+        } catch (RuntimeException error) {
+            usageService.releaseQuota(ticket);
+            throw error;
+        }
+        return ResponseEntity.ok()
+                .contentType(new MediaType("text", "event-stream", StandardCharsets.UTF_8))
+                .header("Cache-Control", "no-cache, no-transform")
+                .header("X-Accel-Buffering", "no")
+                .body(emitter);
     }
 
     /**

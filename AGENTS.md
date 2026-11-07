@@ -484,6 +484,11 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   **只做**鉴权与角色、配额与审计、协议转换（HTTP/SSE 事件格式）、超时取消降级、DTO/DTO 映射，
   **不得出现任何 AI 算法、模型调用或厂商 SDK 类型**（Provider 名称只作为配置值传递）。
   判断标准：一段代码如果「换成另一个模型/检索策略就要改」，它属于 Python。
+- **SSE 必须先返回响应再持续读上游**：`ResponseBodyEmitter` 在控制器返回前的 `send` 只会暂存；
+  转发应使用 `qaStreamExecutor`（最多 16 线程、不排队），拒绝提交时释放配额并返回繁忙。
+  异步任务必须传递并在结束后清理 Sa-Token 独立上下文、Spring 请求上下文与 MDC；
+  Sa-Token 1.44 不能仅靠 `RequestContextHolder`。回归必须暂停上游尾段，确认首段已抵达客户端，
+  不能只断言最终收到了完整答案。
 - **端口与拓扑**：`ai-service :8107`（Java，对外 `/ai/**`）+ `stellar-ink-ai :8200`（Python，**仅内网**）。
   Python 不注册 Nacos、不配网关路由；浏览器与网关都不得直达 8200。
 - **ai-service 只拥有 `ai_*` 表**：M0 时它以「排除数据源」表明「碰不到业务库」；A1 起需要

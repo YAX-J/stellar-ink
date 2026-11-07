@@ -40,6 +40,12 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import java.io.IOException;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Iterator;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -207,11 +213,8 @@ class AiQaStreamControllerTest {
                 .andExpect(status().isOk())
                 .andReturn();
 
-        // 关于 Content-Type：MockMvc 的异步派发不会把 `ResponseBodyEmitter.send(..., TEXT_EVENT_STREAM)`
-        // 写的头带进 MockHttpServletResponse（实测为 null），因此**不在这个切片里断言它** ——
-        // 断言一个测不到的字段只会得到「功能坏了」的假警报，真正的保障是
-        // `@PostMapping(produces = TEXT_EVENT_STREAM_VALUE)` 与 send 时显式带的 MediaType，
-        // 下面用反射把契约钉住（改错了会立刻红）。
+        // 路由声明仍需符合流式契约；响应头现由 ResponseEntity 显式设置。
+        // 真实首段时序由下方暂停上游的回归与启动后的 HTTP 验证共同保障。
         PostMapping mapping = AiQaStreamController.class.getMethod("stream", AiAskDTO.class)
                 .getAnnotation(PostMapping.class);
         assertTrue(List.of(mapping.produces()).contains(MediaType.TEXT_EVENT_STREAM_VALUE),
@@ -263,6 +266,71 @@ class AiQaStreamControllerTest {
     }
 
     @Test
+    @DisplayName("上游暂停生成时第一段已写到响应，不能等整个回答结束才返回 emitter")
+    void deliversFirstFrameBeforeUpstreamCompletes() throws Exception {
+        CountDownLatch paused = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        QaStreamClient.Handle handle = new QaStreamClient.Handle() {
+            @Override
+            public Iterator<QaSseFrame> iterator() {
+                return new Iterator<>() {
+                    private int index;
+
+                    @Override
+                    public boolean hasNext() {
+                        if (index == 1) {
+                            paused.countDown();
+                            try {
+                                if (!release.await(10, TimeUnit.SECONDS)) {
+                                    throw new IllegalStateException("测试等待尾帧超时");
+                                }
+                            } catch (InterruptedException error) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException(error);
+                            }
+                        }
+                        return index < 2;
+                    }
+
+                    @Override
+                    public QaSseFrame next() {
+                        return index++ == 0 ? frame("delta", "\"text\":\"第一段\"")
+                                : frame("done", "\"answer\":\"第一段第二段\"");
+                    }
+                };
+            }
+
+            @Override
+            public void close() {
+                release.countDown();
+            }
+        };
+        when(qaStreamClient.open(any())).thenReturn(handle);
+        var caller = Executors.newSingleThreadExecutor();
+        try {
+            Future<MvcResult> requestTask = caller.submit(() -> {
+                try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+                    stubAsReader(auth);
+                    return mockMvc.perform(post("/ai/qa/stream")
+                                    .contentType(MediaType.APPLICATION_JSON).content(body(QUESTION)))
+                            .andExpect(request().asyncStarted()).andReturn();
+                }
+            });
+            assertTrue(paused.await(3, TimeUnit.SECONDS), "上游应已产出第一段并等待后续生成");
+            MvcResult initial = requestTask.get(2, TimeUnit.SECONDS);
+            assertTrue(initial.getResponse().getContentAsString().contains("第一段"),
+                    "第一段应在上游结束之前写出，而不是只存在 emitter 的早期缓存里");
+            assertFalse(initial.getResponse().getContentAsString().contains("done"));
+            release.countDown();
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .asyncDispatch(initial)).andExpect(status().isOk());
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     @DisplayName("多轮：不带历史时传空表（Python 侧据此当一次性提问）")
     void sendsEmptyHistoryWhenAbsent() throws Exception {
         StubHandle handle = new StubHandle(List.of(frame("done", "\"answer\": \"好\"")), false);
@@ -288,7 +356,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("写失败（浏览器断开）：必须关掉下游，否则模型继续生成")
     void sendFailureCancelsUpstream() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService, Runnable::run);
         StubHandle handle = new StubHandle(List.of(frame("delta", "\"text\": \"好\"")), false);
         when(qaStreamClient.open(any())).thenReturn(handle);
 
@@ -310,7 +378,7 @@ class AiQaStreamControllerTest {
     @Test
     @DisplayName("上游不可用：给一帧可读的 error，前端不会停在「生成中」")
     void upstreamFailureSendsErrorFrame() {
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService, Runnable::run);
         StubHandle handle = new StubHandle(List.of(), true);
         when(qaStreamClient.open(any())).thenReturn(handle);
 
@@ -344,7 +412,7 @@ class AiQaStreamControllerTest {
     @DisplayName("流正常结束后释放并发闸门")
     void releasesInflightTicketAfterStreamEnds() {
         AiQuotaTicket ticket = new AiQuotaTicket(9L, "stellar-ink:ai:quota:inflight:user:9");
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService, Runnable::run);
         when(qaStreamClient.open(any()))
                 .thenReturn(new StubHandle(List.of(frame("done", "\"answer\": \"好\"")), false));
 
@@ -358,7 +426,7 @@ class AiQaStreamControllerTest {
     @DisplayName("上游失败与客户端断开两条路也释放闸门（漏放会把当天的并发额度耗光）")
     void releasesInflightTicketOnFailurePaths() {
         AiQuotaTicket ticket = new AiQuotaTicket(9L, "stellar-ink:ai:quota:inflight:user:9");
-        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService, Runnable::run);
         QaStreamRequestDTO request = QaStreamRequestDTO.builder().question(QUESTION).build();
 
         // 上游失败
@@ -387,6 +455,23 @@ class AiQaStreamControllerTest {
         assertEquals("unknown", QaSseFrame.of("data: {\"answer\": \"没有 type\"}\n\n").eventType());
         assertEquals("done", QaSseFrame.of("data: {\"type\":\"done\"}\n\n").eventType(),
                 "紧凑写法（冒号后无空格）也要认");
+    }
+
+    @Test
+    @DisplayName("流执行器已满时释放配额且不打开下游请求")
+    void rejectedStreamReleasesQuota() {
+        AiQuotaTicket ticket = new AiQuotaTicket(9L, "inflight-test");
+        when(usageService.acquireQuota(AiCallScene.QA_STREAM)).thenReturn(ticket);
+        AiQaStreamController controller = new AiQaStreamController(qaStreamClient, memoryService, usageService,
+                task -> { throw new RejectedExecutionException("测试执行器已满"); });
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubAsReader(auth);
+            AiAskDTO request = new AiAskDTO();
+            request.setQuestion(QUESTION);
+            assertThrows(BusinessException.class, () -> controller.stream(request));
+        }
+        verify(usageService).releaseQuota(ticket);
+        verify(qaStreamClient, never()).open(any());
     }
 
     @Test
