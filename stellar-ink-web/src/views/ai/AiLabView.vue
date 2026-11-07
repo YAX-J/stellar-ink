@@ -496,6 +496,37 @@ async function applyModel(item) {
     </p>
 
     <template v-else>
+      <div class="corpus-update" :aria-busy="ops.corpusUpdating">
+        <div class="corpus-update-row">
+          <div>
+            <b>让新内容进入问答</b>
+            <p id="corpus-update-hint" class="dim">
+              同步已发布的文章与公开笔记，再更新检索索引。新增或修改的内容会使用嵌入模型额度。
+            </p>
+          </div>
+          <button
+            class="btn btn-ghost" type="button" :disabled="ops.corpusUpdating"
+            aria-describedby="corpus-update-hint" @click="ops.updateCorpus()"
+          >
+            {{ ops.corpusStage === 'syncing' ? '同步语料中…' : ops.corpusStage === 'indexing' ? '更新索引中…' : '更新语料' }}
+          </button>
+        </div>
+        <div class="corpus-update-result" role="status" aria-live="polite" aria-atomic="true">
+          <p v-if="ops.corpusSync" class="dim">
+            语料已同步：新增 {{ ops.corpusSync.inserted || 0 }} 篇，更新 {{ ops.corpusSync.updated || 0 }} 篇，
+            移除 {{ ops.corpusSync.removed || 0 }} 篇，当前 {{ ops.corpusSync.total || 0 }} 篇。
+          </p>
+          <p v-if="ops.corpusStage === 'indexing'" class="dim">正在更新检索索引，请稍候…</p>
+          <p v-if="ops.corpusStage === 'done'" class="corpus-update-success">
+            更新完成：{{ ops.corpusIndex.reembedded }} 篇已写入索引，
+            移除 {{ ops.corpusIndex.removed }} 篇，{{ ops.corpusIndex.unchanged || 0 }} 篇无需更新。
+          </p>
+          <p v-if="ops.corpusError" class="msg err">
+            {{ ops.corpusError }}
+            <span v-if="ops.corpusTraceId" class="mono">追踪编号：{{ ops.corpusTraceId }}</span>
+          </p>
+        </div>
+      </div>
       <div class="lab-tabs">
         <button
           class="lab-tab" :class="{ on: tab === TAB_PROVIDERS }"
@@ -1285,6 +1316,14 @@ async function applyModel(item) {
 </template>
 
 <style scoped>
+.corpus-update{margin-bottom:24px; padding:18px 0; border-bottom:1px solid var(--line)}
+.corpus-update-row{display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap}
+.corpus-update-row b{font-size:14px; font-weight:500}
+.corpus-update-row p{font-size:12px; line-height:1.8; margin:6px 0 0}
+.corpus-update-row .btn{flex-shrink:0}
+.corpus-update-result p{font-size:12px; line-height:1.8; margin:10px 0 0}
+.corpus-update-success{color:var(--teal)}
+.corpus-update-result .mono{display:block; overflow-wrap:anywhere}
 .lab-note{font-size:12px; color:var(--ink-faint); line-height:1.9; max-width:72ch; margin-bottom:20px}
 /* 页签：与「我的笔记」视图切换同一套观感（下划线用主色，不引入新组件库） */
 .lab-tabs{display:flex; gap:18px; border-bottom:1px solid var(--line); margin-bottom:22px}

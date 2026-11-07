@@ -104,3 +104,20 @@ async def test_rebuild_reports_quota_exhaustion_as_429(
     body = response.body.decode()
     assert '"code": 429' in body or '"code":429' in body
     assert "明天 UTC 零点重置" in body
+
+
+async def test_reconcile_refreshes_corpus_before_reading_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """按钮同步完立即对账，不能继续索引 TTL 内的旧语料。"""
+    calls: list[str] = []
+    monkeypatch.setattr(index_module.corpus_module, "reset_corpus", lambda: calls.append("reset"))
+
+    def load() -> list:
+        calls.append("load")
+        return []
+
+    monkeypatch.setattr(index_module.corpus_module, "cached_corpus", load)
+    monkeypatch.setattr(index_module, "QdrantVectorStore", _BrokenStore)
+    await index_module.reconcile_index()
+    assert calls == ["reset", "load"]

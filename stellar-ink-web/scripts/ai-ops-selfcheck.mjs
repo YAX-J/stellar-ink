@@ -29,6 +29,9 @@ let nextAudit = { status: 200, payload: { code: 0, data: null } }
 let nextTrace = { status: 200, payload: { code: 0, data: null } }
 let nextStale = { status: 200, payload: { code: 0, data: null } }
 let nextBuild = { status: 200, payload: { code: 0, data: null } }
+let nextCorpus = { status: 200, payload: { code: 0, data: null } }
+let nextIndex = { status: 200, payload: { code: 0, data: null } }
+let corpusGate = null
 
 const reply = (status, payload) => ({
   ok: status >= 200 && status < 300,
@@ -40,6 +43,11 @@ const reply = (status, payload) => ({
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url).replace(/^https?:\/\/[^/]+/, '')
   calls.push(`${(init.method || 'GET').toUpperCase()} ${path}`)
+  if (path === '/ai/admin/corpus/sync') {
+    if (corpusGate) await corpusGate
+    return reply(nextCorpus.status, nextCorpus.payload)
+  }
+  if (path === '/ai/admin/index/reconcile') return reply(nextIndex.status, nextIndex.payload)
   if (path.startsWith('/ai/admin/providers')) return reply(nextProviders.status, nextProviders.payload)
   if (path.startsWith('/ai/health')) return reply(nextHealth.status, nextHealth.payload)
   if (path.startsWith('/ai/admin/usage/summary')) return reply(nextUsage.status, nextUsage.payload)
@@ -456,6 +464,56 @@ nextBuild = { status: 500, payload: { code: 500, msg: '服务繁忙' } }
 await ops.buildWiki()
 report(ops.buildFailed === true && ops.buildResult === null, '构建失败单独标记并清空上次结果')
 report(ops.building === false, '失败后清掉「构建中」，按钮恢复可点')
+
+// —— 更新语料：严格顺序、写成功保留、嵌套业务错误不能假绿 ——
+const syncedCorpus = { inserted: 1, updated: 2, removed: 1, total: 40, failed: false }
+const indexedCorpus = { unchanged: 37, reembedded: 3, removed: 1, chunksWritten: 8, embedCalls: 1 }
+nextCorpus = { status: 200, payload: { code: 0, data: syncedCorpus } }
+nextIndex = { status: 200, payload: { code: 0, data: indexedCorpus } }
+const start = calls.length
+const updated = await ops.updateCorpus()
+report(calls.slice(start).join('|') === 'POST /ai/admin/corpus/sync|POST /ai/admin/index/reconcile',
+  '先同步语料再更新索引，不并行、不先跑索引')
+report(updated?.index.reembedded === 3 && ops.corpusStage === 'done', '两个步骤完成才显示更新成功')
+report(ops.corpusSync.total === 40 && ops.corpusIndex.removed === 1, '两边的统计分别保留')
+report(!ops.corpusUpdating && !ops.corpusError, '更新结束按钮恢复可点')
+
+nextCorpus = { status: 200, payload: { code: 0, data: { failed: true, reason: '上游清单不完整' } } }
+const failedStart = calls.length
+await ops.updateCorpus()
+report(calls.length === failedStart + 1, '同步失败后不调用索引更新（不能按旧快照删索引）')
+report(ops.corpusError.includes('上游清单不完整') && ops.corpusStage === 'error', '同步失败保留可操作原因')
+report(ops.corpusSync === null && ops.corpusIndex === null, '新一轮失败不会残留上次的成功统计')
+
+nextCorpus = { status: 200, payload: { code: 0, data: syncedCorpus } }
+nextIndex = { status: 200, payload: { code: 0, data: { code: 429, message: '嵌入模型每日额度已用尽' } } }
+await ops.updateCorpus()
+report(ops.corpusSync.total === 40 && ops.corpusIndex === null, '索引失败保留已成功的同步，不显示成同步失败')
+report(ops.corpusError.includes('语料已同步') && ops.corpusError.includes('每日额度已用尽'),
+  '外层 code=0、内层 429 仍如实显示失败与上游原因')
+report(ops.corpusStage === 'error' && !ops.corpusUpdating, '索引失败不假绿、不让按钮卡住')
+
+nextIndex = { status: 503, payload: { code: 503, msg: '服务不可达', traceId: 'corpus-trace' } }
+await ops.updateCorpus()
+report(ops.corpusSync.total === 40 && ops.corpusTraceId === 'corpus-trace', '请求失败保留同步结果和追踪编号')
+
+nextIndex = { status: 200, payload: { code: 0, data: {} } }
+await ops.updateCorpus()
+report(ops.corpusStage === 'error', '不完整的索引响应不能显示成功')
+
+let releaseCorpus
+corpusGate = new Promise((resolve) => { releaseCorpus = resolve })
+nextIndex = { status: 200, payload: { code: 0, data: indexedCorpus } }
+const pendingStart = calls.length
+const pending = ops.updateCorpus()
+await Promise.resolve()
+report(ops.corpusStage === 'syncing' && ops.corpusUpdating, '请求进行中显示同步状态')
+await ops.updateCorpus()
+report(calls.length === pendingStart + 1, '重复点击不会重复请求或重复消耗嵌入额度')
+releaseCorpus()
+await pending
+corpusGate = null
+report(ops.corpusStage === 'done' && !ops.corpusError, '失败后重试成功会清除旧错误')
 
 if (failed > 0) {
   console.error(`\nAI 观测面自检失败 ${failed} 条`)

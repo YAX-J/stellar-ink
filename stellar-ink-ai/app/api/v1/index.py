@@ -164,6 +164,8 @@ async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断�
     2. **删除是权威动作**：语料里没有的文章，索引里的段落会被删掉 —— 这正是
        「下架 / 转私有之后不再被引用」的保证。
     """
+    # 手动更新必须读取刚同步的投影，不能让按钮等待 TTL 或索引到上一代语料。
+    corpus_module.reset_corpus()
     config = QdrantConfig.from_env()
     store = QdrantVectorStore(config)
     try:

@@ -422,6 +422,11 @@ curl -s -X POST http://127.0.0.1:8200/provider/models \
 | POST | `/ai/admin/corpus/sync` | 立刻同步一次；返回 `{upstream,inserted,updated,unchanged,removed,total,failed,reason,syncedAt}` | ADMIN |
 | GET | `/ai/admin/corpus/count` | 投影表当前行数（不触发同步） | ADMIN |
 
+站长可在 `/ai-lab` 页签上方点击「更新语料」：前端 store 先调用 sync，确认 `failed=false` 后再调用
+`POST /ai/admin/index/reconcile`。后者主动清除 Python 语料缓存并重读最新投影，不需要等待 TTL。
+页面分别显示同步与索引统计；同步失败不继续对账，索引失败保留已完成的同步结果。
+索引端点的 Map 返回值若包含非零业务 code，也按失败显示；新增或变更内容会使用嵌入模型额度。
+
 ⛔ 硬约束：**草稿与私有笔记永远不该出现在 `ai_content_snapshot` 里**。上游已经不返回它们，
 删除侧保证「一旦转私有/下架就从投影里消失」。拉取失败时**一行都不删**（宁可这轮什么都不做，
 也不能因为一次网络抖动清空知识库）；而上游返回空则**删除全部** —— 隐私优先于「重新嵌入」这个可恢复成本。
@@ -441,6 +446,7 @@ mysql -h 127.0.0.1 -uroot -p stellar_ink -e "SELECT kind, COUNT(*) FROM ai_conte
 | 方法 | 路径 | 说明 | 角色 |
 |---|---|---|---|
 | POST | `/ai/admin/index/rebuild` | 重建向量索引：切块 → 嵌入 → 写 Qdrant。请求体可省略（= 全量重建），也可带 `kind=post_rebuild` + `postId` + `contentKind`（`post` 文章 / `note` 笔记，缺省 `post`）与 `reason`（写进日志便于回溯） | ADMIN |
+| POST | `/ai/admin/index/reconcile` | 强制刷新本进程语料缓存后增量对账，只嵌入新增/变更内容，删除已撤回内容；返回 `{unchanged,reembedded,removed,chunksWritten,deletedPosts,embedCalls}` | ADMIN |
 
 ⚠️ 三条必须知道的现实：
 

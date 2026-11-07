@@ -70,6 +70,14 @@ export const useAiOpsStore = defineStore('aiOps', {
     /** Python 探活失败与「面板读不到」是两件事，分开记 */
     healthFailed: false,
 
+    /* ---- 语料更新：同步成功与索引成功分开记录 ---- */
+    corpusUpdating: false,
+    corpusStage: 'idle',
+    corpusSync: null,
+    corpusIndex: null,
+    corpusError: '',
+    corpusTraceId: '',
+
     /* ---- 检索审计（第二优先）：趋势 ---- */
     audit: null,
     auditDays: 7,
@@ -285,6 +293,49 @@ export const useAiOpsStore = defineStore('aiOps', {
   },
 
   actions: {
+    /** 顺序执行；索引失败保留已成功同步的结果，不重复提交正在进行的更新。 */
+    async updateCorpus() {
+      if (this.corpusUpdating) return null
+      this.corpusUpdating = true
+      this.corpusStage = 'syncing'
+      this.corpusSync = null
+      this.corpusIndex = null
+      this.corpusError = ''
+      this.corpusTraceId = ''
+      try {
+        const synced = await request('/ai/admin/corpus/sync', {
+          method: 'POST', silent: true, timeout: 120000,
+        })
+        if (!synced || synced.failed || (synced.code != null && synced.code !== 0)
+            || typeof synced.total !== 'number') {
+          throw new Error(synced?.reason || synced?.message || '未能完成语料同步，请重试')
+        }
+        this.corpusSync = synced
+        this.corpusStage = 'indexing'
+        const indexed = await request('/ai/admin/index/reconcile', {
+          method: 'POST', silent: true, timeout: 120000,
+        })
+        // Java 的 Map 出口可能包着 Python 的业务错误，不能把外层 code=0 当成更新成功。
+        if (!indexed || (indexed.code != null && indexed.code !== 0)
+            || typeof indexed.reembedded !== 'number' || typeof indexed.removed !== 'number') {
+          throw new Error(indexed?.message || '未收到有效的索引更新结果，请重试')
+        }
+        this.corpusIndex = indexed
+        this.corpusStage = 'done'
+        return { sync: synced, index: indexed }
+      } catch (error) {
+        const stage = this.corpusSync ? '语料已同步，索引更新未完成' : '语料同步未完成'
+        const reason = error.code === 408 || error.status === 408
+          ? '等待超时，请稍后重试核对结果，服务端可能仍在处理'
+          : error.message
+        this.corpusError = `${stage}：${reason}`
+        this.corpusTraceId = error.traceId || ''
+        this.corpusStage = 'error'
+        return null
+      } finally {
+        this.corpusUpdating = false
+      }
+    },
     /** 运行时状态：配置列表 + Python 探活。两者都失败才算整体失败。 */
     async loadRuntime() {
       this.loading = true
