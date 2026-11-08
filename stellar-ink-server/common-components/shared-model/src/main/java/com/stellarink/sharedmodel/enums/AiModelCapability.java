@@ -23,7 +23,10 @@ public enum AiModelCapability {
 
     EMBEDDING("embedding"),
 
-    RERANK("rerank");
+    RERANK("rerank"),
+
+    /** 全局决策角色独立配置，尚不作为模型库的存储能力。 */
+    DECISION("decision");
 
     private final String key;
 

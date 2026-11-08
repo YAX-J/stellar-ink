@@ -177,6 +177,13 @@
 
 ### 5.4 模型报「名字不存在」，其实是路径拼错
 - **真因**：`base_url` 是 **API 根**，路径由代码拼（`/chat/completions`、`/embeddings`、`/rerank`）。填成完整端点会拼出 `/rerank/rerank` → 404，而报出来的话是「模型名不存在」。
+- **2026-11-07 新实例**：`qwen3.7-text-rerank` 模型与密钥均有效，但配置根为
+  `/compatible-mode/v1`，旧 Provider 固定拼 `/rerank`，得到 404。相同域名与模型直接请求
+  `/compatible-api/v1/reranks` 返回 200；仅把尾部改成 `/reranks` 仍是 404。
+  现已按兼容根路径选择独立的千问重排接口，保留原主机、端口与代理前缀；404 提示先核对路径。
+  真实 `provider_smoke.py --role rerank` 通过（3 候选、633ms），Python 1005 项通过、1 项跳过。
+- **一次定位**：按 traceId 找 `HTTP Request` 的实际 URL 与 HTTP 状态，再只跑单角色真实探测。
+  HTTP 404 不能单独证明模型名不存在；不要因此修改正确模型名或重复跑整套评测。
 - **修法**：`base_url` 只填根。面板的「测试连接」是 `scope: tcp_only`，对这类错误**一声不响** —— 验证配置要跑 `uv run python scripts/provider_smoke.py`。
 
 ### 5.5 「额度用尽」被说成「稍后重试」
@@ -186,10 +193,27 @@
 ### 5.6 三个 dense 管道各嵌一遍整库 → 全被降级成「拒答」
 - **真因**：没有嵌入缓存时，一次评测把免费额度打光。
 - **修法**：`app/providers/embedding_cache.py` 只包**嵌入**（不包 chat），键含**模型指纹**、有界 LRU、失败不缓存。
+- **2026-11-07 的另一种真因**：换成 `qwen3.7-text-embedding-flash` 后，`hybrid+rerank`
+  30 题全失败，但错误是嵌入 HTTP 400，尚未调用重排。评测把 39 个块一次发给上游，
+  人工文本复现实测返回 `batch size is invalid, it should not be larger than 25`；
+  单条和 21 条均返回 200，不能据此误判密钥或模型无效。
+  [千问文档](https://platform.qianwenai.com/docs/developer-guides/embeddings/embedding)中各版本的批量上限不同，
+  Provider 对千问兼容根统一按每批最多 10 条顺序拆分，合并向量与用量，各批失败不交付部分结果。
+  网关真实回归：29 篇公开文章、39 块、30 题，`errorCount=0`、`Recall@5=0.9333`、约 10.3 秒；
+  结果在本机 `stellar-ink-server/logs/qwen-batch-eval.json`。Python 1011 项通过、1 项跳过。
 
 ### 5.7 「链路全对、结果全错」：换了嵌入模型却还用旧索引
 - **真因**：向量库对**维度**有硬约束（不同维度直接失败），但**同维度不同模型不会失败**，只是相似度毫无意义。
 - **修法**：写入时把 `modelFingerprint` 记进 payload（`QdrantVectorStore.point()`），检索/写入前用 `assert_model_fingerprint()` 比对：**空索引或旧数据没这字段就放行**（不能因为「没记录」挡住第一次写入），不一致则**抛错**并提示「换嵌入模型必须整库重建」。
+- **2026-11-07 实例**：旧集合 2048 维，新 Qwen 1024 维；在独立开发集合重建 40 篇/92 点，
+  覆盖、指纹、54 题内存/Qdrant 对照通过后切本机集合。不要把旧集合删掉再等模型成功。
+  拒答率为 0 还需联合标定 BM25 与 Dense，单路设阈值会被另一条路的弱候选绕过。
+  模型正文说「文章里没有找到依据。」而元数据仍为 stop/true 是问答收尾判定问题，
+  已由非流式/SSE 共用前缀判定修复；不把预算 length 当成拒答。见 [标定记录](ai/retrieval-calibration.md)。
+- **文章命中了，模型却说没有答案**：2026-11-07实际验收发现，200字引用预览被当作唯一模型上下文，
+  删掉了原块尾部的重定向、curl参数、慢走、撑起结构等证据，造成3道误拒和1道漏答。
+  问答默认片段对齐320字标准子块；引用末尾不能追加非原文省略号，否则严格原文核验失败。
+  先对照真实送入模型的片段，不要仅凭文章级Recall判断；见 [最终答案验收](ai/qa-answer-acceptance.md)。
 
 ### 5.8 Qdrant：脚本报 404 `Collection doesn't exist`
 - **真因**：索引还没建（集合不存在），不是脚本坏了。
@@ -261,6 +285,18 @@
 - **一次定位**：用可暂停的上游发第一段后等待客户端确认，尾段尚未生成时必须收到第一段；分别通过 :8107、:8080、
   Vite :5173 检查。只看最终 body 有多条 `delta`、只测 `asyncStarted()` 都不足以证明流式。
   本次三条真实 HTTP 链路与网关停止传播均通过，测试未调用真实模型。
+
+### 5.14 Clef 复核 HTTP 400，地址出现两次 `/run`（2026-11-08）
+- **真因**：配置填了 `/ai/run`，适配器仍追加 `/run/@cf/...`，实际请求成了 `/ai/run/run/@cf/...`。
+- **修法**：识别 `/ai` 根、`/ai/run` 及完整模型端点，同主机、同前缀内完成路径拼接；不要求用户重填密钥。
+- **一次定位**：按 traceId 查 Python 的 HTTP 请求路径，先确认是否重复 `/run`，不要先归因于模型名。
+
+### 5.15 新增 decision 后提示嵌入模型变更（2026-11-08）
+- **真因**：Qdrant 的 `modelFingerprint` 误用了全部模型配置的摘要；新增决策角色改变摘要，实际 embedding 配置未变。
+- **修法**：护栏只取已装配 embedding 配置的指纹。旧数据必须先确认全部点的旧聚合指纹与原配置、维度一致，
+  备份后才能只迁移该元数据字段；真正换嵌入模型仍拒绝使用旧向量，不得直接绕过检查。
+- **一次定位**：分别计算 embedding 单角色指纹、增加 decision 前的聚合指纹、当前聚合指纹，与点载荷比较。
+  本机开发集合92点已核对并备份于 `stellar-ink-server/logs/qdrant-embedding-fingerprint-backup.json`，向量未改写。
 
 ## 6. 前端
 

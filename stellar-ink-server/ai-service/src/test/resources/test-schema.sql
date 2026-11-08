@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS `ai_call_log` (
     `error_code` VARCHAR(64) DEFAULT NULL,
     `price_input` DECIMAL(10,4) DEFAULT NULL,
     `price_output` DECIMAL(10,4) DEFAULT NULL,
+    `model_calls_json` TEXT DEFAULT NULL,
+    `usage_complete` BOOLEAN DEFAULT NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`)
 );

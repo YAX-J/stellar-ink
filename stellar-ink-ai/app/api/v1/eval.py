@@ -17,9 +17,12 @@ rerank 角色 —— 缺哪个在**跑之前**就说清（一轮评测要先嵌�
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.providers import runtime
+from app.providers.usage import usage_scope
+from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset
 from app.rag.eval_service import (
     DATASET_FILES,
@@ -32,8 +35,10 @@ from app.rag.eval_service import (
     strategy_specs,
     to_response,
 )
+from app.rag.pipeline import RetrievalConfig
+from app.rag.retrieval_profile import apply_profile, load_profile
 from app.schemas.common import AiErrorCode
-from app.schemas.eval import EvalModelSource, EvalRunRequest, EvalRunResponse
+from app.schemas.eval import EvalModelSource, EvalRunRequest, EvalRunResponse, EvalStrategySpec
 
 router = APIRouter(tags=["eval"])
 
@@ -42,16 +47,41 @@ router = APIRouter(tags=["eval"])
 async def list_datasets() -> list[dict[str, object]]:
     """面板的下拉框用它填充；顺带把「多少题、多少无答案」摆出来。"""
     summaries: list[dict[str, object]] = []
-    for name in sorted(DATASET_FILES):
+    for name in DATASET_FILES:
         dataset = EvalDataset.load(default_dataset_path(name))
         summaries.append({"id": name, **dataset.summary()})
     return summaries
 
 
-@router.get("/eval/strategies", summary="列出默认的标准策略组")
-async def list_default_strategies() -> list[dict[str, object]]:
+@router.get("/eval/strategies", summary="列出默认的标准策略组", response_model=None)
+async def list_default_strategies() -> list[dict[str, object]] | JSONResponse:
+    try:
+        return await run_in_threadpool(_strategy_rows)
+    except ASSEMBLY_ERRORS as error:
+        return assembly_error(error)
+
+
+def _strategy_rows() -> list[dict[str, object]]:
     """标准五组与命令行脚本一致：面板先按它跑一遍，再让用户按需改开关。"""
-    return [{"key": spec.key, **spec.model_dump(by_alias=True)} for spec in DEFAULT_STRATEGIES]
+    specs = list(DEFAULT_STRATEGIES)
+    if load_profile() is not None:
+        embedding = runtime.registry().config_of("embedding")
+        if embedding is not None:
+            config = apply_profile(
+                RetrievalConfig(),
+                corpus_module.cached_corpus(),
+                embedding,
+            )
+            if config.min_score > 0 or config.min_dense_score > 0:
+                specs.append(
+                    EvalStrategySpec(
+                        key="hybrid+calibrated",
+                        candidate_k=config.candidate_k,
+                        min_score=config.min_score,
+                        min_dense_score=config.min_dense_score,
+                    )
+                )
+    return [{"key": spec.key, **spec.model_dump(by_alias=True)} for spec in specs]
 
 
 def panel_models(request: EvalRunRequest) -> EvalModels:
@@ -81,10 +111,12 @@ def panel_models(request: EvalRunRequest) -> EvalModels:
 
 
 @router.post("/eval/run", summary="跑一轮检索评测（黄金集 × 多组策略）", response_model=None)
+@usage_scope
 async def run_eval(request: EvalRunRequest) -> EvalRunResponse | JSONResponse:
     try:
-        models = panel_models(request)
-        outcome = await run_evaluation(request, corpus=seed_corpus(), models=models)
+        models = await run_in_threadpool(panel_models, request)
+        evaluation_corpus = await run_in_threadpool(seed_corpus)
+        outcome = await run_evaluation(request, corpus=evaluation_corpus, models=models)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
     except ValueError as error:

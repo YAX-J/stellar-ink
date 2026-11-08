@@ -39,5 +39,6 @@
   "toolCalls": 1,
   "interruptedBy": "budget",
   "usageModel": "fake",
-  "latencyMs": 42
+  "latencyMs": 42,
+  "usage": null
 }

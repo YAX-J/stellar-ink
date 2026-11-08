@@ -29,7 +29,7 @@ public class AiProviderSaveDTO {
     private String displayName;
 
     /** 协议实现：目前只有 openai_compatible（fake 仅用于无密钥自测） */
-    @Pattern(regexp = "openai_compatible|fake", message = "provider 只支持 openai_compatible 或 fake")
+    @Pattern(regexp = "openai_compatible|fake|cloudflare_decision", message = "provider 协议不受支持")
     private String provider = "openai_compatible";
 
     @NotBlank(message = "baseUrl 不能为空")

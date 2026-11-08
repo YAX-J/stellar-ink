@@ -1,0 +1,120 @@
+{
+  "name": "来源绑定留出集 v2",
+  "purpose": "holdout",
+  "frozenAt": "2026-11-08",
+  "description": "首次执行前冻结的16道新题：8道可答、4道来源/同主题事实缺失、4道跨主题题。以同名.sources.json绑定当前公开原文；禁止用于阈值拟合。不是独立人工盲评。",
+  "cases": [
+    {
+      "caseId": "v201",
+      "question": "顶栏导航在滚动超过多少像素后才出现底色和分隔线？",
+      "expectedPostIds": [
+        18
+      ],
+      "expectedAnswer": "超过 40 像素"
+    },
+    {
+      "caseId": "v202",
+      "question": "标签写入除了精确匹配，还禁止哪个字符，并做哪两项清理？",
+      "expectedPostIds": [
+        20
+      ],
+      "expectedAnswer": "不允许包含逗号；trim；去重"
+    },
+    {
+      "caseId": "v203",
+      "question": "中文curl排障文中，除UTF-8文件外还给了哪两种发请求方法，哪一种最不稳定？",
+      "expectedPostIds": [
+        21
+      ],
+      "expectedAnswer": "Node fetch；chcp 65001切换终端；切终端最不稳定，取决于终端和curl版本"
+    },
+    {
+      "caseId": "v204",
+      "question": "撤销列表的Redis不可用时返回什么状态，为什么登录和注册不检查它？",
+      "expectedPostIds": [
+        22
+      ],
+      "expectedAnswer": "503；保留重新登录恢复的机会"
+    },
+    {
+      "caseId": "v205",
+      "question": "编辑器文章记录了多少个依赖包、原始体积和gzip后的体积？",
+      "expectedPostIds": [
+        23
+      ],
+      "expectedAnswer": "七个包；520KB；180KB"
+    },
+    {
+      "caseId": "v206",
+      "question": "呼吸加载动画一轮大约多久，用户没有保存主题时页面主题跟随什么？",
+      "expectedPostIds": [
+        24
+      ],
+      "expectedAnswer": "四秒；跟系统走"
+    },
+    {
+      "caseId": "v207",
+      "question": "水痕文章开头数到多少条，倒扣手机后出现的是第几条？",
+      "expectedPostIds": [
+        27
+      ],
+      "expectedAnswer": "十一条；第十二条"
+    },
+    {
+      "caseId": "v208",
+      "question": "不开花的植物第一年添了几片新叶，第二年围着花盆长到哪里？",
+      "expectedPostIds": [
+        29
+      ],
+      "expectedAnswer": "两片新叶；半圈"
+    },
+    {
+      "caseId": "v209",
+      "question": "请只根据《一次 23 秒的请求：Redis 超时是怎么把接口挂住的》说明Druid最大等待的调整前后秒数。",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v210",
+      "question": "公网部署文章里那组六位数字的MySQL旧口令具体是什么？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v211",
+      "question": "水痕文章中最长那条水痕测量下来有多少厘米？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v212",
+      "question": "作者给那盆不开花的植物每周浇水几次、每次多少毫升？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v213",
+      "question": "站内资料记载的土卫六轨道偏心率是多少？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v214",
+      "question": "请从站内文章找出黎曼ζ函数在负三处的取值。",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v215",
+      "question": "站内文章是否给出了纯钠的晶体结构参数和测量温度？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    },
+    {
+      "caseId": "v216",
+      "question": "依据本站原文，巴塔哥尼亚某冰川去年退缩了多少米？",
+      "expectedPostIds": [],
+      "expectedAnswer": null
+    }
+  ]
+}

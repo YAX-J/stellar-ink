@@ -30,6 +30,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.core.internal_auth import InternalIdentity
 from app.core.internal_auth_middleware import require_internal_identity
@@ -65,7 +66,7 @@ async def list_models(
         return _bad_request(str(error))
 
     try:
-        api_key = _api_key_for(request, identity.user_id)
+        api_key = await run_in_threadpool(_api_key_for, request, identity.user_id)
     except ProviderConfigError as error:
         # 读不到已保存配置（库连不上、密文解不开）：同为「调用方能处理」的 400，
         # 且要说清是**读配置**失败 —— 否则用户会以为是自己填的地址不对
@@ -91,9 +92,7 @@ async def list_models(
         listing.truncated,
     )
     return ProviderModelsResult(
-        models=[
-            ProviderModelEntry(id=model.id, created=model.created) for model in listing.models
-        ],
+        models=[ProviderModelEntry(id=model.id, created=model.created) for model in listing.models],
         truncated=listing.truncated,
         source=listing.source,
     )

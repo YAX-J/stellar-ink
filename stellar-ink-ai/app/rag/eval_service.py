@@ -30,6 +30,7 @@ from app.providers.base import EmbeddingModel, RerankModel
 from app.providers.fake import FakeProvider
 from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset, StrategySpec, run_dataset
+from app.rag.eval_sources import validate_sources
 from app.rag.graph import GraphRetriever, graph_from_payload
 from app.rag.metrics import DEFAULT_KS, CaseResult
 from app.rag.pipeline import IndexedChunk, RetrievalConfig, RetrievalPipeline
@@ -43,7 +44,13 @@ from app.schemas.eval import (
 )
 
 #: 数据集标识 → fixture 文件（将来可换成 DB 来源）
-DATASET_FILES: dict[str, str] = {"golden_v1": "golden_v1.json"}
+DATASET_FILES: dict[str, str] = {
+    "golden_v1": "golden_v1.json",
+    "acceptance_v1": "acceptance_v1.json",
+    "holdout_v1": "holdout_v1.json",
+    "holdout_v2": "holdout_v2.json",
+    "holdout_v3": "holdout_v3.json",
+}
 
 #: 标准五组：与 `scripts/compare_strategies.py` 一致，命令行与面板不该有两套默认值
 DEFAULT_STRATEGIES: tuple[EvalStrategySpec, ...] = (
@@ -350,6 +357,7 @@ async def run_evaluation(
     if not chunks:
         raise ValueError("语料为空：没有可检索的子块，评测没有意义")
 
+    validate_sources(dataset_path, dataset.cases, chunks)
     specs = strategy_specs(request)
     _require_models(specs, models)
     graph_index = graph_from_payload(request.graph) if request.graph else None

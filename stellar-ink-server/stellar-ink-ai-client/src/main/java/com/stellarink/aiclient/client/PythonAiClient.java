@@ -23,6 +23,7 @@ import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.IndexJobDTO;
 import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
+import com.stellarink.aiclient.dto.QaEvalRunDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleResultDTO;
@@ -33,6 +34,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
@@ -58,6 +60,24 @@ import java.util.Map;
         name = "python-ai",
         url = "${stellar.ink.ai.python-base-url:http://127.0.0.1:8200}")
 public interface PythonAiClient {
+
+    @GetMapping(AiContractPaths.QA_EVAL_LATEST)
+    QaEvalRunDTO latestQaEval();
+
+    @PostMapping(AiContractPaths.QA_EVAL_JUDGE)
+    QaEvalRunDTO judgeQaEval(@RequestBody QaEvalRunDTO.JudgeRequest request);
+
+    @PostMapping(AiContractPaths.QA_EVAL_START)
+    QaEvalRunDTO startQaEval(@RequestBody QaEvalRunDTO.StartRequest request);
+
+    @PostMapping(AiContractPaths.QA_EVAL_STEP)
+    QaEvalRunDTO stepQaEval(@RequestBody QaEvalRunDTO.RunRequest request);
+
+    @GetMapping(AiContractPaths.QA_EVAL_RUN)
+    QaEvalRunDTO getQaEval(@PathVariable("runId") String runId);
+
+    @PutMapping(AiContractPaths.QA_EVAL_REVIEW)
+    QaEvalRunDTO reviewQaEval(@RequestBody QaEvalRunDTO.ReviewRequest request);
 
     /**
      * 非流式问答：一次请求拿完整答案（含引用与拒答标记）。

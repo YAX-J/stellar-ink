@@ -83,6 +83,11 @@ public class AiProviderConfigServiceImpl implements AiProviderConfigService {
 
     private AiProviderVO saveScoped(
             AiProviderSaveDTO dto, Long actorUserId, long ownerId, boolean allowPrivate) {
+        boolean decision = dto.getRole() == AiModelRole.DECISION;
+        if (decision != "cloudflare_decision".equals(dto.getProvider())) {
+            throw BusinessExceptionHelper.of(ErrorCode.PARAM_ERROR,
+                    "决策角色需要 cloudflare_decision 协议，该协议不能用于其他角色");
+        }
         // 地址策略：站长那条路允许内网（自建 vLLM 就在 127.0.0.1），个人那条只允许公网；
         // 两档都拒绝链路本地（云元数据网段）—— 见 ProviderUrlPolicy
         ProviderUrlPolicy.check(dto.getBaseUrl(), allowPrivate);

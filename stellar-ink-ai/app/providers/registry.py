@@ -13,8 +13,10 @@ Java 解密）；Python 侧只负责把它变成实例。因此本模块**不读
 from __future__ import annotations
 
 from collections.abc import Iterable
+from threading import RLock
 
 from app.providers.base import ChatModel, EmbeddingModel, RerankModel
+from app.providers.cloudflare_decision import CloudflareDecisionProvider
 from app.providers.embedding_cache import CachingEmbeddingModel
 from app.providers.errors import ProviderError, UnsupportedCapabilityError
 from app.providers.fake import FakeProvider
@@ -28,6 +30,7 @@ _ROLE_CAPABILITY: dict[str, str] = {
     "reasoning": "chat",
     "embedding": "embedding",
     "rerank": "rerank",
+    "decision": "decision",
 }
 
 #: 需要对话模型的角色（供上层做「哪些角色必须配」的提示）
@@ -49,6 +52,7 @@ class ProviderRegistry:
     """按角色持有 Provider 实例，并在取用时校验能力是否匹配。"""
 
     def __init__(self, configs: Iterable[ProviderConfig] = ()) -> None:
+        self._lock = RLock()
         self._configs: dict[str, ProviderConfig] = {}
         self._instances: dict[str, object] = {}
         for config in configs:
@@ -87,11 +91,16 @@ class ProviderRegistry:
                 f"角色 {role} 需要 {capability} 能力，但 {config.provider} 声明为 "
                 f"{config.capabilities.describe()}",
             )
-        if role not in self._instances:
-            self._instances[role] = self._build(config)
-        return self._instances[role]
+        with self._lock:
+            if role not in self._instances:
+                self._instances[role] = self._build(config)
+            return self._instances[role]
 
     def _build(self, config: ProviderConfig) -> object:
+        if config.provider == "cloudflare_decision":
+            if config.role != "decision":
+                raise UnsupportedCapabilityError("Cloudflare 决策协议只能绑定 decision 角色")
+            return CloudflareDecisionProvider(config)
         if config.provider == "fake":
             return FakeProvider(config)
         if config.provider == "openai_compatible":
@@ -104,7 +113,7 @@ class ProviderRegistry:
             return provider
         raise ProviderError(
             f"未知的 provider 实现：{config.provider}",
-            detail="当前支持 openai_compatible 与 fake",
+            detail="当前支持 openai_compatible、cloudflare_decision 与 fake",
         )
 
     # 三个具名 getter：调用方据此获得类型提示，不必自己做 isinstance 收窄
@@ -116,6 +125,12 @@ class ProviderRegistry:
 
     def rerank_model(self, role: str = "rerank") -> RerankModel:
         return self._get_instance(role)  # type: ignore[return-value]
+
+    def decision_model(self) -> CloudflareDecisionProvider:
+        model = self._get_instance("decision")
+        if not isinstance(model, CloudflareDecisionProvider):
+            raise UnsupportedCapabilityError("决策角色需要 cloudflare_decision 协议")
+        return model
 
     async def aclose(self) -> None:
         """释放底层 HTTP 连接池。"""

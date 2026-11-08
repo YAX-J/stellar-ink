@@ -26,6 +26,7 @@ from tests.signing import FIXED_NONCE, FIXED_TIMESTAMP_MS, call, load_vector, si
 QUESTION = "一年写十八万字的方法是什么？"
 
 RESULT_FIELDS = {
+    "usage",
     "agent",
     "answer",
     "citations",

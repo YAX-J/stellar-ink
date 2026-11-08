@@ -17,6 +17,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.core.internal_auth import InternalIdentity
@@ -63,7 +64,7 @@ async def suggest(
     identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
 ) -> WritingSuggestResult | JSONResponse:
     try:
-        copilot = build_copilot(identity.user_id)
+        copilot = await run_in_threadpool(build_copilot, identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 

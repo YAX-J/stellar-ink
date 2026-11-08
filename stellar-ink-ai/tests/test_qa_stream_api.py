@@ -85,6 +85,9 @@ async def test_stream_frame_shapes_match_the_non_stream_contract(app: FastAPI, s
     done = next(event for event in events if event["type"] == "done")
     assert set(done) == {"type", "answer", "doneReason", "usage", "evidenceSufficient"}
     assert set(done["usage"]) == {
+        "modelFingerprints",
+        "modelCalls",
+        "usageComplete",
         "promptTokens",
         "completionTokens",
         "totalTokens",

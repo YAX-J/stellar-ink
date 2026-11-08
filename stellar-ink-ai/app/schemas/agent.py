@@ -21,7 +21,7 @@ from pydantic import Field
 
 from app.agents.registry import DEFAULT_AGENT
 from app.schemas.base import ContractRequest, ContractResponse
-from app.schemas.common import MAX_QUESTION_LENGTH, Citation
+from app.schemas.common import MAX_QUESTION_LENGTH, Citation, Usage
 
 #: 契约层的**绝对**上限；真正生效的是司职声明的预算（≤ 这两个数）。
 #: 与 `app/rag/agent.py` 的默认预算一致口径：对外允许收紧，不允许放宽
@@ -174,5 +174,6 @@ class AgentAskResult(ContractResponse):
     steps: list[AgentStepView] = Field(default_factory=list, description="逐步审计记录")
     tool_calls: int = Field(ge=0, description="实际调用工具的次数")
     interrupted_by: str = Field(default="", description="`caller` 或 `budget`，未中断时为空")
+    usage: Usage | None = None
     usage_model: str | None = Field(default=None, description="实际使用的模型标识")
     latency_ms: int = Field(ge=0, description="端到端耗时")

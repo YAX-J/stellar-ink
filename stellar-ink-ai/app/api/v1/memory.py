@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.providers import runtime
@@ -118,8 +119,8 @@ async def candidates(request: MemoryExtractRequest) -> MemoryExtractResult | JSO
     「提出了但出处对不上」—— 后者的处置是改提示词或换模型，完全不同。
     """
     try:
-        runtime.require_roles("chat")
-        chat = runtime.registry().chat_model()
+        await run_in_threadpool(runtime.require_roles, "chat")
+        chat = (await run_in_threadpool(runtime.registry)).chat_model()
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 

@@ -27,6 +27,7 @@ from app.providers.models import ProviderConfig
 from app.rag import corpus as corpus_module
 from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
 from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
+from app.rag.retrieval_profile import apply_profile
 from app.schemas.common import AiErrorCode
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,9 @@ def pipeline_for(config: RetrievalConfig) -> RetrievalPipeline:
     reranker = registry.rerank_model() if config.enable_rerank else None
 
     chunks = corpus_module.cached_corpus()
+    embedding_config = registry.config_of("embedding")
+    if config.label in {"qa", "agent"} and embedder is not None and embedding_config is not None:
+        config = apply_profile(config, chunks, embedding_config)
 
     with _lock:
         key = (corpus_module.EPOCH, config, runtime.fingerprint(), DENSE_STORE_ENABLED)

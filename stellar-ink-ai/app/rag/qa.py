@@ -17,13 +17,18 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from starlette.concurrency import run_in_threadpool
 
 from app.providers.base import ChatModel, model_tag_of
-from app.providers.models import ChatMessage, ChatResponse, MessageRole, TokenUsage
-from app.rag.chunking import kind_label
-from app.rag.eval_runner import RetrievedHit
+from app.providers.models import ChatMessage, ChatResponse, MessageRole, ProviderConfig, TokenUsage
+from app.providers.usage import aggregate, checkpoint, collect_usage, observe, usage_scope
+from app.rag.chunking import DEFAULT_CHILD_SIZE, kind_label
+from app.rag.eval_runner import RetrievalOutcome, RetrievedHit
+from app.rag.evidence import normalize_evidence
 from app.rag.pipeline import IndexedChunk, RetrievalPipeline
+from app.rag.source_scope import exclusive_titles
 from app.schemas.common import Citation, DoneReason, Usage
 from app.schemas.qa import MAX_CITATIONS, HistoryTurn, QaAnswer, QaStreamRequest
 from app.schemas.qa_stream import (
@@ -37,6 +42,9 @@ from app.schemas.qa_stream import (
 #: 默认拒答文案：说明「没有依据」而不是「我不会」
 DEFAULT_REFUSAL = "这几篇文章里没有找到能回答这个问题的依据。可以换个说法，或者先去写一篇。"
 
+#: 模型侧的明确拒答首句；只识别约定前缀，不按正文里的「没有」等泛词猜测。
+MODEL_REFUSAL_PREFIX = "文章里没有找到依据。"
+
 #: 输出被 `max_tokens` 截断且一个字都没拿到时的文案。
 #: 不能说成「模型拒答」：那会让人去查安全过滤或提示词，而真正的原因是预算不够
 TRUNCATED_MESSAGE = (
@@ -44,7 +52,7 @@ TRUNCATED_MESSAGE = (
     "请调大该角色的 maxTokens，或把问题问得再短一些。"
 )
 
-#: 单条引用的片段上限：引用是给人看的定位线索，不是全文复制
+#: Agent 等调用方的预览长度；问答默认保留一个完整标准子块，避免丢掉块尾证据。
 DEFAULT_SNIPPET_LENGTH = 200
 
 #: 送进模型的摘录总长度上限：防止一次问句把整库塞进上下文（费用与延迟都不可控）
@@ -54,7 +62,9 @@ SYSTEM_PROMPT = (
     "你是「星笺」站点的问答助手。只依据下面给出的文章摘录回答，"
     "不要使用摘录之外的知识，也不要编造细节。"
     "每条结论后面用 [1] [2] 这样的编号标注它来自哪段摘录。"
-    "如果摘录不足以回答，就直说「文章里没有找到依据」，不要勉强作答。"
+    "主题相关不等于能回答所问事实；不要补全摘录中没有的名称、数字或细节。"
+    f"如果摘录不足以回答，首句必须原样写「{MODEL_REFUSAL_PREFIX}」，不加格式或引号，"
+    "之后只简要指出缺少什么事实，不复述或概括摘录内容，不猜测缺失细节。"
 )
 
 #: 记忆段的说明（M9）。**它把记忆与证据明确分开**：
@@ -88,7 +98,7 @@ class QaSettings:
     """问答的业务参数（不是模型参数 —— 那些在 Provider 配置里）。"""
 
     max_citations: int = MAX_CITATIONS
-    snippet_length: int = DEFAULT_SNIPPET_LENGTH
+    snippet_length: int = DEFAULT_CHILD_SIZE
     max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS
     refusal_message: str = DEFAULT_REFUSAL
     temperature: float | None = 0.2
@@ -125,13 +135,19 @@ class _ModelOutcome:
 def model_outcome(text: str, finish_reason: str, *, refusal_message: str) -> _ModelOutcome:
     """**非流式与流式共用同一条判定**（曾经两处各写一遍，其中一处把截断当成了拒答）。
 
-    三种情况，两个维度（有没有内容 / 有没有依据）分开表达：
+    先识别约定的明确拒答前缀，再区分普通正文与预算截断：
     - 有内容：`stop`；若是被截断（`length`）则如实标 `length` —— 半截答案也不该谎称完整；
     - 空且 `length`：**预算被烧完**，不是拒答。推理模型先写 `reasoning_content`，
       那段也占 `completion_tokens`，预算小了就是这个形态；
     - 空且正常结束 / 内容过滤：这才是模型拒答。
     """
     truncated = finish_reason == "length"
+    if not truncated and text.lstrip().startswith(MODEL_REFUSAL_PREFIX):
+        return _ModelOutcome(
+            text=text,
+            done_reason=DoneReason.REFUSED,
+            evidence_sufficient=False,
+        )
     if text.strip():
         return _ModelOutcome(
             text=text,
@@ -171,21 +187,35 @@ class QaService:
         """模型调用次数：测试用它证明「没有依据时不会白花一次调用」。"""
         return self._chat_calls
 
+    def usage_fingerprints(self) -> dict[str, str]:
+        """配置指纹与实际调用分开：命中缓存仍要知道向量属于哪个空间。"""
+        result = {}
+        for role, model in (
+            ("chat", self.chat),
+            ("embedding", getattr(self.pipeline, "embedder", None)),
+            ("rerank", getattr(self.pipeline, "reranker", None)),
+        ):
+            config = getattr(model, "config", None)
+            if isinstance(config, ProviderConfig):
+                result[role] = config.fingerprint()
+        return result
+
+    @usage_scope
     async def answer(self, request: QaStreamRequest) -> QaAnswer:
-        outcome = await self.pipeline.retrieve(request.question, top_k=request.top_k)
+        outcome, source_refusal = await self._retrieve(request)
 
         # 检索层说「没有候选」就是没有依据：直接拒答，不叫模型
         if outcome.refused or not outcome.hits:
-            return self._refusal(outcome.latency_ms)
+            return self._refusal(outcome.latency_ms, source_refusal)
 
         excerpts = self._excerpts(outcome.hits)
         citations = [self._citation(excerpt) for excerpt in excerpts]
-        messages = self._messages(
-            request.question, excerpts, request.memories, request.history
-        )
+        messages = self._messages(request.question, excerpts, request.memories, request.history)
+        before = checkpoint()
         response = await self.chat.chat(
             messages, temperature=self.settings.temperature, max_tokens=self.settings.max_tokens
         )
+        observe(self.chat, response.usage, before)
         self._chat_calls += 1
 
         usage = Usage(
@@ -197,32 +227,31 @@ class QaService:
             model=response.usage.model,
         )
 
-        if response.refused or response.truncated:
-            # 模型自己说答不了（内容过滤 / 空输出），或者预算被截断：两种都不算「答完了」，
-            # 但**保留引用** —— 「找到相关段落却答不出」与「什么都没找到」对用户是不同的信息
-            model_result = model_outcome(
-                response.text,
-                response.finish_reason,
-                refusal_message=self.settings.refusal_message,
-            )
-            return QaAnswer(
-                answer=model_result.text,
-                citations=citations,
-                done_reason=model_result.done_reason,
-                usage=usage,
-                # 依据够不够与回答完不完整是两件事：写了一半被打断时依据仍然是够的
-                evidence_sufficient=model_result.evidence_sufficient,
-            )
-
+        # 与 SSE 共用判定；相关摘录仍保留，拒答与截断都必须如实标记。
+        model_result = model_outcome(
+            response.text,
+            response.finish_reason,
+            refusal_message=self.settings.refusal_message,
+        )
         return QaAnswer(
-            answer=response.text,
+            answer=model_result.text,
             citations=citations,
-            done_reason=DoneReason.STOP,
+            done_reason=model_result.done_reason,
             usage=usage,
-            evidence_sufficient=True,
+            evidence_sufficient=model_result.evidence_sufficient,
         )
 
     async def stream(self, request: QaStreamRequest) -> AsyncIterator[StreamEvent]:
+        with collect_usage() as calls:
+            async for event in self._stream(request):
+                if event.type == "done":
+                    previous = Usage.model_validate(event.payload["usage"])
+                    combined = aggregate(calls, previous)
+                    combined.model_fingerprints = self.usage_fingerprints()
+                    event.payload["usage"] = combined.model_dump(by_alias=True, mode="json")
+                yield event
+
+    async def _stream(self, request: QaStreamRequest) -> AsyncIterator[StreamEvent]:
         """流式问答：按 `schemas/qa_stream.py` 定死的顺序吐事件。
 
         与非流式版本**共用同一套检索、摘录与拒答判定**，区别只在「模型怎么被调用」：
@@ -239,9 +268,9 @@ class QaService:
             top_k=request.top_k,
         )
 
-        outcome = await self.pipeline.retrieve(request.question, top_k=request.top_k)
+        outcome, source_refusal = await self._retrieve(request)
         if outcome.refused or not outcome.hits:
-            refusal = self._refusal(outcome.latency_ms)
+            refusal = self._refusal(outcome.latency_ms, source_refusal)
             yield delta_event(refusal.answer)
             yield done_event(
                 answer=refusal.answer,
@@ -256,9 +285,7 @@ class QaService:
         for citation in citations:
             yield citation_event(citation)
 
-        messages = self._messages(
-            request.question, excerpts, request.memories, request.history
-        )
+        messages = self._messages(request.question, excerpts, request.memories, request.history)
         async for event in self._stream_answer(messages, len(citations), int(outcome.latency_ms)):
             yield event
 
@@ -270,6 +297,7 @@ class QaService:
     ) -> AsyncIterator[StreamEvent]:
         """模型这一段：能流就流，不能流就一次性回答，再统一收尾。"""
         started = time.perf_counter()
+        before = checkpoint()
         if callable(getattr(self.chat, "stream_chat", None)):
             text = ""
             usage: TokenUsage | None = None
@@ -286,6 +314,7 @@ class QaService:
                     finish_reason = chunk.finish_reason
                 if chunk.usage is not None:
                     usage = chunk.usage
+            observe(self.chat, usage, before)
             self._chat_calls += 1
             yield self._final_event(
                 text=text,
@@ -301,6 +330,7 @@ class QaService:
         response: ChatResponse = await self.chat.chat(
             messages, temperature=self.settings.temperature, max_tokens=self.settings.max_tokens
         )
+        observe(self.chat, response.usage, before)
         self._chat_calls += 1
         if response.text:
             yield delta_event(response.text)
@@ -365,9 +395,42 @@ class QaService:
             ),
         ]
 
-    def _refusal(self, latency_ms: float) -> QaAnswer:
+    async def _retrieve(self, request: QaStreamRequest) -> tuple[RetrievalOutcome, str | None]:
+        started = time.perf_counter()
+        titles = exclusive_titles(request.question)
+        allowed: set[tuple[str, int]] | None = None
+        if titles:
+            visible = await run_in_threadpool(self.pipeline.visible_chunks)
+            available = {normalize_evidence(chunk.title) for chunk in visible}
+            missing = [title for title in titles if normalize_evidence(title) not in available]
+            if missing:
+                names = "、".join(f"《{title}》" for title in missing)
+                return (
+                    RetrievalOutcome(posts=[], refused=True, latency_ms=_elapsed_ms(started)),
+                    f"{MODEL_REFUSAL_PREFIX}本次公开语料中没有找到指定来源{names}，无法按该来源回答。",
+                )
+            requested = {normalize_evidence(title) for title in titles}
+            allowed = {
+                (c.kind, c.post_id) for c in visible if normalize_evidence(c.title) in requested
+            }
+        outcome = await self.pipeline.retrieve(request.question, top_k=request.top_k)
+        if allowed is None:
+            return outcome, None
+        hits = [hit for hit in outcome.hits if (hit.kind, hit.post_id) in allowed]
+        filtered = replace(
+            outcome,
+            hits=hits,
+            chunks=[h.chunk_id for h in hits],
+            posts=list(dict.fromkeys(h.post_id for h in hits if h.kind == "post")),
+            refused=not hits,
+            latency_ms=max(outcome.latency_ms, _elapsed_ms(started)),
+        )
+        message = f"{MODEL_REFUSAL_PREFIX}本次没有检索到指定来源中能回答所问事实的段落。"
+        return filtered, message if not hits else None
+
+    def _refusal(self, latency_ms: float, message: str | None = None) -> QaAnswer:
         return QaAnswer(
-            answer=self.settings.refusal_message,
+            answer=message or self.settings.refusal_message,
             citations=[],
             done_reason=DoneReason.REFUSED,
             usage=Usage(latency_ms=int(latency_ms)),
@@ -423,7 +486,8 @@ def _snippet(chunk: IndexedChunk, limit: int) -> str:
         # `text` 是「标题\\n正文」，去掉标题那一行才是原文片段
         raw = chunk.text.split("\n", 1)[1] if "\n" in chunk.text else chunk.text
     raw = raw.strip()
-    return raw if len(raw) <= limit else raw[:limit].rstrip() + "…"
+    # 引用必须是原文子串；省略号属于展示效果，不能伪装成原文交给模型和核验器。
+    return raw if len(raw) <= limit else raw[:limit].rstrip()
 
 
 def _user_prompt(

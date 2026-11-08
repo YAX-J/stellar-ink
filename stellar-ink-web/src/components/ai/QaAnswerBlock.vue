@@ -80,6 +80,7 @@ const visibleCitations = computed(() => {
         :compact="compactCitations"
       />
     </div>
+    <p v-if="answer.usage?.usageComplete === false" class="qa-hint">上游未完整返回用量，显示的 Token 仅为已知小计。</p>
     <p v-if="!visibleCitations.length && refused && emptyHint" class="qa-hint">
       {{ emptyHint }}
     </p>

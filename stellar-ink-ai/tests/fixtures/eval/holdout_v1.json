@@ -1,0 +1,24 @@
+{
+  "name": "冻结留出集 v1",
+  "purpose": "holdout",
+  "frozenAt": "2026-11-08",
+  "description": "新增16题：8道可答题、4道同主题缺失事实题、4道跨主题题。首次使用前冻结，禁止阈值拟合；发现问题后此版本转为回归集，下一次泛化验收须新建版本。不是独立人工盲评。",
+  "cases": [
+    {"caseId":"h001","question":"《今夜的碎片》把几个念头放进同一颗星星？","expectedPostIds":[13],"expectedAnswer":"三个念头"},
+    {"caseId":"h002","question":"《今夜的碎片》记下的第一句话是什么？","expectedPostIds":[13],"expectedAnswer":"慢一点，再慢一点。"},
+    {"caseId":"h003","question":"《昨日补记》如何看待迟到与完成的关系？","expectedPostIds":[14],"expectedAnswer":"有时迟到也是一种完成。"},
+    {"caseId":"h004","question":"《前夜的星尘》怎样描述月亮、文字数量以及少的意义？","expectedPostIds":[15],"expectedAnswer":"前夜的月亮很好，字很少。少，也是一种密度。"},
+    {"caseId":"h005","question":"23秒接口排障文章里，Connector/J的两个连接超时参数默认值是多少，代表什么？","expectedPostIds":[16],"expectedAnswer":"connectTimeout 与 socketTimeout 默认都是 0，意思是无限等"},
+    {"caseId":"h006","question":"23秒接口排障文章最终给JDBC的连接与读取超时分别设置了多少毫秒？","expectedPostIds":[16],"expectedAnswer":"connectTimeout=3000&socketTimeout=15000"},
+    {"caseId":"h007","question":"23秒接口排障文章将Druid连接池最大等待从多少秒收紧到多少秒？","expectedPostIds":[16],"expectedAnswer":"max-wait 从 60 秒收到 5 秒"},
+    {"caseId":"h008","question":"23秒接口排障文章最终将开发环境和生产环境的Redis命令超时分别改为多少？","expectedPostIds":[16],"expectedAnswer":"开发环境降到 500 毫秒、生产 1 秒"},
+    {"caseId":"h009","question":"《今夜的碎片》的三个念头分别写了什么具体事情？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h010","question":"《前夜的星尘》记录的月相具体是上弦月还是下弦月？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h011","question":"23秒接口排障文章测试数据库的机器使用了哪一型号的网卡？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h012","question":"《昨日补记》作者实际补发时的精确时刻是几点几分？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h013","question":"请依据站内文章说明火星奥林帕斯山的精确海拔。","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h014","question":"站内哪篇文章给出了胰岛素的分子式，具体是什么？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h015","question":"请从站内内容找到巴赫BWV1043第一乐章的速度标记。","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"h016","question":"站内文章记录的钨在标准大气压下的熔点是多少？","expectedPostIds":[],"expectedAnswer":null}
+  ]
+}

@@ -34,6 +34,7 @@ class TokenUsage:
     total_tokens: int = 0
     latency_ms: int = 0
     model: str | None = None
+    reported: bool = True
 
     @staticmethod
     def of(
@@ -52,6 +53,7 @@ class TokenUsage:
             total_tokens=prompt + completion,
             latency_ms=latency_ms,
             model=model,
+            reported=prompt_tokens is not None and completion_tokens is not None,
         )
 
 
@@ -135,12 +137,15 @@ class ProviderCapabilities:
     chat: bool = False
     embedding: bool = False
     rerank: bool = False
+    decision: bool = False
 
     def supports(self, capability: str) -> bool:
         return bool(getattr(self, capability, False))
 
     def describe(self) -> str:
-        enabled = [name for name in ("chat", "embedding", "rerank") if self.supports(name)]
+        enabled = [
+            name for name in ("chat", "embedding", "rerank", "decision") if self.supports(name)
+        ]
         return "/".join(enabled) if enabled else "none"
 
 
@@ -158,6 +163,10 @@ class ProviderConfig:
     max_tokens: int | None = None
     temperature: float | None = None
     capabilities: ProviderCapabilities = field(default_factory=ProviderCapabilities)
+    config_id: int | None = None
+    config_user_id: int = 0
+    price_input: str | None = None
+    price_output: str | None = None
 
     def fingerprint(self) -> str:
         """配置指纹：**只含非敏感字段**，用于日志、缓存键与「配置变了吗」的比对。

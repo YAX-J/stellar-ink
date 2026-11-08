@@ -25,6 +25,7 @@ import com.stellarink.aiclient.dto.IndexRebuildRequestDTO;
 import com.stellarink.aiclient.dto.ProviderModelsRequestDTO;
 import com.stellarink.aiclient.dto.ProviderModelsResultDTO;
 import com.stellarink.aiclient.dto.QaAnswerDTO;
+import com.stellarink.aiclient.dto.QaEvalRunDTO;
 import com.stellarink.aiclient.dto.QaStreamRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleRequestDTO;
 import com.stellarink.aiclient.dto.WritingStyleResultDTO;
@@ -62,6 +63,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 而 DTO 里是 Long，会因「JSON 数字宽度」误报契约不一致。
  */
 class AiContractTest {
+
+    @Test
+    @DisplayName("完整问答验收：共享契约保留待复核的 null 与逐题用量")
+    void qaEvalContractsRoundTrip() throws IOException {
+        roundTrip("qa_eval_judge_request.json", QaEvalRunDTO.JudgeRequest.class);
+        QaEvalRunDTO judged = roundTrip("qa_eval_judged_snapshot.json", QaEvalRunDTO.class);
+        assertTrue(judged.getCases().get(0).getModelReview().getNeedsHumanReview());
+        assertNull(judged.getSummary().getAnswerAccuracy());
+        assertEquals(1, judged.getModelSummary().getReviewed());
+        roundTrip("qa_eval_start_request.json", QaEvalRunDTO.StartRequest.class);
+        roundTrip("qa_eval_run_request.json", QaEvalRunDTO.RunRequest.class);
+        QaEvalRunDTO.ReviewRequest review = roundTrip(
+                "qa_eval_review_request.json", QaEvalRunDTO.ReviewRequest.class);
+        assertNull(review.getCorrect());
+        assertNull(review.getCitationsSupported());
+        QaEvalRunDTO result = roundTrip("qa_eval_snapshot.json", QaEvalRunDTO.class);
+        assertEquals(1, result.getCompleted());
+        assertNull(result.getSummary().getAnswerAccuracy());
+        assertNull(result.getSummary().getCitationSupportRate());
+        assertEquals(1376, result.getStepUsage().getTotalTokens());
+        assertEquals("pending", result.getCases().get(1).getStatus());
+    }
 
     /** 相对本模块根目录（ai-client 与 ai-service 同深度） */
     private static final Path FIXTURES = Path.of("..", "..", "stellar-ink-ai", "tests", "fixtures");

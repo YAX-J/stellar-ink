@@ -60,5 +60,10 @@ public class AiCallLog {
 
     private BigDecimal priceOutput;
 
+    /** 每次实际模型调用的 Token 与价格快照，旧账为 null。 */
+    private String modelCallsJson;
+
+    private Boolean usageComplete;
+
     private LocalDateTime createdAt;
 }

@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import (
     ENV_FILE,  # noqa: F401 - 触发 .env 加载（QdrantConfig.from_env 读 os.environ）
@@ -79,7 +80,7 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
             content={"code": 400, "message": "单篇重建需要给出 postId"},
         )
 
-    posts = list(corpus_module.cached_posts())
+    posts = list(await run_in_threadpool(corpus_module.cached_posts))
     if kind == IndexTaskKind.POST_REBUILD:
         # 按**文档标识**取：只按数字 id 会同时命中文章 3 与笔记 3，然后一次重建两篇。
         # `content_kind` 可能是 null（Java 侧 DTO 默认值就是这么发过来的）→ 按 post
@@ -100,10 +101,10 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
     config = QdrantConfig.from_env()
     store = QdrantVectorStore(config)
     try:
-        embedder = runtime.registry().embedding_model()
-        report = await IndexPipeline(
-            store=store, embedder=embedder, point_factory=store
-        ).index(posts, recreate=kind == IndexTaskKind.FULL_REBUILD)
+        embedder = (await run_in_threadpool(runtime.registry)).embedding_model()
+        report = await IndexPipeline(store=store, embedder=embedder, point_factory=store).index(
+            posts, recreate=kind == IndexTaskKind.FULL_REBUILD
+        )
     except ProviderQuotaExhaustedError as error:
         # 额度用尽不是「稍后重试」：把它与瞬时错误分开说，否则会让人白折腾一天
         logger.warning("索引重建失败（额度用尽）：%s", error)
@@ -115,8 +116,7 @@ async def rebuild_index(request: IndexRebuildRequest) -> IndexJob | JSONResponse
             content={
                 "code": 400,
                 "message": (
-                    f"嵌入模型不可用：{error}"
-                    "（去 AI 实验室 → 模型配置里检查 embedding 角色）"
+                    f"嵌入模型不可用：{error}（去 AI 实验室 → 模型配置里检查 embedding 角色）"
                 ),
             },
         )
@@ -169,7 +169,7 @@ async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断�
     config = QdrantConfig.from_env()
     store = QdrantVectorStore(config)
     try:
-        chunks = corpus_module.cached_corpus()
+        chunks = await run_in_threadpool(corpus_module.cached_corpus)
         indexed = await store.hashes_by_docs()
         plan = reconcile(chunks, indexed)
         logger.info(
@@ -180,9 +180,11 @@ async def reconcile_index() -> Any:  # Any：union 形式会让 FastAPI 推断�
             len(plan.changed),
             len(plan.removed),
         )
-        by_key = {doc_key_of(post): post for post in corpus_module.cached_posts()}
+        by_key = {
+            doc_key_of(post): post for post in await run_in_threadpool(corpus_module.cached_posts)
+        }
         changed_docs = [by_key[key] for key in plan.changed if key in by_key]
-        embedder = runtime.registry().embedding_model()
+        embedder = (await run_in_threadpool(runtime.registry)).embedding_model()
         report = await IndexPipeline(store=store, embedder=embedder, point_factory=store).index(
             changed_docs, removed_keys=plan.removed
         )

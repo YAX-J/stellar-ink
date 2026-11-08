@@ -13,6 +13,7 @@
  * 共用一个状态时一边的 delta 会写进另一边的界面），以及多轮的 `history` 只在非空时才发。
  */
 import { createServer } from 'vite'
+import { groupCitations } from '../src/utils/citations.js'
 
 globalThis.window = { location: { origin: 'http://localhost:5173' } }
 const memory = new Map()
@@ -229,6 +230,20 @@ const empty = fresh()
 const before = calls.length
 report((await empty.askStream('   ')) === null, '空问题返回 null')
 report(calls.length === before, '空问题不发请求（不浪费额度）')
+
+// —— ⑨ 同篇引用归并：展示合并不能串文档或改变正文编号 ——
+const citations = [
+  { kind: 'note', postId: 19, chunkIndex: 2, snippet: '笔记第三段', no: 2 },
+  { kind: 'post', postId: 19, chunkIndex: 0, snippet: '同号文章', no: 5 },
+  { kind: 'note', postId: 19, chunkIndex: 0, snippet: '笔记第一段', no: 7 },
+]
+const grouped = groupCitations(citations)
+report(grouped.length === 2, '同一笔记的多个片段只显示一条来源，同号文章单独显示')
+report(grouped[0].citations.map((cite) => cite.no).join(',') === '2,7', '归并后保留正文使用的原始编号')
+report(grouped[0].citations.map((cite) => cite.snippet).join('|') === '笔记第三段|笔记第一段', '保留每段原文与原始引用顺序')
+report(citations.length === 3 && citations[0].no === 2, '展示归并不改写原始引用数组')
+report(groupCitations([{ postId: 1 }, { kind: 'post', postId: 1 }])[0].citations[1].no === 2, '未显式传编号时使用原始数组位置')
+report(groupCitations([]).length === 0, '空引用保持为空')
 
 await server.close()
 console.log(failed ? `\n${failed} 项失败` : '\n星海问答前端自检通过')

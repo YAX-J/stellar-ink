@@ -74,6 +74,9 @@ async def test_unknown_path_is_401_without_signature(client: httpx.AsyncClient) 
 #: 这个集合是**有意的白名单**：新增路由会让本测试失败，从而逼着人回来确认
 #: 「它确实该暴露、且已经写进 docs/api/README.md」，而不是顺手加一个接口。
 EXPOSED_PATHS = {
+    "/eval/qa/start", "/eval/qa/step", "/eval/qa/runs/{run_id}", "/eval/qa/review",
+    "/eval/qa/judge",
+    "/eval/qa/latest",
     "/health",
     # 索引重建（M4 遗留缺口补齐）：受内部签名保护，对外由 ai-service 的 ADMIN 门槛转发
     "/admin/index/rebuild",

@@ -7,6 +7,8 @@ package com.stellarink.aiclient.constant;
  * 这些路径**不经过网关**，也不对浏览器暴露。对外路径是 {@code /ai/**}（由 ai-service 提供）。
  */
 public final class AiContractPaths {
+    public static final String QA_EVAL_JUDGE = "/eval/qa/judge";
+    public static final String QA_EVAL_LATEST = "/eval/qa/latest";
 
     /** Python 侧探活（ai-service 的 {@code /ai/health} 会探测它） */
     public static final String HEALTH = "/health";
@@ -50,6 +52,12 @@ public final class AiContractPaths {
 
     /** 跑一轮检索评测 */
     public static final String EVAL_RUN = "/eval/run";
+
+    /** 完整问答评测：创建、逐题执行、读取、人工复核。 */
+    public static final String QA_EVAL_START = "/eval/qa/start";
+    public static final String QA_EVAL_STEP = "/eval/qa/step";
+    public static final String QA_EVAL_RUN = "/eval/qa/runs/{runId}";
+    public static final String QA_EVAL_REVIEW = "/eval/qa/review";
 
     /** 按 traceId 回放 Python 侧的链路事件（E3-4）：检索 / 工具 / 模型三段 */
     public static final String TRACE_REPLAY = "/internal/trace/{traceId}";

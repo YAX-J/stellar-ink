@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from app.agents.profile import AgentProfile
 from app.providers.base import ChatModel, model_tag_of
 from app.providers.models import ChatMessage, MessageRole
+from app.providers.usage import checkpoint, observe
 from app.rag.agent import AgentSettings
 from app.rag.qa import DEFAULT_REFUSAL, TRUNCATED_MESSAGE, model_outcome
 from app.schemas.common import DoneReason
@@ -120,6 +121,7 @@ class Answerer:
         if not text:
             raise ValueError("问题不能为空")
         started = time.perf_counter()
+        before = checkpoint()
         response = await self.chat.chat(
             [
                 ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
@@ -128,6 +130,7 @@ class Answerer:
             temperature=self.settings.temperature,
             max_tokens=self.settings.max_tokens,
         )
+        observe(self.chat, response.usage, before)
         outcome = model_outcome(
             response.text, response.finish_reason, refusal_message=refusal_message
         )

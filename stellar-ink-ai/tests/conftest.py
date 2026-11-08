@@ -9,4 +9,5 @@ from app.rag import corpus
 def offline_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_CORPUS_SOURCE", "seed")
     monkeypatch.setenv("AI_APP_ENV", "dev")
+    monkeypatch.delenv("AI_RETRIEVAL_PROFILE_PATH", raising=False)
     corpus.reset_corpus()

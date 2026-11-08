@@ -39,7 +39,8 @@ from typing import Any, Protocol
 from app.core.trace import record_event
 from app.providers.base import ChatModel
 from app.providers.models import ChatMessage, MessageRole
-from app.schemas.common import Citation, Role
+from app.providers.usage import checkpoint, observe, usage_scope
+from app.schemas.common import Citation, Role, Usage
 
 #: 单次运行的默认预算。三个上限都要有：只限步数挡不住「一步里塞十个工具调用」，
 #: 只限调用次数挡不住「一次观察把整篇文章灌回来」。
@@ -214,6 +215,7 @@ class AgentRun:
     steps: list[AgentStep]
     tool_calls: int
     interrupted_by: str = ""
+    usage: Usage | None = None
     usage_model: str | None = None
     latency_ms: int = 0
 
@@ -270,6 +272,7 @@ class Agent:
         if not self.system_prompt:
             self.system_prompt = Agent.SYSTEM_PROMPT
 
+    @usage_scope
     async def run(self, question: str) -> AgentRun:
         text = str(question or "").strip()
         if not text:
@@ -403,9 +406,11 @@ class Agent:
                 role=MessageRole.USER, content=_user_prompt(question, self.tools, observations)
             ),
         ]
+        before = checkpoint()
         response = await self.chat.chat(
             messages, temperature=self.settings.temperature, max_tokens=self.settings.max_tokens
         )
+        observe(self.chat, response.usage, before)
         return _parse_decision(response.text)
 
 
@@ -549,9 +554,7 @@ def verified_citations(claimed: Sequence[_Claim], observed: Sequence[Citation]) 
     ⚠️ 这是**共享口径**：核验器（A2）按同一条规则判「引用的片段有没有被观察到」，
     所以实现只有这一份，`_verified_citations` 只是它的历史别名。
     """
-    allowed: dict[tuple[str, int, int], Citation] = {
-        citation_key(item): item for item in observed
-    }
+    allowed: dict[tuple[str, int, int], Citation] = {citation_key(item): item for item in observed}
     kept: list[Citation] = []
     for claim in claimed:
         real = allowed.get((claim.kind, claim.post_id, claim.chunk_index))

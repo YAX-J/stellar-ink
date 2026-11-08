@@ -24,7 +24,25 @@
     "completionTokens": 96,
     "totalTokens": 1376,
     "latencyMs": 1840,
-    "model": "fake-chat-v1"
+    "model": "fake-chat-v1",
+    "modelCalls": [
+      {
+        "role": "chat",
+        "model": "fake-chat-v1",
+        "provider": "fake",
+        "configId": 9,
+        "configUserId": 7,
+        "promptTokens": 1280,
+        "completionTokens": 96,
+        "totalTokens": 1376,
+        "latencyMs": 1840,
+        "priceInput": "1.0000",
+        "priceOutput": "2.0000",
+        "configFingerprint": null
+      }
+    ],
+    "usageComplete": true,
+    "modelFingerprints": null
   },
   "evidenceSufficient": true
 }

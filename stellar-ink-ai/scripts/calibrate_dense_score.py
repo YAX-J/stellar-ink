@@ -26,13 +26,12 @@ from pathlib import Path
 from typing import Any
 
 from app.providers.errors import ProviderError
-from app.rag.corpus import build_corpus
+from app.rag import corpus as corpus_module
 from app.rag.eval_runner import EvalDataset
 from app.rag.pipeline import RetrievalConfig, RetrievalPipeline
 
 # 与 scripts/ 同目录，供 `uv run python scripts/x.py` 直接 import
 from console import use_utf8_console
-from scripts.seed_posts import load_seed_posts
 
 DEFAULT_DATASET = "golden_v1.json"
 
@@ -167,8 +166,8 @@ def format_report(
         "",
         f"建议 minDenseScore = {best.threshold:.3f}"
         f"（仍答对 {best.answerable_kept:.0%}，挡住无答案 {best.unanswerable_refused:.0%}）",
-        "填到三处：app/api/v1/qa.py 的 QA_RETRIEVAL、app/api/v1/agent.py 的 AGENT_RETRIEVAL、",
-        "以及评测台里 dense / hybrid / hybrid+rerank 三组的 minDenseScore。",
+        "本脚本只标定 Dense 单路；混合检索请运行 scripts/calibrate_hybrid_score.py，",
+        "联合标定两路阈值并用独立题集验收，不要将此数字直接写进问答常量。",
         "⚠️ 换嵌入模型后必须重新标定（分布随模型变，包括维度）。",
     ]
     return "\n".join(lines)
@@ -211,7 +210,7 @@ async def collect_rows(dataset: EvalDataset, *, top_k: int) -> list[ScoreRow]:
 
     model = registry()
     pipeline = RetrievalPipeline(
-        corpus=build_corpus(load_seed_posts()),
+        corpus=corpus_module.cached_corpus(kinds=corpus_module.ARTICLE_KINDS),
         # 只用 dense、且**不设下限**：要的就是原始分布
         config=RetrievalConfig(
             enable_sparse=False,
@@ -248,7 +247,9 @@ def _grid(rows: list[ScoreRow]) -> list[float]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="按真实分数分布标定 minDenseScore")
-    parser.add_argument("--dataset", default=DEFAULT_DATASET, help="data/eval 下的黄金集文件名")
+    parser.add_argument(
+        "--dataset", default=DEFAULT_DATASET, help="tests/fixtures/eval 下的黄金集文件名",
+    )
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--json", action="store_true", help="额外输出机器可读的 JSON")
     args = parser.parse_args()

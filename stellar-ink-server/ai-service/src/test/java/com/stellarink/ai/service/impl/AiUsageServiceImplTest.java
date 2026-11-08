@@ -1,6 +1,7 @@
 package com.stellarink.ai.service.impl;
 
 import com.stellarink.aiclient.dto.UsageDTO;
+import com.stellarink.aiclient.dto.ModelCallUsageDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiCallLogMapper;
 import com.stellarink.ai.mapper.AiProviderConfigMapper;
@@ -83,6 +84,73 @@ class AiUsageServiceImplTest {
                 .totalTokens(total)
                 .model(model)
                 .build();
+    }
+
+    @Test
+    @DisplayName("全局与个人同角色多行存在时，旧协议按实际调用者选价")
+    void legacyPriceUsesCallerScopeAndChecksActualModel() {
+        givenChatRoleWithPrice(PRICE_IN, PRICE_OUT);
+        AiProviderConfig personal = new AiProviderConfig();
+        personal.setUserId(7L);
+        personal.setRole("chat");
+        personal.setProvider("openai_compatible");
+        personal.setDisplayName("个人模型");
+        personal.setBaseUrl("https://example.invalid/v1");
+        personal.setModel("personal-chat");
+        personal.setPriceInputPerMillion(new BigDecimal("3"));
+        personal.setPriceOutputPerMillion(new BigDecimal("4"));
+        providerConfigMapper.insert(personal);
+        usageService.recordSuccess(AiCallScene.QA, usage(1000000, 0, 1000000, "test-chat"),
+                System.currentTimeMillis());
+        assertEquals(new BigDecimal("1.0000"), usageService.summary(1).getCost());
+        try (var auth = org.mockito.Mockito.mockStatic(com.stellarink.common.auth.AuthHelper.class)) {
+            auth.when(com.stellarink.common.auth.AuthHelper::loginId).thenReturn(7L);
+            usageService.recordSuccess(AiCallScene.QA, usage(1000000, 0, 1000000, "personal-chat"),
+                    System.currentTimeMillis());
+            // 个人配置已换模型，不能把旧调用按新价格计费。
+            usageService.recordSuccess(AiCallScene.QA, usage(10, 0, 10, "old-model"),
+                    System.currentTimeMillis());
+        }
+        assertEquals(new BigDecimal("4.0000"), usageService.summary(1).getCost());
+        assertEquals(1, usageService.summary(1).getUnpricedCalls());
+    }
+
+    @Test
+    @DisplayName("多模型按调用时价格快照计算，零调用和未知用量分别保留")
+    void actualCallsUseTheirOwnPriceSnapshots() {
+        ModelCallUsageDTO chat = new ModelCallUsageDTO();
+        chat.setRole("chat");
+        chat.setModel("personal-chat");
+        chat.setConfigUserId(7L);
+        chat.setPromptTokens(1000000);
+        chat.setCompletionTokens(0);
+        chat.setTotalTokens(1000000);
+        chat.setPriceInput(new BigDecimal("3"));
+        ModelCallUsageDTO embedding = new ModelCallUsageDTO();
+        embedding.setRole("embedding");
+        embedding.setModel("global-embedding");
+        embedding.setConfigUserId(0L);
+        embedding.setPromptTokens(1000000);
+        embedding.setCompletionTokens(0);
+        embedding.setTotalTokens(1000000);
+        embedding.setPriceInput(new BigDecimal("0.5"));
+        UsageDTO measured = usage(2000000, 0, 2000000, "personal-chat");
+        measured.setModelCalls(List.of(chat, embedding));
+        measured.setUsageComplete(true);
+        usageService.recordSuccess(AiCallScene.AGENT, measured, System.currentTimeMillis());
+        // 当前库中的单价与快照完全不同，不得重新查价替换调用时的值。
+        givenChatRoleWithPrice(new BigDecimal("99"), PRICE_OUT);
+        assertEquals(new BigDecimal("3.5000"), usageService.summary(1).getCost());
+        assertEquals(2, usageService.summary(1).getByModel().size());
+        UsageDTO noCalls = usage(0, 0, 0, null);
+        noCalls.setUsageComplete(true);
+        noCalls.setModelCalls(List.of());
+        usageService.recordSuccess(AiCallScene.QA, noCalls, System.currentTimeMillis());
+        UsageDTO missing = usage(0, 0, 0, "unknown");
+        missing.setUsageComplete(false);
+        usageService.recordSuccess(AiCallScene.QA, missing, System.currentTimeMillis());
+        assertEquals(1, usageService.summary(1).getUntokenizedCalls());
+        assertEquals(0, usageService.summary(1).getUnpricedCalls());
     }
 
     @Test

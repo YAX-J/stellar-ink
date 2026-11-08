@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error, pipeline_for, roles_for
 from app.core.internal_auth import InternalIdentity
@@ -31,13 +32,8 @@ router = APIRouter(tags=["qa"])
 #: SSE 心跳间隔：模型第一个 token 可能要等十几秒，中间的代理会掐掉静默连接
 HEARTBEAT_SECONDS = 10.0
 
-#: 问答用的检索配置：混合召回（BM25 + 向量），**不设相似度下限**。
-#:
-#: 关于 `min_dense_score` 为什么是 0：给它设一个「看起来合理」的值（曾经是 0.2）会让
-#: 向量通路**静默清空** —— 余弦量级对不对取决于嵌入模型，离线 Fake 的哈希伪向量只有 0.03 量级，
-#: 于是混合检索退化成纯 BM25，而日志、指标、响应全都正常。
-#: 这道闸门必须**接上真实嵌入模型后用评测台标定**（`scripts/calibrate_min_score.py`，
-#: 以及 fast-track-plan §5 的分数重叠结论），不能凭感觉填。
+#: 混合召回的未标定基线；assembly 只在模型和语料指纹均匹配时应用已验收阈值。
+#: 标定入口 scripts/calibrate_hybrid_score.py，避免给 Fake 或新模型沿用旧分数下限。
 QA_RETRIEVAL = RetrievalConfig(
     enable_sparse=True,
     enable_dense=True,
@@ -75,7 +71,7 @@ async def ask(
 ) -> QaAnswer | JSONResponse:
     """一次问答：检索 → 引用 → 提示词 → 模型 → 结论（证据不足时明确拒答）。"""
     try:
-        service = build_qa_service(identity.user_id)
+        service = await run_in_threadpool(build_qa_service, identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
@@ -104,7 +100,7 @@ async def ask_stream(
     上游 HTTP 流关闭。**这条链路是「关掉页面就停止烧 token」的全部实现**。
     """
     try:
-        service = build_qa_service(identity.user_id)
+        service = await run_in_threadpool(build_qa_service, identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 

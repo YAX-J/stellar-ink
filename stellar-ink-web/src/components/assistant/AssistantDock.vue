@@ -614,7 +614,7 @@ function toAnswerShape(result, { stopped = false } = {}) {
     doneReason: result.doneReason,
     // 有正文才算"证据足够"：只有引用没有正文是"预算用尽"的形态，不是拒答
     evidenceSufficient: Boolean(result.answer),
-    usage: { model: result.usageModel || '', latencyMs: result.latencyMs || 0 },
+    usage: result.usage || { model: result.usageModel || '', latencyMs: result.latencyMs || 0 },
     steps: result.steps || [],
     toolCalls: result.toolCalls || 0,
   }

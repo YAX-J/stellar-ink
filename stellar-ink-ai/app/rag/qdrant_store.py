@@ -64,9 +64,9 @@ def _current_fingerprint() -> str | None:
     所以这里吞掉异常并返回 None，由调用方决定「没有记录就放行」。
     """
     try:
-        from app.providers.runtime import fingerprint  # noqa: PLC0415 - 延迟导入避免环
+        from app.providers.runtime import model_fingerprint  # noqa: PLC0415 - 延迟导入避免环
 
-        return fingerprint()
+        return model_fingerprint("embedding")
     except Exception:  # noqa: BLE001 - 护栏不该成为新的故障点
         return None
 

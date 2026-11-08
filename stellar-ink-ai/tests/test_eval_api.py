@@ -274,3 +274,41 @@ async def test_strategies_endpoint_matches_the_defaults(app: FastAPI, secret: st
     ]
     assert payload[0]["enableDense"] is False
     assert payload[4]["minScore"] == 11.0
+
+
+async def test_validated_profile_adds_a_separate_strategy(
+    app: FastAPI, secret: str, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.v1.assembly import pipeline_for
+    from app.api.v1.qa import QA_RETRIEVAL
+    from app.providers import runtime
+    from app.rag import corpus
+    from app.rag.retrieval_profile import RetrievalProfile, corpus_fingerprint
+
+    chunks = corpus.cached_corpus()
+    embedding = runtime.registry().config_of("embedding")
+    assert embedding is not None
+    profile = RetrievalProfile(
+        embedding_fingerprint=embedding.fingerprint(),
+        corpus_fingerprint=corpus_fingerprint(chunks),
+        min_score=26.1, min_dense_score=.412, validated=True,
+    )
+    path = tmp_path / "profile.json"
+    path.write_text(profile.model_dump_json(), encoding="utf-8")
+    monkeypatch.setenv("AI_RETRIEVAL_PROFILE_PATH", str(path))
+    status, payload = await get(app, secret, "/eval/strategies")
+    assert status == 200
+    assert payload[2]["key"] == "hybrid" and payload[2]["minScore"] == 0
+    assert payload[-1]["key"] == "hybrid+calibrated"
+    assert payload[-1]["enableDense"] is True
+    assert payload[-1]["enableRerank"] is False
+    assert payload[-1]["minScore"] == 26.1
+    assert pipeline_for(QA_RETRIEVAL).config.min_dense_score == .412
+
+
+async def test_datasets_include_independent_acceptance(app: FastAPI, secret: str) -> None:
+    status, payload = await get(app, secret, "/eval/datasets")
+    assert status == 200
+    acceptance = next(row for row in payload if row["id"] == "acceptance_v1")
+    assert acceptance["cases"] == 24
+    assert acceptance["answerableCases"] == acceptance["unanswerableCases"] == 12

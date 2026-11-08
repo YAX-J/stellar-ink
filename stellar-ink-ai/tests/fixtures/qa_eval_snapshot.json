@@ -1,0 +1,130 @@
+{
+  "runId": "qa-contract-run",
+  "dataset": "acceptance_v1",
+  "datasetLabel": "独立验收集 v1",
+  "total": 2,
+  "completed": 1,
+  "busy": false,
+  "cases": [
+    {
+      "caseId": "a001",
+      "question": "星笺怎样比喻文章？",
+      "expectedPostIds": [
+        12
+      ],
+      "expectedAnswer": "夜空中的坐标",
+      "status": "completed",
+      "answer": {
+        "answer": "星笺把文章比作星辰，是因为每篇文章都对应夜空中的一个坐标，读者按坐标回访。\n\n这一设定在项目说明里有直接表述。",
+        "citations": [
+          {
+            "kind": "post",
+            "postId": 12,
+            "title": "把文章写成星图",
+            "chunkIndex": 3,
+            "snippet": "每一篇文章都是夜空中的一个坐标，读者按坐标回访。",
+            "score": 0.83
+          },
+          {
+            "kind": "post",
+            "postId": 12,
+            "title": "把文章写成星图",
+            "chunkIndex": 7,
+            "snippet": "星图的密度由写作频率决定，而不是由发布时间决定。",
+            "score": 0.61
+          }
+        ],
+        "doneReason": "stop",
+        "usage": {
+          "promptTokens": 1280,
+          "completionTokens": 96,
+          "totalTokens": 1376,
+          "latencyMs": 1840,
+          "model": "fake-chat-v1",
+          "modelCalls": null,
+          "usageComplete": null,
+          "modelFingerprints": null
+        },
+        "evidenceSufficient": true
+      },
+      "answerHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "automatic": {
+        "checked": 2,
+        "sourceMatched": 2,
+        "missingSources": 0,
+        "outOfRange": [],
+        "uncited": false
+      },
+      "review": {
+        "correct": null,
+        "citationsSupported": null,
+        "note": ""
+      },
+      "modelReview": null,
+      "error": "",
+      "traceId": ""
+    },
+    {
+      "caseId": "a002",
+      "question": "作者用哪一款键盘？",
+      "expectedPostIds": [],
+      "expectedAnswer": null,
+      "status": "pending",
+      "answer": null,
+      "answerHash": "",
+      "automatic": null,
+      "review": {
+        "correct": null,
+        "citationsSupported": null,
+        "note": ""
+      },
+      "modelReview": null,
+      "error": "",
+      "traceId": ""
+    }
+  ],
+  "summary": {
+    "errors": 0,
+    "totalTokens": 1376,
+    "returnedCitations": 2,
+    "sourceMatched": 2,
+    "sourceMatchRate": 1.0,
+    "outOfRange": 0,
+    "uncitedAnswers": 0,
+    "uncitedRefusals": 0,
+    "unanswerableCompleted": 0,
+    "unanswerableRefused": 0,
+    "falseRefusals": 0,
+    "truncated": 0,
+    "correctReviewed": 0,
+    "correctPassed": 0,
+    "answerAccuracy": null,
+    "supportReviewed": 0,
+    "supportPassed": 0,
+    "citationSupportRate": null
+  },
+  "modelSummary": {
+    "reviewed": 0,
+    "conclusive": 0,
+    "passed": 0,
+    "answerPassRate": null,
+    "supportReviewed": 0,
+    "supportPassed": 0,
+    "citationPassRate": null,
+    "needsHuman": 0,
+    "totalTokens": 0
+  },
+  "stepUsage": {
+    "promptTokens": 1280,
+    "completionTokens": 96,
+    "totalTokens": 1376,
+    "latencyMs": 1840,
+    "model": "fake-chat-v1",
+    "modelCalls": null,
+    "usageComplete": null,
+    "modelFingerprints": null
+  },
+  "reportSavedAt": null,
+  "reportError": "",
+  "executionAvailable": true
+}

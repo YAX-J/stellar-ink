@@ -47,6 +47,7 @@ from app.providers.models import (
     TokenUsage,
 )
 from app.providers.retry import RetryPolicy
+from app.providers.usage import metered, record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ class OpenAICompatibleProvider:
 
     # ---------------------------------------------------------------- chat
 
+    @metered
     async def chat(
         self,
         messages: list[ChatMessage],
@@ -181,8 +183,11 @@ class OpenAICompatibleProvider:
             payload["max_tokens"] = resolved_max_tokens
 
         started = time.perf_counter()
+        measured: TokenUsage | None = None
         try:
             async for chunk in self._stream("/chat/completions", payload):
+                if chunk.usage is not None:
+                    measured = chunk.usage
                 yield chunk
         except ProviderError as first:
             # 上游不认 stream_options：这是「多要了一个可选字段」，不是配置错误。
@@ -192,7 +197,10 @@ class OpenAICompatibleProvider:
             logger.info("上游拒绝 stream_options，改为不带用量重试一次：%s", first)
             payload.pop("stream_options", None)
             async for chunk in self._stream("/chat/completions", payload):
+                if chunk.usage is not None:
+                    measured = chunk.usage
                 yield chunk
+        record_usage(self, measured)
         logger.debug(
             "stream_chat 结束：model=%s elapsedMs=%d", self._config.model, _elapsed_ms(started)
         )
@@ -252,6 +260,32 @@ class OpenAICompatibleProvider:
                 usage=TokenUsage(model=self._config.model, latency_ms=0),
             )
 
+        # 千问不同嵌入版本的批量上限不同，统一采用兼容协议的保守上限。
+        # 评测会一次传入整库，不能把这个业务批次原样发给上游。
+        path = httpx.URL(self._config.base_url).path.rstrip("/")
+        qwen_protocol = path.endswith(("/compatible-mode/v1", "/compatible-api/v1"))
+        batch_size = 10 if qwen_protocol else len(texts)
+        started = time.perf_counter()
+        responses: list[EmbeddingResponse] = []
+        for start in range(0, len(texts), batch_size):
+            response = await self._embed_batch(texts[start : start + batch_size])
+            if responses and response.dimension != responses[0].dimension:
+                raise ProviderUnavailableError("嵌入批次之间的向量维度不一致")
+            responses.append(response)
+        return EmbeddingResponse(
+            vectors=[vector for response in responses for vector in response.vectors],
+            dimension=responses[0].dimension,
+            usage=TokenUsage.of(
+                sum(response.usage.prompt_tokens for response in responses),
+                0,
+                latency_ms=_elapsed_ms(started),
+                model=self._config.model,
+            ),
+        )
+
+    @metered
+    async def _embed_batch(self, texts: list[str]) -> EmbeddingResponse:
+        """一次上游嵌入请求：每批独立校验，全部成功才向调用方交付。"""
         started = time.perf_counter()
         data = await self._post("/embeddings", {"model": self._config.model, "input": texts})
         latency_ms = _elapsed_ms(started)
@@ -302,6 +336,7 @@ class OpenAICompatibleProvider:
 
     # -------------------------------------------------------------- rerank
 
+    @metered
     async def rerank(
         self,
         query: str,
@@ -327,7 +362,7 @@ class OpenAICompatibleProvider:
             payload["top_n"] = top_n
 
         started = time.perf_counter()
-        data = await self._post("/rerank", payload)
+        data = await self._post(self._rerank_endpoint(), payload)
         latency_ms = _elapsed_ms(started)
 
         raw_items = data.get("results")
@@ -372,6 +407,17 @@ class OpenAICompatibleProvider:
         )
 
     # ------------------------------------------------------------- 内部
+
+    def _rerank_endpoint(self) -> str:
+        """千问兼容协议的重排路径独立于聊天；只改路径，不改密钥的目标主机。"""
+        base = httpx.URL(self._config.base_url)
+        path = base.path.rstrip("/")
+        if path.endswith("/compatible-mode/v1"):
+            prefix = path.removesuffix("/compatible-mode/v1")
+            return str(base.copy_with(path=prefix + "/compatible-api/v1/reranks"))
+        if path.endswith("/compatible-api/v1"):
+            return "/reranks"
+        return "/rerank"
 
     def _require(self, capability: str) -> None:
         if not self._caps.supports(capability):
@@ -440,6 +486,11 @@ class OpenAICompatibleProvider:
             error = _rate_limit_error(response)
         elif status_code >= 500:
             error = ProviderUnavailableError(f"模型服务返回 {status_code}")
+        elif status_code == 404:
+            error = ProviderError(
+                "模型服务返回 404",
+                detail="请先检查 API 根地址与接口路径，再确认该端点是否提供此模型",
+            )
         else:
             # 400 多为模型名写错、参数不被支持：属于配置问题，不可重试
             error = ProviderError(

@@ -407,6 +407,7 @@ services:
       AI_CORPUS_SOURCE: online
       CONTENT_SERVICE_URL: http://content-service:8102
       AI_LOG_LEVEL: ${AI_LOG_LEVEL:-INFO}
+      AI_QA_REPORT_DIR: /app/data/qa-eval-reports
       MYSQL_HOST: ${MYSQL_HOST:-mysql}
       MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_DB: ${MYSQL_DB:-stellar_ink}
@@ -417,6 +418,8 @@ services:
       AI_SECRET_MASTER_KEY: ${AI_SECRET_MASTER_KEY:?请在 deploy/docker/.env 中设置 AI_SECRET_MASTER_KEY}
       # 打开前必须先建索引（POST /admin/index/rebuild），否则检索命中不到任何内容
       AI_DENSE_STORE_ENABLED: ${AI_DENSE_STORE_ENABLED:-false}
+    volumes:
+      - ./data/qa-eval-reports:/app/data/qa-eval-reports
     extra_hosts: *extra-hosts
     healthcheck:
       <<: *health-defaults

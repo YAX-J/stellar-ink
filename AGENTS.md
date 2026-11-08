@@ -465,6 +465,43 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 
 ### AI 模块口径（M0 起建立，后续按里程碑扩展）
 
+- **调用用量与快照**：`Usage.modelCalls` 按实际模型调用收集，缓存命中不计调用；`usageComplete=false`
+  时顶层 Token 只是已知小计，不可当完整费用。Agent 多步、嵌入拆批及重排分别计量；价格取实际
+  生效配置的调用时快照，不能按角色混查全局与个人配置。业务账仍一请求一条，模型分组按实际调用。
+  新库/已有库须执行 `23_ai_call_usage.sql`；旧账不回填。详见 `docs/ai/accounting-and-stability.md`。
+- **异步路径不得同步等网络**：配置及语料公开状态读取通过 Starlette/AnyIO 有限工作线程执行；
+  语料换代并发时须拒绝旧代复核覆盖新视图，不得为减少读取次数放宽内容撤回保护。
+- **留出验收**：`holdout_v3` 为当前留出版本，首次真实执行前冻结，禁止用于阈值拟合；参与修复后转为回归集。
+  留出集必须有同名 `*.sources.json`，在调用模型前按来源类型/ID/标题/证据及可选版本校验；
+  不得用种子SQL的同号文章替代线上原文。v1来源错误的语义成绩已撤回，v2转回归，详见 `docs/ai/source-bound-qa.md`。
+  `scripts/eval_qa_stability.py` 逐轮存证，模型/语料/题集不同不合并，复核必须逐轮绑定答案哈希。
+  漏答与无依据作答未复核时为 null；状态变化与引用存在都不能冒充语义正确率。
+- **明确来源问答**：普通问答与SSE共用“只/仅根据/依据《完整标题》”限制；缺失来源直接拒答且不调用模型，
+  存在时只交付匹配来源的召回片段，不能用别篇文章/笔记补答案；继续做公开状态复核。
+
+
+- **检索标定**：`calibrate_hybrid_score.py` 只用黄金集拟合两路阈值，再以独立验收集验收；
+  `AI_RETRIEVAL_PROFILE_PATH` 的结果只在模型与公开语料指纹均匹配时应用，失效不得沿用。
+  评测保留五组基线并按有效配置追加 `hybrid+calibrated`；详见 `docs/ai/retrieval-calibration.md`。
+  Qdrant 的 `modelFingerprint` 只取已装配的 embedding 角色指纹，不得使用全部模型配置的总指纹；
+  新增 decision 或更换 chat 不应误报向量空间变化。旧聚合指纹迁移须逐点核验并备份，实际换嵌入模型仍需重建。
+- **问答证据**：默认保留完整标准子块，不得将200字展示预览作为模型的唯一证据而删掉块尾答案；
+  引用片段须为原文子串，不追加省略号。最终答案验收分开计原文一致性与语义支持，复核绑定答案哈希。
+  前端引用按 `(kind, postId)` 合并为一张来源卡，保留各片段原始编号、段号与摘录；
+  不得把同号文章/笔记合并，也不得将展示分组改写为后端引用或重新编号。
+- **完整问答评测**：`/ai-lab?tab=eval&mode=qa` 逐题调用真实问答，Java 的
+  `/ai/admin/eval/qa/{start,step,review}` 与 `runs/{runId}` 仅做 ADMIN 复核、转发与单题用量记账。
+  自动原文/编号检查不能代替语义复核；未复核的正确率与引用支持率必须为 null，显示「待复核」。
+  Python 按签名用户隔离有界进程内记录；未完成运行闲置一小时、容量淘汰或重启会丢失。
+  完整执行、模型复核及人工复核后按用户保存最近一轮报告，`GET /ai/admin/eval/qa/latest`只读且不计模型用量。
+  `AI_QA_REPORT_DIR`默认`data/qa-eval-reports`；报告持久化失败须保留已完成结果并单独提示导出。
+  导入的历史结果缺少运行上下文时，只允许查看和人工复核，不得伪造模型/语料指纹来继续模型调用。
+  「停止后续题目」只停止调度，当前题仍完成，不得称为已取消。
+- **决策模型复核**：全局 `decision` 角色当前手动配置 `cloudflare_decision` 协议，不进入模型库的
+  三种存储能力。Clef 使用原生 `state/questions` 与选项概率，不得发到 `/chat/completions`。
+  `/ai/admin/eval/qa/judge` 逐题复核并单独记 EVAL 用量；模型 `modelReview/modelSummary` 与人工
+  `review/summary` 分开保存。概率不足0.8或不确定时不计入明确判定分母；失败或结构问题需人工关注。
+  0.8是未标定的分流门槛，不是已验证的准确率。模型调用失败不得写入通过分数或覆盖已有人工结论。
 - 「更新语料」入口位于 AI 实验室页签上方（ADMIN）。Pinia store 顺序执行同步与索引对账，
   显示阶段、统计与失败原因；索引失败保留同步结果、进行中防重入。索引对账先重读最新投影，
   无需等待 TTL；不得把嵌套业务错误显示成成功。
@@ -476,7 +513,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `AI_CORPUS_SOURCE` 默认 `online`，空库保持空、来源失败报 503；`seed` 仅显式用于离线开发/测试，
   `AI_APP_ENV=test/prod` 禁用 seed，禁止把种子回退当线上恢复措施。
 - **数据库初始化**：Docker 新库依次执行 `01_schema.sql`、`02_init-data.sql`、`mysql/03_ai.sh`；
-  AI 迁移唯一清单为 `deploy/sql/ai-migrations.txt`（10–21）。已有库用
+  AI 迁移唯一清单为 `deploy/sql/ai-migrations.txt`（10–21、23）。已有库用
   `python deploy/scripts/migrate-ai.py`（先显式设置 `MYSQL_DB` 和凭据）补齐，不重跑种子与 03–09 的旧 ALTER。
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、
   切块、Embedding、向量检索、BM25/RRF、Rerank、引用组装、Agent 状态图与工具、记忆、GraphRAG、
@@ -563,7 +600,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `fake` 仍然可用，但必须**显式**配置（面板里把协议选成 fake，或测试里显式注入），
   它只用于离线自测与契约测试。
   **`base_url` 填 API 根，路径由代码拼**（`/chat/completions`、`/embeddings`、`/rerank`）：
-  填成完整端点会拼出 `/rerank/rerank` → 404，而报出来的话是「模型名不存在」（踩过）。
+  填成完整端点会拼出 `/rerank/rerank` → 404。千问兼容协议的重排是独立的
+  `/compatible-api/v1/reranks`；Python 根据配置的 `/compatible-mode/v1` 或 `/compatible-api/v1`
+  根路径选择端点，保留原主机、端口与代理前缀。不得为适配路径把用户密钥发往另一个域名。
+  千问兼容根的嵌入请求由 Provider 按每批最多 10 条拆分，保持原顺序并合并用量；
+  不得把整库直接作为上游批次，任何批次失败不得交付残缺结果。
+  404 要先提示检查 API 根地址与接口路径，不能统一归因为模型名不存在。
   面板那个「测试连接」是 `scope: tcp_only`，对这类错误**一声不响**；
   验证「配置真的能用」要跑 `uv run python scripts/provider_smoke.py`（按角色各打一次真实调用）。
   面板 `POST /ai/admin/providers` 提交明文 Key，

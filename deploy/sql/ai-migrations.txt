@@ -10,3 +10,4 @@
 19_ai_content_snapshot.sql
 20_ai_content_snapshot_content.sql
 21_ai_content_snapshot_tags_author.sql
+23_ai_call_usage.sql

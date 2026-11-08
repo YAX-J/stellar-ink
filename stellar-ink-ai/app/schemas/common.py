@@ -84,6 +84,23 @@ class Citation(ContractModel):
     score: float | None = Field(default=None, description="检索/重排得分，可空")
 
 
+class ModelCallUsage(ContractModel):
+    """一次实际模型调用；未知 Token 留空，配置归属随实际调用回传。"""
+
+    role: str
+    model: str | None = None
+    provider: str | None = None
+    config_id: int | None = None
+    config_user_id: int = 0
+    config_fingerprint: str | None = None
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
+    price_input: str | None = None
+    price_output: str | None = None
+
+
 class Usage(ContractModel):
     """用量：M2 起由 Provider 回填；M0 的 Fake Adapter 也必须给出确定值。"""
 
@@ -92,6 +109,13 @@ class Usage(ContractModel):
     total_tokens: int = Field(default=0, ge=0, description="总 Token")
     latency_ms: int = Field(default=0, ge=0, description="端到端耗时（毫秒）")
     model: str | None = Field(default=None, description="实际使用的模型标识")
+    model_calls: list[ModelCallUsage] | None = Field(
+        default=None, description="实际调用明细；null 为旧协议未知"
+    )
+    usage_complete: bool | None = Field(default=None, description="全部实际调用是否均回报 Token")
+    model_fingerprints: dict[str, str] | None = Field(
+        default=None, description="生效模型指纹，缓存命中仍保留；与实际调用次数分开"
+    )
 
 
 class ErrorBody(ContractModel):

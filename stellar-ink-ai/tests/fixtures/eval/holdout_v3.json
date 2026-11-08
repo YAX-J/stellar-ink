@@ -1,0 +1,24 @@
+{
+  "name": "明确来源约束留出集 v3",
+  "purpose": "holdout",
+  "frozenAt": "2026-11-08",
+  "description": "来源约束修复后的16道新题：8道指定来源可答题、4道缺失来源或跨来源事实题、4道站内无依据题。首次执行前冻结；来源版本在同名.sources.json中绑定，禁止用于阈值拟合。",
+  "cases": [
+    {"caseId":"v301","question":"只根据《把后端挂在公网上的那些天》，MySQL业务账号应怎样授权？","expectedPostIds":[17],"expectedAnswer":"建专用账号，只授权需要的库"},
+    {"caseId":"v302","question":"只依据《左侧竖栏改成顶栏：一级导航从 11 项砍到 6 项》，标签应和哪个筛选维度一起放到哪里？","expectedPostIds":[18],"expectedAnswer":"和年份一起叠加筛选，放在星图里"},
+    {"caseId":"v303","question":"仅根据《三个让我白干半天的前端坑》，动态透明度被动画终态压住时给出了哪两种处理？","expectedPostIds":[19],"expectedAnswer":"不加入场动画；同时加 animation: none"},
+    {"caseId":"v304","question":"只根据《标签精确匹配：从 LIKE 到 FIND_IN_SET》，新查询能否使用索引，为什么博客仍能接受？","expectedPostIds":[20],"expectedAnswer":"用不上索引；博客体量小，全表扫几十行差别可忽略"},
+    {"caseId":"v305","question":"仅依据《中文 curl 发请求为什么返回 500》，日志里的中文乱码常常应检查什么而非怪日志框架？","expectedPostIds":[21],"expectedAnswer":"终端在看别的编码"},
+    {"caseId":"v306","question":"只根据《JWT 无状态之后，登出为什么还要 Redis》，仅修改密码而不撤销令牌时，旧token还能使用多久？","expectedPostIds":[22],"expectedAnswer":"七天"},
+    {"caseId":"v307","question":"只根据《把博客的加载动画，改成了一次呼吸》，页面怎样防止已选破晓主题的人刷新时先闪过夜色？","expectedPostIds":[24],"expectedAnswer":"HTML解析第一时间由内联脚本读取本地主题偏好"},
+    {"caseId":"v308","question":"只根据《地铁末班车上，所有人都在假装不累》，车厢在哪段路突然变亮，窗户随后像什么？","expectedPostIds":[28],"expectedAnswer":"经过地面的路段；窗户变成镜子"},
+    {"caseId":"v309","question":"只根据《一次 23 秒的请求：Redis 超时是怎么把接口挂住的》，列出JDBC两个最终超时参数值。","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v310","question":"仅根据《Redis 配额按模型计数实测》，每个模型每天的额度上限是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v311","question":"只根据《标签精确匹配：从 LIKE 到 FIND_IN_SET》，CodeMirror未经压缩与gzip后的体积各是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v312","question":"仅依据《左侧竖栏改成顶栏：一级导航从 11 项砍到 6 项》，旧JWT在改密码之后还能有效几天？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v313","question":"站内实验文章中，磁单极子的观测质量是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v314","question":"站内记录的郁金香样本在色谱实验中保留了几分钟？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v315","question":"本站实验记录里铯原子钟的实际校准频率是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"v316","question":"站内哪篇文章推导了欧几里得算法平均迭代次数，结论公式是什么？","expectedPostIds":[],"expectedAnswer":null}
+  ]
+}

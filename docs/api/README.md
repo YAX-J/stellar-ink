@@ -1,5 +1,9 @@
 # 星笺后端接口文档（Spring Cloud Alibaba 微服务）
 
+> 2026-11-08 来源约束增量：`/ai/qa` 与 `/ai/qa/stream` 对“只/仅根据/依据《完整标题》”限制证据范围；缺失来源返回 `refused`、空引用及零模型调用。评测清单支持 `holdout_v1/v2/v3`，当前验收用v3；有来源清单的题集在执行前校验，失败返回现有业务错误信封及可读原因，不创建新运行、不调用模型。旧v1的h005–h008与本机公开库不符会被拒绝。JSON结构不变，详见 [来源复查](../ai/source-bound-qa.md)。
+
+> 2026-11-08 AI 用量协议增量：`Usage` 增加 `modelCalls`（实际调用及价格快照）、`usageComplete` 与 `modelFingerprints`（缓存命中仍保留的生效配置指纹）；Agent 和检索评测结果增加 `usage`。字段为可选，旧响应可解析。Token 为整条业务链已知小计；完整性为 false 时不能当完整账单。详见 [用量与重复验收](../ai/accounting-and-stability.md)。
+
 > 对外唯一入口为 **网关 :8080**，API 路径与早期版本一致，前端无感。
 > 统一响应 `{ "code": 0, "msg": "成功", "data": ..., "traceId": "..." }`；业务错误 code 非 0（HTTP 200），网关鉴权失败 code=401。
 > 版本矩阵与架构详见 [docs/architecture/README.md](../architecture/README.md)。
@@ -271,6 +275,61 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 - 静态 `robots.txt` 在 `stellar-ink-web/public/robots.txt`（由 Nginx 直接托管），指向本 sitemap。
 
 ### ai-service :8107 - AI（A1：探活 + 模型配置面板；C：评测台）
+
+模型配置中的 `baseUrl` 仍填写 API 根地址。普通兼容重排使用 `/rerank`；千问兼容根路径
+`/compatible-mode/v1` 的重排请求由 Python 转到同一源的 `/compatible-api/v1/reranks`，
+也可直接配置 `/compatible-api/v1` 根。保留主机、端口与代理前缀，不改变模型名或密钥。
+上游 404 提示检查根地址、接口路径与该端点是否提供模型，不直接判定模型不存在。
+千问兼容根的嵌入由 Python 自动按每批最多 10 条提交，调用方仍传完整文本列表；
+响应保持输入顺序、合并各批用量，任一批失败不返回部分结果。对外评测请求契约不变。
+
+检索标定（2026-11-07）：`GET /ai/admin/eval/datasets` 新增 `acceptance_v1`（独立 24 题）；
+`GET /ai/admin/eval/strategies` 在当前模型/语料匹配有效标定文件时，追加 `hybrid+calibrated`。
+原五组基线和空策略请求的默认行为不变；请求仍使用既有 `EvalStrategySpec` 字段。
+问答与 Agent 装配应用 `AI_RETRIEVAL_PROFILE_PATH` 指定且已通过独立验收的两路阈值。
+问答模型以约定首句「文章里没有找到依据。」明确拒答时，非流式与 SSE 均返回
+`doneReason=refused`、`evidenceSufficient=false`，相关引用可保留，预算截断仍为 `length`。
+标定命令、实测与限制见 [检索标定记录](../ai/retrieval-calibration.md)。
+
+问答证据（2026-11-07）：`/ai/qa` 与 `/ai/qa/stream` 默认片段由200字改为与标准子块一致的320字，
+仍受8条引用、4000字总上下文预算约束。`Citation.snippet` 保持原文子串，不在字段内追加省略号；
+响应字段和编号规则不变。模型拒答说明只指出缺少的事实，避免泛化摘录内容。
+最终24题答案、引用与SSE验收见 [问答质量记录](../ai/qa-answer-acceptance.md)。
+
+完整问答评测面板（ADMIN）：`POST /ai/admin/eval/qa/start` 创建一轮（`dataset/maxCases?`）；
+`POST /ai/admin/eval/qa/step` 按 `runId` 执行下一题；`GET /ai/admin/eval/qa/runs/{runId}` 读取进度；
+`PUT /ai/admin/eval/qa/review` 按 `runId/caseId/answerHash` 保存或清除 `correct/citationsSupported/note`。
+Python 内部对应 `/eval/qa/**`，使用同一套问答装配与严格引用检查。
+每次执行一题，返回本轮快照（实际答案、原文引用、自动检查、复核与汇总），生成计入 EVAL 用量。
+语义正确率与引用支持率只统计已复核题，未复核时为 null；未完成与执行失败均不当成拒答。
+运行记录按签名用户隔离，保留在 Python 进程内，最多16轮、闲置1小时过期，容量满淘汰最旧闲置轮次；
+未完成的临时运行在重启后需重新开始；已完整执行的最近报告按用户保存并在页面自动读取。
+当前仅适用于单进程或粘滞路由部署，历史报告请及时导出。
+`maxCases` 可空，非空为1—30；未指定最多执行30题。`correct/citationsSupported` 为可空布尔，
+设 null 清除该项复核；`note` 可空且最多1000字。返回 `stepUsage` 仅包含当次执行用量，读取/复核时为空。
+“停止后续题目”不再发起下一题，当前题完成后保留结果；不承诺中止已经提交的模型调用。
+
+模型复核：新增 `POST /ai/admin/eval/qa/judge`（Python `/eval/qa/judge`），请求为
+`runId/caseId/answerHash`，对已完成且哈希匹配的一题调用全局 `decision` 角色。
+返回快照中的 `modelReview` 独立于人工 `review`，含模型、选项、概率、人工分流标记与用量；
+`stepUsage` 仅回传本次复核调用用量。批量复核由前端逐题调度，停止后续题目不取消当前调用。
+模型复核不改原始答案、自动原文检查及人工指标。缺少配置、结构非法或调用失败均保留未复核状态。
+决策角色当前通过「手动填写」配置 `cloudflare_decision` 协议，端点可填写账号的 Workers AI `/ai` 根、
+`/ai/run` 或与当前模型一致的完整模型地址；适配器保留主机与代理前缀，避免重复拼接 `/run`。
+模型填写完整 Workers AI 标识，API Token 按已有密钥加密流程保存；该协议使用 `state/questions`，不使用聊天接口。
+`decisions.answerCorrect/citationSupport` 的值为 `{choice, probabilities}`，选项为
+`pass/fail/uncertain`；纯拒答及非完整事实作答不包含 `citationSupport`。
+所选项概率不足0.8或选`uncertain`时，对应 `correct/citationsSupported` 为 null。
+`modelSummary` 单独统计模型已审数、明确判定数、通过率、需人工数与复核Token；分母排除未明确判定项。
+0.8是尚未标定的人工分流门槛，模型概率及通过率不等于人工正确率；结构检查异常也会要求人工关注。
+个人 `/ai/me/providers/**` 仍仅允许 chat/fast/reasoning，不开放 decision。
+
+最近完整问答报告：`GET /ai/admin/eval/qa/latest`（Python `/eval/qa/latest`），ADMIN且按签名用户隔离。
+没有报告时data为null；有报告时返回原`QaEvalSnapshot`，包含`reportSavedAt/reportError/executionAvailable`。
+完整执行结束、模型复核及人工复核后，保存该用户最近一轮报告到Python数据目录；读取不调用模型、不重复计账。
+`GET /ai/admin/eval/qa/runs/{runId}` 在内存记录过期后可恢复同一用户最近保存的报告，人工复核仍可保存。
+当前仅保留最近保存的一轮，历史结果请导出；`AI_QA_REPORT_DIR`默认`data/qa-eval-reports`，容器重建需挂载该目录。
+导入的历史报告无运行上下文时`executionAvailable=false`，仍能人工复核并保存，重新模型复核需新开一轮。
 
 > 网关已配 `/ai/**` 路由（`/ai/admin/**` 先于「GET 全放行」拦 ADMIN，其余 `/ai/**` 需登录），
 > 本机调试也可直连 `http://127.0.0.1:8107`。

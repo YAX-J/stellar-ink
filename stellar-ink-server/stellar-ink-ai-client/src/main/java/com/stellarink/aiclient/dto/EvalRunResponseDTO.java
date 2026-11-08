@@ -23,6 +23,7 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 public class EvalRunResponseDTO implements Serializable {
+    private UsageDTO usage;
 
     @Serial
     private static final long serialVersionUID = 1L;

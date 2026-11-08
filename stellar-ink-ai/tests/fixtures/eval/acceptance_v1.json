@@ -1,0 +1,31 @@
+{
+  "name": "独立验收集 v1",
+  "purpose": "acceptance",
+  "description": "阈值冻结后验收：12 道可答题覆盖技术文章与新散文，6 道同主题缺失事实题、6 道跨主题无答案题；禁止用于阈值搜索。",
+  "cases": [
+    {"caseId":"a001","question":"为什么配置中心暴露的 JWT 密钥会让攻击者伪造站长身份？","expectedPostIds":[17],"expectedAnswer":"网关只验签、读角色，不查库。"},
+    {"caseId":"a002","question":"文章建议怎样安排端口收回、换口令和密钥轮换的先后顺序？","expectedPostIds":[17],"expectedAnswer":"先把端口从公网收回；第二步，改口令；轮换会让所有已登录用户掉线，所以放最后做。"},
+    {"caseId":"a003","question":"旧导航入口删除以后，作者怎样避免已有书签失效？","expectedPostIds":[18],"expectedAnswer":"删掉的入口都留了重定向。"},
+    {"caseId":"a004","question":"固定在视口的浮动按钮为何会随着父容器一起滚动？","expectedPostIds":[19],"expectedAnswer":"祖先元素上的 filter 或 transform 会成为 position: fixed 后代的包含块。"},
+    {"caseId":"a005","question":"标签 vue 怎样才能不误匹配 vue3，文章采用了哪个 MySQL 函数？","expectedPostIds":[20],"expectedAnswer":"FIND_IN_SET；它按“逗号分隔成员”做精确匹配。"},
+    {"caseId":"a006","question":"Windows 下中文 JSON 请求乱码时，如何让 curl 按 UTF-8 发出文件内容？","expectedPostIds":[21],"expectedAnswer":"把请求体写进一个 UTF-8 文件，然后用 --data-binary @body.json 发。"},
+    {"caseId":"a007","question":"撤销列表为什么保存 token 摘要，并让它的过期时间等于令牌剩余寿命？","expectedPostIds":[22],"expectedAnswer":"token 原文不进缓存，只进摘要；过期自动清理，不需要额外的定时任务。"},
+    {"caseId":"a008","question":"如何避免低频使用的 CodeMirror 编辑器增加阅读首页的下载体积？","expectedPostIds":[23],"expectedAnswer":"编辑器组件只在笔记编辑页通过 defineAsyncComponent 动态引入。"},
+    {"caseId":"a009","question":"用户开启减少动态效果后，博客的星野和加载动画会怎样？","expectedPostIds":[24],"expectedAnswer":"所有动画在系统开启“减少动态效果”时全部停掉。"},
+    {"caseId":"a010","question":"便利店第九位客人买了什么，店员送别时说了什么？","expectedPostIds":[25],"expectedAnswer":"我买了一罐温热的咖啡；店员说了句“慢走”。"},
+    {"caseId":"a011","question":"母亲以前会把剥好的橘子放在作者作业本的哪个位置？","expectedPostIds":[26],"expectedAnswer":"一瓣一瓣放在作业本的右上角。"},
+    {"caseId":"a012","question":"那盆不开花的植物，让作者怎样理解普通段落对写作的作用？","expectedPostIds":[29],"expectedAnswer":"它们只是安静地铺在那里，把结构撑起来。"},
+    {"caseId":"a013","question":"母亲寄橘子用了哪家快递，运费具体是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a014","question":"那盆不会开花的植物的拉丁学名是什么？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a015","question":"便利店里那瓶水的售价精确到几元几角？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a016","question":"标签精确匹配文章使用的 MySQL 精确补丁版本号（x.y.z）是多少？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a017","question":"编辑器懒加载文章采用的打包机 CPU 型号是什么？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a018","question":"末班地铁里的西装男生那条没发出去的消息全文是什么？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a019","question":"怎样计算量子纠缠态的冯诺依曼熵？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a020","question":"用高压锅制作红烧牛腩需要加压多少分钟？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a021","question":"国际象棋西西里防御的龙式变例应该怎样走？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a022","question":"显微镜下怎样区分洋葱根尖的有丝分裂阶段？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a023","question":"三角形外心坐标的行列式推导过程是什么？","expectedPostIds":[],"expectedAnswer":null},
+    {"caseId":"a024","question":"羽毛球双打轮转发球区的完整规则是什么？","expectedPostIds":[],"expectedAnswer":null}
+  ]
+}

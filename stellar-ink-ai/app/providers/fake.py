@@ -27,6 +27,7 @@ from app.providers.models import (
     RerankResult,
     TokenUsage,
 )
+from app.providers.usage import metered
 
 
 class FakeProvider:
@@ -53,6 +54,7 @@ class FakeProvider:
     def capabilities(self) -> ProviderCapabilities:
         return self._config.capabilities
 
+    @metered
     async def chat(
         self,
         messages: list[ChatMessage],
@@ -79,6 +81,7 @@ class FakeProvider:
             ),
         )
 
+    @metered
     async def embed(self, texts: list[str]) -> EmbeddingResponse:
         vectors = [self._pseudo_vector(text) for text in texts]
         return EmbeddingResponse(
@@ -92,6 +95,7 @@ class FakeProvider:
             ),
         )
 
+    @metered
     async def rerank(
         self,
         query: str,

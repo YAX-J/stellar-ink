@@ -17,6 +17,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable, Mapping
+from decimal import Decimal, InvalidOperation
 
 from app.core.config import ENV_FILE, env_source
 from app.core.crypto import decrypt, load_master_key
@@ -42,6 +43,7 @@ _ROLE_CAPABILITY: dict[str, str] = {
     "reasoning": "chat",
     "embedding": "embedding",
     "rerank": "rerank",
+    "decision": "decision",
 }
 
 #: 库连不上/密钥解不开时的环境变量：允许直接注入一份 JSON（容器与 CI 用）。
@@ -85,6 +87,7 @@ def configs_from_rows(
             chat=capability == "chat",
             embedding=capability == "embedding",
             rerank=capability == "rerank",
+            decision=capability == "decision",
         )
         configs.append(
             ProviderConfig(
@@ -98,6 +101,14 @@ def configs_from_rows(
                 max_tokens=_as_int(row.get("max_tokens")),
                 temperature=_as_float(row.get("temperature")),
                 capabilities=capabilities,
+                config_id=_as_int(row.get("id")),
+                config_user_id=_as_int(row.get("user_id") or row.get("userId")) or 0,
+                price_input=_price_of(
+                    row.get("price_input_per_million", row.get("priceInputPerMillion"))
+                ),
+                price_output=_price_of(
+                    row.get("price_output_per_million", row.get("priceOutputPerMillion"))
+                ),
             )
         )
     return configs
@@ -168,15 +179,18 @@ MYSQL_ENV_KEYS = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DB", "MYSQL_USER", "MYSQL_P
 #: ⚠️ 全局查询**必须带这个条件**：漏了会把某个用户的私人模型当成全站默认，
 #: 那是最严重的一种串号（别人问问题用的是他的 Key）。
 SELECT_GLOBAL_CONFIGS = (
-    "SELECT `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
-    "`timeout_ms`, `max_tokens`, `temperature` "
+    "SELECT `id`, `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
+    "`timeout_ms`, `max_tokens`, `temperature`, "
+    "`price_input_per_million`, `price_output_per_million` "
     "FROM `ai_provider_config` WHERE `enabled` = 1 AND `user_id` = 0 ORDER BY `role`"
 )
 
 #: 某个用户的生效配置：他自己的行 + 全局行（按角色由调用方做覆盖）
 SELECT_CONFIGS_WITH_USER = (
-    "SELECT `user_id`, `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
-    "`timeout_ms`, `max_tokens`, `temperature` "
+    "SELECT `id`, `user_id`, `role`, `provider`, `base_url`, `model`, "
+    "`api_key_cipher`, `dimension`, "
+    "`timeout_ms`, `max_tokens`, `temperature`, "
+    "`price_input_per_million`, `price_output_per_million` "
     "FROM `ai_provider_config` WHERE `enabled` = 1 AND `user_id` IN (0, %s) "
     "ORDER BY `user_id`"
 )
@@ -184,8 +198,9 @@ SELECT_CONFIGS_WITH_USER = (
 #: 迁移还没执行时的兜底查询（没有 `user_id` 列）。**只在报「Unknown column」时用**。
 #: 注意它**不带 `user_id` 条件**（那列还不存在），所以它读到的就是迁移前的全局行。
 SELECT_LEGACY_CONFIGS = (
-    "SELECT `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
-    "`timeout_ms`, `max_tokens`, `temperature` "
+    "SELECT `id`, `role`, `provider`, `base_url`, `model`, `api_key_cipher`, `dimension`, "
+    "`timeout_ms`, `max_tokens`, `temperature`, "
+    "`price_input_per_million`, `price_output_per_million` "
     "FROM `ai_provider_config` WHERE `enabled` = 1 ORDER BY `role`"
 )
 
@@ -433,3 +448,15 @@ def _as_float(value: object) -> float | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _price_of(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        price = Decimal(str(value))
+        if not price.is_finite() or price < 0:
+            raise ValueError("单价须为非负有限数")
+        return str(price)
+    except (InvalidOperation, ValueError) as error:
+        raise ProviderConfigError("模型单价无效，请检查配置") from error

@@ -2,6 +2,9 @@ package com.stellarink.ai.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.stellarink.aiclient.dto.UsageDTO;
+import com.stellarink.aiclient.dto.ModelCallUsageDTO;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stellarink.ai.config.AiQuotaProperties;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.mapper.AiCallLogMapper;
@@ -73,6 +76,7 @@ public class AiUsageServiceImpl implements AiUsageService {
     private static final String UNKNOWN_KEY = "(未记录)";
 
     private static final BigDecimal PER_MILLION = BigDecimal.valueOf(1_000_000L);
+    private static final ObjectMapper USAGE_JSON = new ObjectMapper();
 
     /**
      * 配额触顶计数：{@code stellar.quota.rejected{scope}}。
@@ -111,6 +115,18 @@ public class AiUsageServiceImpl implements AiUsageService {
             row.setPromptTokens(usage.getPromptTokens());
             row.setCompletionTokens(usage.getCompletionTokens());
             row.setTotalTokens(usage.getTotalTokens());
+            row.setUsageComplete(usage.getUsageComplete());
+            if (usage.getModelCalls() != null) {
+                try {
+                    row.setModelCallsJson(USAGE_JSON.writeValueAsString(usage.getModelCalls()));
+                } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+                    row.setUsageComplete(false);
+                    log.warn("模型调用明细序列化失败，本次用量标记为不完整");
+                }
+            }
+        }
+        if (usage == null || usage.getModelCalls() == null) {
+            applyPriceSnapshot(row, scene);
         }
         persist(row);
         countUsage(usage);
@@ -382,7 +398,6 @@ public class AiUsageServiceImpl implements AiUsageService {
         row.setRole(safeRole());
         long elapsed = Math.max(0L, System.currentTimeMillis() - startedAtMillis);
         row.setLatencyMs((int) Math.min(Integer.MAX_VALUE, elapsed));
-        applyPriceSnapshot(row, scene);
         return row;
     }
 
@@ -398,12 +413,18 @@ public class AiUsageServiceImpl implements AiUsageService {
             return;
         }
         try {
-            AiProviderConfig config = providerConfigMapper.selectOne(
+            Long callerId = row.getUserId();
+            boolean personal = callerId != null && List.of("chat", "fast", "reasoning").contains(providerRole);
+            List<AiProviderConfig> candidates = providerConfigMapper.selectList(
                     new LambdaQueryWrapper<AiProviderConfig>()
-                            .select(AiProviderConfig::getPriceInputPerMillion,
-                                    AiProviderConfig::getPriceOutputPerMillion)
-                            .eq(AiProviderConfig::getRole, providerRole));
-            if (config != null) {
+                            .eq(AiProviderConfig::getRole, providerRole)
+                            .eq(AiProviderConfig::getEnabled, 1)
+                            .in(AiProviderConfig::getUserId, personal ? List.of(0L, callerId) : List.of(0L)));
+            AiProviderConfig config = candidates.stream()
+                    .max(Comparator.comparingLong(item -> item.getUserId() == null ? 0L : item.getUserId()))
+                    .orElse(null);
+            // 旧协议没有配置快照，至少核对实际模型；未知或已换模型时宁可标未定价。
+            if (config != null && row.getModel() != null && row.getModel().equals(config.getModel())) {
                 row.setPriceInput(config.getPriceInputPerMillion());
                 row.setPriceOutput(config.getPriceOutputPerMillion());
             }
@@ -465,7 +486,7 @@ public class AiUsageServiceImpl implements AiUsageService {
                 .unpricedCalls(total.unpricedCalls)
                 .untokenizedCalls(total.untokenizedCalls)
                 .byScene(breakdown(rows, AiCallLog::getScene))
-                .byModel(breakdown(rows, row -> row.getModel() == null ? UNKNOWN_KEY : row.getModel()))
+                .byModel(breakdown(modelRows(rows), row -> row.getModel() == null ? UNKNOWN_KEY : row.getModel()))
                 .build();
     }
 
@@ -509,7 +530,7 @@ public class AiUsageServiceImpl implements AiUsageService {
             totals.promptTokens += intOf(row.getPromptTokens());
             totals.completionTokens += intOf(row.getCompletionTokens());
             totals.totalTokens += intOf(row.getTotalTokens());
-            if (!hasTokens(row)) {
+            if (Boolean.FALSE.equals(row.getUsageComplete()) || !hasTokens(row)) {
                 totals.untokenizedCalls++;
                 continue;
             }
@@ -530,10 +551,32 @@ public class AiUsageServiceImpl implements AiUsageService {
      * 部分定价（只有输入单价）同样算「算不出来」—— 报一个只含输入费用的金额会低得看不出来。
      */
     static BigDecimal costOf(AiCallLog row) {
+        if (Boolean.FALSE.equals(row.getUsageComplete())) {
+            return null;
+        }
+        if (row.getModelCallsJson() != null) {
+            List<ModelCallUsageDTO> calls = modelCalls(row);
+            if (calls == null) {
+                return null;
+            }
+            BigDecimal sum = BigDecimal.ZERO;
+            for (ModelCallUsageDTO call : calls) {
+                if (call.getPromptTokens() == null || call.getCompletionTokens() == null) {
+                    return null;
+                }
+                AiCallLog component = componentRow(call);
+                BigDecimal cost = costOf(component);
+                if (cost == null) {
+                    return null;
+                }
+                sum = sum.add(cost);
+            }
+            return sum;
+        }
         int prompt = intOf(row.getPromptTokens());
         int completion = intOf(row.getCompletionTokens());
         if (prompt == 0 && completion == 0) {
-            return null;
+            return Boolean.TRUE.equals(row.getUsageComplete()) ? BigDecimal.ZERO : null;
         }
         if (prompt > 0 && row.getPriceInput() == null) {
             return null;
@@ -552,13 +595,49 @@ public class AiUsageServiceImpl implements AiUsageService {
     }
 
     private static boolean hasTokens(AiCallLog row) {
-        return intOf(row.getPromptTokens()) > 0
+        return Boolean.TRUE.equals(row.getUsageComplete()) || intOf(row.getPromptTokens()) > 0
                 || intOf(row.getCompletionTokens()) > 0
                 || intOf(row.getTotalTokens()) > 0;
     }
 
     private static int intOf(Integer value) {
         return value == null ? 0 : Math.max(0, value);
+    }
+
+    private static List<ModelCallUsageDTO> modelCalls(AiCallLog row) {
+        try {
+            return USAGE_JSON.readValue(row.getModelCallsJson(), new TypeReference<>() {});
+        } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+            return null;
+        }
+    }
+
+    private static AiCallLog componentRow(ModelCallUsageDTO call) {
+        AiCallLog row = new AiCallLog();
+        row.setModel(call.getModel());
+        row.setProviderRole(call.getRole());
+        row.setPromptTokens(call.getPromptTokens());
+        row.setCompletionTokens(call.getCompletionTokens());
+        row.setTotalTokens(call.getTotalTokens());
+        row.setPriceInput(call.getPriceInput());
+        row.setPriceOutput(call.getPriceOutput());
+        row.setSuccess(1);
+        row.setUsageComplete(call.getPromptTokens() != null && call.getCompletionTokens() != null);
+        return row;
+    }
+
+    /** 总调用数按业务请求，模型分组按实际模型调用，避免把嵌入费归给 chat。 */
+    private static List<AiCallLog> modelRows(List<AiCallLog> rows) {
+        List<AiCallLog> result = new ArrayList<>();
+        for (AiCallLog row : rows) {
+            List<ModelCallUsageDTO> calls = row.getModelCallsJson() == null ? null : modelCalls(row);
+            if (calls == null || calls.isEmpty()) {
+                result.add(row);
+            } else {
+                calls.forEach(call -> result.add(componentRow(call)));
+            }
+        }
+        return result;
     }
 
     private static BigDecimal scale(BigDecimal value) {

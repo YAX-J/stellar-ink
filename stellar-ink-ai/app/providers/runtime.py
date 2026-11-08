@@ -59,6 +59,11 @@ def fingerprint() -> str:
     return _resolver.fingerprint
 
 
+def model_fingerprint(role: str) -> str | None:
+    """当前已装配的单角色指纹；新增无关角色不改变既有向量空间。"""
+    return _resolver.model_fingerprint(role)
+
+
 def invalidate() -> None:
     """强制下次重新读配置（面板保存后 / 测试）。"""
     _resolver.invalidate()

@@ -32,6 +32,9 @@ public enum AiModelRole {
     /** 复杂推理：多步分析、Deep Research */
     REASONING("reasoning", "推理模型"),
 
+    /** 结构化判定：模型复核（当前按角色手动配置）。 */
+    DECISION("decision", "决策模型"),
+
     /** 向量化：文章切块嵌入 */
     EMBEDDING("embedding", "嵌入模型"),
 
@@ -85,6 +88,7 @@ public enum AiModelRole {
      */
     public AiModelCapability capability() {
         return switch (this) {
+            case DECISION -> AiModelCapability.DECISION;
             case EMBEDDING -> AiModelCapability.EMBEDDING;
             case RERANK -> AiModelCapability.RERANK;
             // chat / fast / reasoning 都要对话能力：它们是「用哪个档位的对话模型」的区别

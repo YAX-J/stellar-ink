@@ -15,6 +15,9 @@
     "completionTokens": 128,
     "totalTokens": 548,
     "latencyMs": 960,
-    "model": "fake-chat-v1"
+    "model": "fake-chat-v1",
+    "modelCalls": null,
+    "usageComplete": null,
+    "modelFingerprints": null
   }
 }

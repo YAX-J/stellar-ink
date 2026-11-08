@@ -49,5 +49,7 @@ public class AgentAskResultDTO implements Serializable {
 
     private String usageModel;
 
+    private UsageDTO usage;
+
     private Long latencyMs;
 }

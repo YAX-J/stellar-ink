@@ -8,11 +8,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import httpx
 import pytest
 
 from app.providers.errors import ProviderError
+from app.providers.models import ProviderCapabilities
+from app.providers.resolver import ProviderResolver
 from app.rag.qdrant_store import QdrantConfig, QdrantVectorStore
+from tests.fake_providers import provider_config
+from tests.test_qa import _service
 
 COLLECTION = "stellar_ink_chunks"
 
@@ -82,3 +88,41 @@ async def test_matching_fingerprint_passes() -> None:
 
     assert await store.assert_model_fingerprint("fp-a") == "fp-a"
     await store.aclose()
+
+
+async def test_non_embedding_roles_do_not_invalidate_vectors(monkeypatch) -> None:
+    from app.providers import runtime
+    from app.rag.qdrant_store import _current_fingerprint
+
+    configs = [provider_config("embedding", model="embed-a", dimension=64),
+               provider_config("chat", model="chat-a")]
+    source_calls = []
+
+    def source():
+        source_calls.append(True)
+        return configs
+
+    resolver = ProviderResolver(source)
+    monkeypatch.setattr(runtime, "_resolver", resolver)
+    assert _current_fingerprint() is None
+    resolver.registry()
+    embedded_with = configs[0].fingerprint()
+    old_all = runtime.fingerprint()
+    store = _store({("POST", f"/collections/{COLLECTION}/points/scroll"):
+                    _scroll_point(embedded_with)})
+    try:
+        configs.append(provider_config("decision", model="clef-flash",
+                                       capabilities=ProviderCapabilities(decision=True)))
+        configs[1] = replace(configs[1], model="chat-b")
+        resolver.registry()
+        assert runtime.fingerprint() != old_all
+        assert await store.assert_model_fingerprint() == embedded_with
+        point = store.point(_service().pipeline.corpus[0], [1.0, 0.0])
+        assert point.payload["modelFingerprint"] == embedded_with
+        assert len(source_calls) == 2, "每个点的指纹读取不得重新查询配置来源"
+        configs[0] = replace(configs[0], model="embed-b")
+        resolver.registry()
+        with pytest.raises(ProviderError, match="整库重建"):
+            await store.assert_model_fingerprint()
+    finally:
+        await store.aclose()

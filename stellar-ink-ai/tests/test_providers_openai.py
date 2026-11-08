@@ -185,6 +185,91 @@ async def test_embedding_rejects_count_mismatch() -> None:
     await provider.aclose()
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://maas.example.com/compatible-mode/v1",
+        "https://maas.example.com/compatible-mode/v1/",
+        "https://maas.example.com/proxy/compatible-mode/v1",
+        "https://maas.example.com/compatible-api/v1",
+    ],
+)
+async def test_qwen_embedding_batches_corpus_and_preserves_alignment(base_url: str) -> None:
+    """整库超过厂商上限时拆批，尾批、向量顺序与用量都不能丢。"""
+    batches: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        batch = payload["input"]
+        batches.append(batch)
+        assert request.url.path == httpx.URL(base_url).path.rstrip("/") + "/embeddings"
+        assert payload["model"] == "qwen3.7-text-embedding-flash"
+        assert len(batch) <= 10
+        return _json({
+            "data": [{"embedding": [float(text), 0.0, 1.0]} for text in batch],
+            "usage": {"total_tokens": len(batch) * 2},
+        })
+
+    config = dataclasses.replace(
+        EMBEDDING_CONFIG, base_url=base_url, model="qwen3.7-text-embedding-flash"
+    )
+    provider = OpenAICompatibleProvider(config, transport=httpx.MockTransport(handler))
+    try:
+        texts = [str(index) for index in range(39)]
+        response = await provider.embed(texts)
+        assert [len(batch) for batch in batches] == [10, 10, 10, 9]
+        assert [text for batch in batches for text in batch] == texts
+        assert response.vectors == [[float(index), 0.0, 1.0] for index in range(39)]
+        assert response.dimension == 3
+        assert response.usage.prompt_tokens == response.usage.total_tokens == 78
+        assert response.usage.model == config.model
+    finally:
+        await provider.aclose()
+
+
+async def test_qwen_embedding_failed_batch_never_returns_partial_vectors() -> None:
+    """第二批失败即停止，不把前一批冒充完整嵌入结果。"""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return _json({"error": {"message": "bad input"}}, status_code=400)
+        return _json({"data": [{"embedding": [1.0, 0.0, 0.0]}] * 10})
+
+    config = dataclasses.replace(
+        EMBEDDING_CONFIG, base_url="https://maas.example.com/compatible-mode/v1"
+    )
+    provider = OpenAICompatibleProvider(config, transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(ProviderError):
+            await provider.embed([str(index) for index in range(39)])
+        assert calls == 2
+    finally:
+        await provider.aclose()
+
+
+async def test_qwen_embedding_rejects_dimension_drift_between_batches() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        size = len(json.loads(request.content)["input"])
+        return _json({"data": [{"embedding": [1.0] * calls}] * size})
+
+    config = dataclasses.replace(
+        EMBEDDING_CONFIG, base_url="https://maas.example.com/compatible-mode/v1", dimension=None
+    )
+    provider = OpenAICompatibleProvider(config, transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(ProviderUnavailableError, match="批次之间"):
+            await provider.embed([str(index) for index in range(11)])
+    finally:
+        await provider.aclose()
+
+
 async def test_embedding_rejects_dimension_change() -> None:
     """维度变了会让 Qdrant 拒绝写入：提前报出「换模型要重建集合」这种可操作的错。"""
     provider, _ = _provider(
@@ -249,6 +334,72 @@ async def test_rerank_rejects_out_of_range_index() -> None:
     with pytest.raises(ProviderUnavailableError, match="下标越界"):
         await provider.rerank("星图", ["甲", "乙"])
     await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_path"),
+    [
+        ("https://maas.example.com/compatible-mode/v1", "/compatible-api/v1/reranks"),
+        ("https://maas.example.com/compatible-mode/v1/", "/compatible-api/v1/reranks"),
+        ("https://maas.example.com/compatible-api/v1", "/compatible-api/v1/reranks"),
+        ("https://maas.example.com/proxy/compatible-mode/v1", "/proxy/compatible-api/v1/reranks"),
+        ("https://maas.example.com:8443/compatible-mode/v1", "/compatible-api/v1/reranks"),
+    ],
+)
+async def test_rerank_uses_qwen_compatible_endpoint_on_same_origin(
+    base_url: str, expected_path: str
+) -> None:
+    """千问重排使用独立路径，密钥必须留在配置的同一主机与端口。"""
+    config = dataclasses.replace(
+        RERANK_CONFIG, base_url=base_url, model="qwen3.7-text-rerank"
+    )
+    provider, recorder = _provider(
+        config, _json({"results": [{"index": 0, "relevance_score": 0.9}]})
+    )
+    try:
+        response = await provider.rerank("星图", ["甲", "乙"], top_n=1)
+        request = recorder.requests[0]
+        configured = httpx.URL(base_url)
+        assert request.url.path == expected_path
+        assert (request.url.scheme, request.url.host, request.url.port) == (
+            configured.scheme, configured.host, configured.port
+        )
+        assert recorder.payloads[0]["model"] == config.model
+        assert request.headers["authorization"] == "Bearer sk-test-key"
+        assert response.results[0].index == 0
+        assert len(recorder.requests) == 1, "路径应在发请求前确定，不额外探测或重试其他端点"
+    finally:
+        await provider.aclose()
+
+
+async def test_chat_keeps_qwen_chat_endpoint() -> None:
+    config = dataclasses.replace(
+        CHAT_CONFIG, base_url="https://maas.example.com/compatible-mode/v1"
+    )
+    provider, recorder = _provider(
+        config, _json({"choices": [{"message": {"content": "ok"}}]})
+    )
+    try:
+        await provider.chat([ChatMessage(MessageRole.USER, "你好")])
+        assert recorder.requests[0].url.path == "/compatible-mode/v1/chat/completions"
+    finally:
+        await provider.aclose()
+
+
+async def test_404_hints_at_endpoint_without_echoing_upstream_body() -> None:
+    provider, recorder = _provider(
+        RERANK_CONFIG, httpx.Response(404, text="private upstream detail sk-test-key")
+    )
+    try:
+        with pytest.raises(ProviderError) as caught:
+            await provider.rerank("星图", ["甲"])
+        assert "接口路径" in (caught.value.detail or "")
+        assert not caught.value.retryable
+        assert "private upstream detail" not in str(caught.value.to_public_dict())
+        assert "sk-test-key" not in str(caught.value.to_public_dict())
+        assert len(recorder.requests) == 1
+    finally:
+        await provider.aclose()
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,12 @@ data
 .env
 
 # 开发与文档资产（运行时用不到）
-tests
+# 评测题集及来源绑定是运行时输入；其余测试代码不进入镜像。
+tests/**
+!tests/
+!tests/fixtures/
+!tests/fixtures/eval/
+!tests/fixtures/eval/*.json
 scripts
 docs
 *.md

@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error
 from app.providers import runtime
@@ -46,14 +47,14 @@ async def claims(request: WikiClaimsRequest) -> WikiClaimsResult | JSONResponse:
     """
     try:
         # 预检角色：没配 chat 模型时要给「去哪儿配」的可操作提示，而不是让抽取跑出 0 条
-        runtime.require_roles("chat")
-        chat = runtime.registry().chat_model()
+        await run_in_threadpool(runtime.require_roles, "chat")
+        chat = (await run_in_threadpool(runtime.registry)).chat_model()
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
     result: ExtractionResult = await extract_claims_async(
         # **只吃文章**：主张表存的是裸 `post_id`，笔记混进来会与同号文章互指
-        cached_corpus(kinds=ARTICLE_KINDS),
+        await run_in_threadpool(cached_corpus, kinds=ARTICLE_KINDS),
         chat,
         max_posts=request.max_posts,
         max_claims_per_chunk=request.max_claims_per_chunk,
@@ -95,7 +96,7 @@ async def stale(request: WikiStaleRequest) -> WikiStaleResult:
     report = stale_claims(
         # 必须与 build 用**同一份**语料（只吃文章）：盘点靠块下标比对哈希，
         # 两边取的内容种类不一致时，一切都会「看起来变了」
-        cached_corpus(kinds=ARTICLE_KINDS),
+        await run_in_threadpool(cached_corpus, kinds=ARTICLE_KINDS),
         [
             _StoredAnchor(
                 post_id=item.post_id,

@@ -3,6 +3,7 @@ package com.stellarink.ai.controller;
 import com.stellarink.aiclient.client.PythonAiClient;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
+import com.stellarink.aiclient.dto.QaEvalRunDTO;
 import com.stellarink.ai.enums.AiCallScene;
 import com.stellarink.ai.service.AiUsageService;
 import com.stellarink.common.auth.AuthHelper;
@@ -14,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -50,6 +53,53 @@ public class AiEvalController {
      */
     private final AiUsageService usageService;
 
+    @GetMapping("/qa/latest")
+    @Operation(summary = "读取当前站长最近保存的完整问答报告，不调用模型")
+    public Response<QaEvalRunDTO> latestQaEval() {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(pythonAiClient.latestQaEval());
+    }
+
+    @PostMapping("/qa/judge")
+    @Operation(summary = "使用决策模型复核一题，保留人工结论")
+    public Response<QaEvalRunDTO> judgeQaEval(@RequestBody QaEvalRunDTO.JudgeRequest request) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(usageService.around(
+                AiCallScene.EVAL, () -> pythonAiClient.judgeQaEval(request), QaEvalRunDTO::getStepUsage));
+    }
+
+    @PostMapping("/qa/start")
+    @Operation(summary = "创建完整问答评测")
+    public Response<QaEvalRunDTO> startQaEval(@RequestBody QaEvalRunDTO.StartRequest request) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(pythonAiClient.startQaEval(request));
+    }
+
+    @PostMapping("/qa/step")
+    @Operation(summary = "执行下一道真实问答并核对引用")
+    public Response<QaEvalRunDTO> stepQaEval(@RequestBody QaEvalRunDTO.RunRequest request) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        QaEvalRunDTO result = usageService.around(
+                AiCallScene.EVAL, () -> pythonAiClient.stepQaEval(request), QaEvalRunDTO::getStepUsage);
+        log.info("完整问答评测推进：operator={} runId={} completed={} total={}",
+                AuthHelper.loginId(), result.getRunId(), result.getCompleted(), result.getTotal());
+        return Response.success(result);
+    }
+
+    @GetMapping("/qa/runs/{runId}")
+    @Operation(summary = "读取本轮完整问答结果")
+    public Response<QaEvalRunDTO> getQaEval(@PathVariable String runId) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(pythonAiClient.getQaEval(runId));
+    }
+
+    @PutMapping("/qa/review")
+    @Operation(summary = "保存人工复核，不调用模型")
+    public Response<QaEvalRunDTO> reviewQaEval(@RequestBody QaEvalRunDTO.ReviewRequest request) {
+        AuthHelper.requireAtLeast(Role.ADMIN);
+        return Response.success(pythonAiClient.reviewQaEval(request));
+    }
+
     @GetMapping("/datasets")
     @Operation(summary = "可评测的数据集清单", description = "面板下拉框用它填充")
     public Response<List<Map<String, Object>>> datasets() {
@@ -75,7 +125,7 @@ public class AiEvalController {
         Long operator = AuthHelper.loginId();
 
         EvalRunResponseDTO result = usageService.around(
-                AiCallScene.EVAL, () -> pythonAiClient.evalRun(request), answer -> null);
+                AiCallScene.EVAL, () -> pythonAiClient.evalRun(request), EvalRunResponseDTO::getUsage);
 
         // 审计：谁跑了哪份数据集、几组策略、多少题。不记问题与正文（评测数据量大且无必要）
         log.info("AI 评测完成：operator={} dataset={} strategies={} cases={} models={} elapsedMs={}",

@@ -6,12 +6,18 @@ import { AI_CAPABILITIES, AI_ROLES, useAiStore } from '@/stores/ai'
 import { AUDIT_HINT, RUNTIME_CAVEAT, useAiOpsStore } from '@/stores/aiOps'
 import { emit, TOAST } from '@/utils/bus'
 import SectionHead from '@/components/common/SectionHead.vue'
+import QaEvalPanel from '@/components/ai/QaEvalPanel.vue'
+import { useQaEvalStore } from '@/stores/qaEval'
 
 const auth = useAuthStore()
 const ai = useAiStore()
 const ops = useAiOpsStore()
 const route = useRoute()
 const router = useRouter()
+const qaEval = useQaEvalStore()
+const evalMode = ref(route.query.mode === 'qa' ? 'qa' : 'retrieval')
+watch(evalMode, (mode) => router.replace({ query: { ...route.query, mode } }))
+watch(() => route.query.mode, (mode) => { evalMode.value = mode === 'qa' ? 'qa' : 'retrieval' })
 
 /** 当前展开编辑的角色 */
 const editing = ref('')
@@ -228,7 +234,7 @@ function startEdit(roleKey) {
   const meta = AI_ROLES.find((role) => role.key === roleKey)
   const existing = ai.providers[roleKey]
   form.displayName = existing?.displayName || meta.label
-  form.provider = existing?.provider || 'openai_compatible'
+  form.provider = existing?.provider || (roleKey === 'decision' ? 'cloudflare_decision' : 'openai_compatible')
   form.baseUrl = existing?.baseUrl || ''
   form.model = existing?.model || ''
   form.apiKey = ''            // 明文密钥永不回显：留空即沿用已存密钥
@@ -236,6 +242,11 @@ function startEdit(roleKey) {
   form.timeoutMs = existing?.timeoutMs ?? 30000
   form.maxTokens = existing?.maxTokens ?? ''
   form.temperature = existing?.temperature ?? ''
+}
+
+function configureDecision() {
+  tab.value = TAB_PROVIDERS
+  startEdit('decision')
 }
 
 function cancelEdit() {
@@ -942,6 +953,7 @@ async function applyModel(item) {
           <p v-if="item.options.length && !canApply(item) && !item.binding" class="form-hint tight">
             {{ applyHint(item) }}
           </p>
+          <p v-else-if="item.key === 'decision'" class="form-hint tight">决策模型通过下方「配置」单独填写，使用 Cloudflare 决策协议。</p>
           <p v-else-if="ai.modelsLoaded" class="form-hint tight">
             模型库里还没有可用于「{{ item.label }}」的模型 ——
             在下方「模型库」里加一个，并勾上「{{ capabilityLabel(item.capability) }}」能力。
@@ -1111,7 +1123,7 @@ async function applyModel(item) {
              曾经有一排「快速填入 DeepSeek / 硅基流动」的按钮，那等于把默认供应商写进代码 ——
              用自建网关、公司代理或别的厂商时，它不只是没用，还会诱导人填错。 -->
         <p class="form-hint">
-          端点与模型名请照你所用服务的文档填；面板不预设任何厂商。
+          {{ editing === 'decision' ? '端点填写 Workers AI 账号的 /ai 根地址，模型填写完整标识；API Key 填写拥有 Workers AI 权限的 API Token。' : '端点与模型名请照你所用服务的文档填；面板不预设任何厂商。' }}
         </p>
 
         <div class="form-grid">
@@ -1122,26 +1134,27 @@ async function applyModel(item) {
           <div class="field">
             <label>协议</label>
             <select v-model="form.provider">
-              <option value="openai_compatible">OpenAI 兼容</option>
-              <option value="fake">Fake（离线自测，不调用任何服务）</option>
+              <option v-if="editing !== 'decision'" value="openai_compatible">OpenAI 兼容</option>
+              <option v-if="editing !== 'decision'" value="fake">Fake（离线自测，不调用任何服务）</option>
+              <option v-if="editing === 'decision'" value="cloudflare_decision">Cloudflare 决策</option>
             </select>
           </div>
           <div class="field wide">
             <label>接口地址 baseUrl</label>
-            <input v-model="form.baseUrl" maxlength="255" placeholder="你的 OpenAI 兼容端点，形如 https://<host>/v1">
+            <input v-model="form.baseUrl" maxlength="255" :placeholder="editing === 'decision' ? 'https://api.cloudflare.com/client/v4/accounts/<账号ID>/ai' : '你的 OpenAI 兼容端点，形如 https://<host>/v1'">
           </div>
           <div class="field">
             <label>模型名</label>
-            <input v-model="form.model" maxlength="128" placeholder="照服务方的模型列表填">
+            <input v-model="form.model" maxlength="128" :placeholder="editing === 'decision' ? '@cf/cloudflare/clef-flash' : '照服务方的模型列表填'">
           </div>
           <div class="field">
-            <label>API Key{{ ai.providers[editing] ? '（留空=沿用已存）' : '' }}</label>
+            <label>{{ editing === 'decision' ? 'Cloudflare API Token' : 'API Key' }}{{ ai.providers[editing] ? '（留空=沿用已存）' : '' }}</label>
             <input
               v-model="form.apiKey" type="password" autocomplete="off" maxlength="512"
               :placeholder="ai.providers[editing]?.apiKeyMask || 'sk-...'"
             >
           </div>
-          <div class="field">
+          <div v-if="editing !== 'decision'" class="field">
             <label>向量维度{{ editing === 'embedding' ? '（必填）' : '（可空）' }}</label>
             <input v-model="form.dimension" type="number" min="1" max="8192" placeholder="照嵌入模型的维度填">
           </div>
@@ -1149,11 +1162,11 @@ async function applyModel(item) {
             <label>超时（毫秒）</label>
             <input v-model="form.timeoutMs" type="number" min="1000" max="300000">
           </div>
-          <div class="field">
+          <div v-if="editing !== 'decision'" class="field">
             <label>maxTokens（可空）</label>
             <input v-model="form.maxTokens" type="number" min="1" placeholder="留空用模型默认">
           </div>
-          <div class="field">
+          <div v-if="editing !== 'decision'" class="field">
             <label>temperature（可空）</label>
             <input v-model="form.temperature" type="number" step="0.1" min="0" max="2" placeholder="留空用模型默认">
           </div>
@@ -1164,7 +1177,7 @@ async function applyModel(item) {
             {{ saving ? '保存中…' : '保存配置' }}
           </button>
           <button class="btn btn-ghost" type="button" @click="cancelEdit">取消</button>
-          <span class="form-hint">换嵌入模型时，维度要与已建索引一致，否则需要重建集合</span>
+          <span v-if="editing === 'embedding'" class="form-hint">换嵌入模型时，维度要与已建索引一致，否则需要重建集合</span>
         </div>
         <p v-if="roleFormError" class="form-hint tight error-text">{{ roleFormError }}</p>
         <p v-else-if="roleFormBlockers.length" class="form-hint tight">
@@ -1174,9 +1187,15 @@ async function applyModel(item) {
       </template>
 
       <template v-else>
+        <div class="lab-tabs" role="group" aria-label="评测方式">
+          <button type="button" class="lab-tab" :class="{ on: evalMode === 'retrieval' }" :aria-pressed="evalMode === 'retrieval'" :disabled="ai.evalRunning || qaEval.running || qaEval.judging" @click="evalMode = 'retrieval'">检索评测</button>
+          <button type="button" class="lab-tab" :class="{ on: evalMode === 'qa' }" :aria-pressed="evalMode === 'qa'" :disabled="ai.evalRunning || qaEval.running || qaEval.judging" @click="evalMode = 'qa'">完整问答验收</button>
+        </div>
+        <QaEvalPanel v-if="evalMode === 'qa'" :datasets="ai.evalDatasets" :loading="ai.evalMetaLoading" :decision-configured="Boolean(ai.providers.decision?.enabled)" :meta-error="ai.evalDatasets.length ? '' : ai.evalError" @configure-decision="configureDecision" @reload="ai.loadEvalMeta().catch(() => {})" />
+        <div v-show="evalMode === 'retrieval'">
         <p class="lab-note reveal">
           用黄金集跑一轮检索评测：同一批题目、同一套语料，只换检索开关，看指标怎么变。
-          这是唯一能回答「多花的那一路召回到底有没有用」的方式。
+          本模式不生成答案；最终作答、拒答和引用支持请切换到「完整问答验收」。
         </p>
 
         <p v-if="ai.evalMetaLoading" class="state-text">正在读取数据集与策略…</p>
@@ -1217,7 +1236,7 @@ async function applyModel(item) {
               <template v-if="!selectedDataset">先选一个数据集；</template>
               <template v-else-if="!ai.evalSelected.length">至少勾一组被测策略；</template>
               已选 {{ ai.evalSelected.length }} / {{ ai.evalStrategies.length }} 组；
-              不放心的先少勾几组，跑一次几十毫秒。
+              真实模型评测可能需要几十秒。
             </span>
           </div>
 
@@ -1310,6 +1329,7 @@ async function applyModel(item) {
             </table>
           </div>
         </template>
+        </div>
       </template>
     </template>
   </section>
@@ -1331,6 +1351,7 @@ async function applyModel(item) {
   padding:10px 2px; cursor:pointer; border-bottom:2px solid transparent;
   transition:color .3s var(--ease-soft), border-color .3s var(--ease-soft)}
 .lab-tab:hover{color:var(--ink)}
+.lab-tab:disabled{opacity:.5;cursor:not-allowed}
 .lab-tab.on{color:var(--ink); border-bottom-color:var(--primary)}
 /* 评测台 */
 .eval-setup{margin-bottom:18px}

@@ -71,6 +71,12 @@ class ProviderResolver:
         with self._lock:
             return self._fingerprint
 
+    def model_fingerprint(self, role: str) -> str | None:
+        """读取已装配的单角色指纹，不为每个向量点重新查询配置库。"""
+        with self._lock:
+            config = self._registry.config_of(role) if self._registry else None
+            return config.fingerprint() if config else None
+
 
 def fingerprint_of(configs: Iterable[ProviderConfig]) -> str:
     """所有角色指纹的稳定摘要：角色集合或任一角色的非敏感字段变化都会换指纹。
@@ -78,7 +84,11 @@ def fingerprint_of(configs: Iterable[ProviderConfig]) -> str:
     排序后再拼：配置来源是数据库查询，**行序不保证稳定**，
     不排序会让「同一份配置」在两次查询间算出不同指纹，于是缓存形同虚设。
     """
-    parts = sorted(f"{config.role}:{config.fingerprint()}" for config in configs)
+    parts = sorted(
+        f"{config.role}:{config.fingerprint()}:{config.config_id}:{config.config_user_id}:"
+        f"{config.price_input}:{config.price_output}"
+        for config in configs
+    )
     if not parts:
         # 空配置也要有个确定的指纹：它表示「什么都没配」，
         # 与「配了但指纹恰好为空串」必须区分开（后者不可能，但别让它成为隐患）

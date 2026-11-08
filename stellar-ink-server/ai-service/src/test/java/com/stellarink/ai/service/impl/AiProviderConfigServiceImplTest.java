@@ -48,6 +48,22 @@ class AiProviderConfigServiceImplTest {
 
     private AiProviderConfigService service;
 
+    @Test
+    @DisplayName("决策协议与角色必须匹配，Token 仍按现有流程加密")
+    void decisionProtocolCannotBeUsedAsChat() {
+        AiProviderSaveDTO wrong = dto(AiModelRole.CHAT, PLAINTEXT_KEY);
+        wrong.setProvider("cloudflare_decision");
+        assertThrows(BusinessException.class, () -> service.save(wrong, 7L));
+        assertThrows(BusinessException.class,
+                () -> service.save(dto(AiModelRole.DECISION, PLAINTEXT_KEY), 7L));
+        AiProviderSaveDTO correct = dto(AiModelRole.DECISION, PLAINTEXT_KEY);
+        correct.setProvider("cloudflare_decision");
+        correct.setModel("@cf/cloudflare/clef-flash");
+        AiProviderVO saved = service.save(correct, 7L);
+        assertEquals("decision", saved.getRole().getKey());
+        assertFalse(saved.getApiKeyMask().contains(PLAINTEXT_KEY));
+    }
+
     @BeforeEach
     void setUp() {
         mapper = mock(AiProviderConfigMapper.class);

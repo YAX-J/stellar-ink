@@ -113,6 +113,35 @@ async def test_answer_carries_citations_with_scores_and_snippets() -> None:
     assert answer.usage.total_tokens == 120
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_model_says_evidence_is_missing_instead_of_claiming_success(streaming) -> None:
+    """同主题但缺少所问事实时，正文拒答与元数据必须一致，相关引用可以保留。"""
+    from app.rag.qa import MODEL_REFUSAL_PREFIX
+
+    service = _service(_Chat(MODEL_REFUSAL_PREFIX + "摘录没有给出植物的拉丁学名。"))
+    if streaming:
+        events = [event async for event in service.stream(_request())]
+        done = events[-1]
+        assert done.type == "done"
+        assert done.payload["doneReason"] == DoneReason.REFUSED.value
+        assert done.payload["evidenceSufficient"] is False
+    else:
+        answer = await service.answer(_request())
+        assert answer.done_reason is DoneReason.REFUSED
+        assert answer.evidence_sufficient is False
+        assert answer.citations
+
+
+def test_refusal_phrase_inside_an_answer_is_not_a_refusal_and_length_stays_length() -> None:
+    from app.rag.qa import MODEL_REFUSAL_PREFIX, model_outcome
+
+    normal = model_outcome("提示里包含「" + MODEL_REFUSAL_PREFIX + "」这一约定。", "stop",
+                           refusal_message="无依据")
+    assert normal.done_reason is DoneReason.STOP
+    truncated = model_outcome(MODEL_REFUSAL_PREFIX, "length", refusal_message="无依据")
+    assert truncated.done_reason is DoneReason.LENGTH
+
+
 async def test_citations_only_include_excerpts_sent_to_the_model() -> None:
     """引用必须与送进模型的摘录一一对应，否则用户点开引用会看到没被用过的段落。"""
     chat = _Chat()
@@ -203,14 +232,45 @@ async def test_partial_answer_is_reported_as_length_not_stop() -> None:
     assert answer.evidence_sufficient is True, "依据够不够与回答完不完整是两件事"
 
 
-async def test_snippet_is_truncated_with_ellipsis() -> None:
+async def test_truncated_snippet_stays_a_literal_source_substring() -> None:
     chat = _Chat()
     service = _service(chat, settings=QaSettings(snippet_length=20))
 
     answer = await service.answer(_request())
 
-    assert all(len(citation.snippet) <= 21 for citation in answer.citations)
-    assert any(citation.snippet.endswith("…") for citation in answer.citations)
+    assert all(len(citation.snippet) <= 20 for citation in answer.citations)
+    assert all(not citation.snippet.endswith("…") for citation in answer.citations)
+    from app.rag.evidence import chunk_text, evidence_contains
+
+    for citation in answer.citations:
+        chunk = next(c for c in service.pipeline.corpus
+                     if c.post_id == citation.post_id
+                     and c.payload["chunkIndex"] == citation.chunk_index)
+        assert evidence_contains(citation.snippet, chunk_text(chunk))
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_default_context_preserves_evidence_after_character_200(streaming) -> None:
+    """回归：已召回的块尾答案不能在问答装配时再次被裁掉。"""
+    text = "这一段描述背景，没有包含最终的操作步骤。" * 11
+    text += "关键步骤是使用 --data-binary @body.json。"
+    assert 200 < text.index("--data-binary") < 320
+    chunks = build_corpus([_Post(1, "UTF-8 请求", text)])
+    chat = _Chat("应使用 --data-binary @body.json。[1]")
+    service = QaService(
+        pipeline=RetrievalPipeline(
+            corpus=chunks, config=RetrievalConfig(enable_dense=False),
+        ),
+        chat=chat,
+    )
+    request = _request("关键操作步骤是什么？")
+    if streaming:
+        events = [event async for event in service.stream(request)]
+        assert events[-1].payload["doneReason"] == "stop"
+    else:
+        answer = await service.answer(request)
+        assert "--data-binary" in answer.citations[0].snippet
+    assert "--data-binary @body.json" in chat.calls[0][1].content
 
 
 async def test_context_budget_caps_how_many_excerpts_are_sent() -> None:

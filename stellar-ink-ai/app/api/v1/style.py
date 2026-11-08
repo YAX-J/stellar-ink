@@ -13,6 +13,7 @@ import logging
 from dataclasses import asdict
 
 from fastapi import APIRouter
+from starlette.concurrency import run_in_threadpool
 
 from app.rag.corpus import ARTICLE_KINDS, cached_posts
 from app.rag.pipeline import PostLike
@@ -54,7 +55,7 @@ async def style(request: WritingStyleRequest) -> WritingStyleResult:
     settings = StyleSettings(max_samples=request.max_samples)
     # 取样上限在两处生效（这里切、settings 也切）：**两边都要**，
     # 否则将来有人只改一处，就会出现「读了 50 篇但只统计 20 篇」或反之的静默分叉
-    posts = _samples_for(request.author_id, request.max_samples)
+    posts = await run_in_threadpool(_samples_for, request.author_id, request.max_samples)
     profile = build_style_profile(
         posts,
         tags_per_title=[post.tags for post in posts],

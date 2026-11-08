@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.api.v1.agent import AGENT_RETRIEVAL
 from app.api.v1.assembly import ASSEMBLY_ERRORS, assembly_error, pipeline_for
@@ -65,7 +66,7 @@ async def mcp(
         return JSONResponse(error_response(None, error))
 
     try:
-        server = build_tool_server()
+        server = await run_in_threadpool(build_tool_server)
     except ASSEMBLY_ERRORS as error:
         payload = assembly_error(error)
         # 复用装配错误的可读文案，但包成 JSON-RPC 形状：客户端只认一种错误体

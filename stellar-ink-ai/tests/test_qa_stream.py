@@ -251,7 +251,10 @@ async def test_usage_joins_retrieval_and_model_latency() -> None:
     final = next(event for event in events if event.type == EVENT_DONE)
     usage = final.payload["usage"]
 
-    assert usage["promptTokens"] == 7 and usage["completionTokens"] == 2
+    chat_calls = [c for c in usage["modelCalls"] if c["role"] == "chat"]
+    assert chat_calls[-1]["promptTokens"] == 7
+    assert usage["promptTokens"] == sum(c["promptTokens"] for c in usage["modelCalls"])
+    assert usage["completionTokens"] == 2
     assert usage["model"] == "stub"
     assert usage["latencyMs"] >= 30, "端到端耗时不能小于模型自身耗时（漏掉检索段会低估用户等待）"
 

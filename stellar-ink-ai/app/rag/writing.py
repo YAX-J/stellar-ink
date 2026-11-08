@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from app.providers.base import ChatModel
 from app.providers.models import ChatMessage, ChatResponse, MessageRole, TokenUsage
+from app.providers.usage import checkpoint, observe, usage_scope
 from app.schemas.common import Usage
 from app.schemas.writing import (
     MAX_CANDIDATES,
@@ -95,6 +96,7 @@ class WritingCopilot:
     def chat_calls(self) -> int:
         return self._chat_calls
 
+    @usage_scope
     async def suggest(self, request: WritingSuggestRequest) -> WritingSuggestResult:
         messages = [
             ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT),
@@ -103,6 +105,7 @@ class WritingCopilot:
                 content=_user_prompt(request, self.settings.max_draft_chars),
             ),
         ]
+        before = checkpoint()
         response = await self.chat.chat(
             messages,
             temperature=self.settings.temperature,
@@ -119,6 +122,7 @@ class WritingCopilot:
                 "请调大 chat 角色的 maxTokens",
             )
 
+        observe(self.chat, response.usage, before)
         candidates = parse_candidates(
             response.text,
             limit=request.candidate_count,

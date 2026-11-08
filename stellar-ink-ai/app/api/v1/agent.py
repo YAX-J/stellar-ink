@@ -24,6 +24,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.agents import answerer, registry, verifier
 from app.agents.answerer import AnswerRun, Excerpt
@@ -38,6 +39,7 @@ from app.api.v1.assembly import (
 from app.core.internal_auth import InternalIdentity
 from app.core.internal_auth_middleware import require_internal_identity
 from app.providers import runtime
+from app.providers.usage import usage_scope
 from app.rag import corpus as corpus_module
 from app.rag.agent import Agent, AgentRun, AgentSettings, ToolBox, ToolSpec
 from app.rag.agent_tools import chunk_index_of, read_only_tools, snippet_of
@@ -176,6 +178,7 @@ def _error(status_code: int, message: str) -> JSONResponse:
 
 
 @router.post("/agent/ask", summary="只读 Agent 问答（预算受限）", response_model=None)
+@usage_scope
 async def ask(
     request: AgentAskRequest,
     identity: InternalIdentity = Depends(require_internal_identity),  # noqa: B008 - 见 app/main.py
@@ -222,9 +225,9 @@ async def ask(
 
     try:
         if profile.tool_names:
-            agent = build_agent(profile, identity.user_id)
+            agent = await run_in_threadpool(build_agent, profile, identity.user_id)
         else:
-            runner = build_answerer(profile, identity.user_id)
+            runner = await run_in_threadpool(build_answerer, profile, identity.user_id)
     except ASSEMBLY_ERRORS as error:
         return assembly_error(error)
 
@@ -233,7 +236,7 @@ async def ask(
         # 检索在这里做而不是在 `answerer` 里：**检索只有一条编排**，
         # 生成层只接受已经编号好的摘录
         try:
-            pipeline = pipeline_for(AGENT_RETRIEVAL)
+            pipeline = await run_in_threadpool(pipeline_for, AGENT_RETRIEVAL)
         except ASSEMBLY_ERRORS as error:
             return assembly_error(error)
         retrieval = await pipeline.retrieve(request.question, top_k=ANSWERER_MAX_CITATIONS)
@@ -289,9 +292,7 @@ async def _answer_once(
     if outcome.refused or not outcome.hits:
         # 没有候选就是没有依据：**一次模型调用都不花**（省一次钱，
         # 也避免它对着空上下文编一个看起来像答案的东西）
-        return _answer_result(
-            answerer.refusal_run(int(outcome.latency_ms)), profile.name, [], 0
-        )
+        return _answer_result(answerer.refusal_run(int(outcome.latency_ms)), profile.name, [], 0)
 
     by_id: dict[str, IndexedChunk] = {chunk.chunk_id: chunk for chunk in pipeline.corpus}
     citations: list[Citation] = []
@@ -389,7 +390,7 @@ async def verify_citations(
     判定本身在 `app/agents/verifier.py`（可单测），这里只做装配与翻译。
     """
     del identity  # 身份只用来过签名校验（核验对所有登录用户一视同仁）
-    chunks = _oracle_chunks()
+    chunks = await run_in_threadpool(_oracle_chunks)
     report = verifier.verify(
         request.answer,
         request.citations,
@@ -434,8 +435,7 @@ def to_verify_result(report: verifier.VerificationReport) -> AgentVerifyResult:
         out_of_range=list(report.out_of_range),
         uncited=report.uncited,
         problems=[
-            AgentVerifyProblemView(kind=item.kind, message=item.message)
-            for item in report.problems
+            AgentVerifyProblemView(kind=item.kind, message=item.message) for item in report.problems
         ],
     )
 
@@ -459,6 +459,7 @@ def to_result(run: AgentRun, agent: str = registry.DEFAULT_AGENT) -> AgentAskRes
         ],
         tool_calls=run.tool_calls,
         interrupted_by=run.interrupted_by,
+        usage=run.usage,
         usage_model=run.usage_model,
         latency_ms=run.latency_ms,
     )

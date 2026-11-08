@@ -59,6 +59,10 @@ public class AiModelLibraryServiceImpl implements AiModelLibraryService {
     @Override
     @Transactional
     public AiModelVO save(AiModelSaveDTO dto, Long actorUserId) {
+        if (dto.getCapabilities() != null && dto.getCapabilities().contains(AiModelCapability.DECISION)) {
+            throw BusinessExceptionHelper.of(ErrorCode.PARAM_ERROR,
+                    "当前模型库不存储决策能力，请在决策角色卡片中单独配置");
+        }
         String provider = normalizeProvider(dto.getProvider());
         String baseUrl = stripTrailingSlash(dto.getBaseUrl());
         String modelName = dto.getModel().trim();

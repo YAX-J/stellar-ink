@@ -635,5 +635,6 @@
     "拒答率的分母是「无答案题」，误拒率的分母是「有答案题」——两者不能相加。",
     "BM25 的 minScoreRatio 只提精度、永远不会让结果为空；能拒答的只有 minScore 与 minDenseScore。",
     "想看真实质量：在「AI 实验室 → 模型配置」里配好 embedding / rerank 角色后重跑本页。"
-  ]
+  ],
+  "usage": null
 }

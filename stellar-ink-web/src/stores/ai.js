@@ -14,6 +14,7 @@ export const AI_ROLES = [
   { key: 'chat', label: '对话模型', hint: '问答、摘要、润色' },
   { key: 'fast', label: '快速模型', hint: '打标签、意图识别等轻任务' },
   { key: 'reasoning', label: '推理模型', hint: '多步分析、深度研究' },
+  { key: 'decision', label: '决策模型', hint: '问答模型复核，按选项返回概率；通过「配置」单独填写' },
   { key: 'embedding', label: '嵌入模型', hint: '文章切块向量化（换模型要重建索引）' },
   { key: 'rerank', label: '重排模型', hint: '检索候选精排' },
 ]
@@ -40,6 +41,7 @@ export const ROLE_CAPABILITY = {
   chat: 'chat',
   fast: 'chat',
   reasoning: 'chat',
+  decision: 'decision',
   embedding: 'embedding',
   rerank: 'rerank',
 }

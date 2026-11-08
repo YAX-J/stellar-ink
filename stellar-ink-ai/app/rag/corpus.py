@@ -14,6 +14,7 @@ import logging
 import os
 from collections.abc import Sequence
 from functools import lru_cache
+from threading import RLock
 from time import monotonic
 
 from app.rag.content_source import (
@@ -39,6 +40,7 @@ ARTICLE_KINDS: tuple[str, ...] = ("post",)
 
 #: 语料版本号：换代（`reset_corpus()` 或 TTL 到期）时递增；检索管道的缓存键含它
 EPOCH = 0
+_STATE_LOCK = RLock()
 
 #: 这次语料到底从哪来（`corpus_source()` 返回它；与语料一起换代）
 _SOURCE = ""
@@ -143,9 +145,10 @@ def cached_posts(*, kinds: Sequence[str] | None = None) -> tuple[PostLike, ...]:
     调用方不要把它当成「一个请求内恒定不变」的东西。
     """
     _refresh_visibility()
-    if kinds is None:
-        return _VISIBLE_POSTS
-    return _filtered_posts(tuple(sorted(set(kinds))))
+    with _STATE_LOCK:
+        if kinds is None:
+            return _VISIBLE_POSTS
+        return _filtered_posts(tuple(sorted(set(kinds))))
 
 
 @lru_cache(maxsize=4)
@@ -183,9 +186,10 @@ def cached_corpus(*, kinds: Sequence[str] | None = None) -> list[IndexedChunk]:
     否则「块下标」与「文档」会对不上（引用指到别的段落）。
     """
     _refresh_visibility()
-    if kinds is None:
-        return _load_corpus()
-    return _filtered_corpus(tuple(sorted(set(kinds))))
+    with _STATE_LOCK:
+        if kinds is None:
+            return _load_corpus()
+        return _filtered_corpus(tuple(sorted(set(kinds))))
 
 
 @lru_cache(maxsize=4)
@@ -201,17 +205,25 @@ def _load_corpus() -> list[IndexedChunk]:
 def _refresh_visibility() -> None:
     """每次使用都复核；撤回导致视图换代，旧检索管道随后按 EPOCH 淘汰。"""
     global EPOCH, _VISIBLE_POSTS, _VISIBLE_INITIALIZED  # noqa: PLW0603
-    _expire_if_stale()
-    docs = _load_posts()
-    current = docs if source_mode() == "seed" else visible_docs(docs)
-    if not _VISIBLE_INITIALIZED or current != _VISIBLE_POSTS:
-        _VISIBLE_POSTS = current
-        if _VISIBLE_INITIALIZED:
-            EPOCH += 1
-        _VISIBLE_INITIALIZED = True
-        _load_corpus.cache_clear()
-        _filtered_posts.cache_clear()
-        _filtered_corpus.cache_clear()
+    for _ in range(3):
+        with _STATE_LOCK:
+            _expire_if_stale()
+            docs = _load_posts()
+            epoch = EPOCH
+        current = docs if source_mode() == "seed" else visible_docs(docs)
+        with _STATE_LOCK:
+            if epoch != EPOCH:
+                continue
+            if not _VISIBLE_INITIALIZED or current != _VISIBLE_POSTS:
+                _VISIBLE_POSTS = current
+                if _VISIBLE_INITIALIZED:
+                    EPOCH += 1
+                _VISIBLE_INITIALIZED = True
+                _load_corpus.cache_clear()
+                _filtered_posts.cache_clear()
+                _filtered_corpus.cache_clear()
+            return
+    raise CorpusSourceUnavailable("语料正在更新，请重试")
 
 
 def corpus_source() -> str:
@@ -228,13 +240,14 @@ def reset_corpus() -> None:
     global _LOADED_AT  # noqa: PLW0603 - 换掉了就没有装入时刻可言
     global _VISIBLE_POSTS  # noqa: PLW0603 - 不允许复用上一代公开视图
     global _VISIBLE_INITIALIZED  # noqa: PLW0603
-    EPOCH += 1
-    _SOURCE = ""
-    _LOADED_AT = None
-    _VISIBLE_POSTS = ()
-    _VISIBLE_INITIALIZED = False
-    _online_posts.cache_clear()
-    _load_posts.cache_clear()
-    _load_corpus.cache_clear()
-    _filtered_posts.cache_clear()
-    _filtered_corpus.cache_clear()
+    with _STATE_LOCK:
+        EPOCH += 1
+        _SOURCE = ""
+        _LOADED_AT = None
+        _VISIBLE_POSTS = ()
+        _VISIBLE_INITIALIZED = False
+        _online_posts.cache_clear()
+        _load_posts.cache_clear()
+        _load_corpus.cache_clear()
+        _filtered_posts.cache_clear()
+        _filtered_corpus.cache_clear()

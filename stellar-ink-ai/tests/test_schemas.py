@@ -27,6 +27,13 @@ from app.schemas import (
     WritingSuggestRequest,
     WritingSuggestResult,
 )
+from app.schemas.qa_eval import (
+    QaEvalJudgeRequest,
+    QaEvalReviewRequest,
+    QaEvalRunRequest,
+    QaEvalSnapshot,
+    QaEvalStartRequest,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -38,6 +45,12 @@ def load_fixture(name: str) -> dict[str, Any]:
 
 
 ROUND_TRIP_CASES: list[tuple[str, type[BaseModel]]] = [
+    ("qa_eval_judge_request.json", QaEvalJudgeRequest),
+    ("qa_eval_judged_snapshot.json", QaEvalSnapshot),
+    ("qa_eval_start_request.json", QaEvalStartRequest),
+    ("qa_eval_run_request.json", QaEvalRunRequest),
+    ("qa_eval_review_request.json", QaEvalReviewRequest),
+    ("qa_eval_snapshot.json", QaEvalSnapshot),
     ("qa_stream_request.json", QaStreamRequest),
     ("qa_answer.json", QaAnswer),
     ("writing_suggest_request.json", WritingSuggestRequest),

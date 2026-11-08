@@ -7,6 +7,8 @@ import com.stellarink.aiclient.dto.EvalCaseResultDTO;
 import com.stellarink.aiclient.dto.EvalRunRequestDTO;
 import com.stellarink.aiclient.dto.EvalRunResponseDTO;
 import com.stellarink.aiclient.dto.EvalStrategySummaryDTO;
+import com.stellarink.aiclient.dto.QaEvalRunDTO;
+import com.stellarink.aiclient.dto.UsageDTO;
 import com.stellarink.ai.service.AiRetrievalAuditService;
 import com.stellarink.ai.service.AiStyleProfileService;
 import com.stellarink.ai.service.AiMemoryService;
@@ -45,8 +47,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import com.stellarink.ai.corpus.service.CorpusSyncService;
@@ -70,6 +74,73 @@ import com.stellarink.ai.corpus.service.CorpusSyncService;
 @Import(GlobalExceptionHandler.class)
 @ActiveProfiles("unittest")
 class AiEvalControllerTest {
+
+    @Test
+    @DisplayName("完整问答验收：六条路由均复核 ADMIN，读取报告不重复记用量")
+    void qaEvalPassesThroughAndPreservesPendingReviews() throws Exception {
+        QaEvalRunDTO snapshot = new QaEvalRunDTO();
+        snapshot.setRunId("qa-run");
+        snapshot.setCompleted(1);
+        snapshot.setTotal(3);
+        QaEvalRunDTO.Summary summary = new QaEvalRunDTO.Summary();
+        summary.setCorrectReviewed(0);
+        snapshot.setSummary(summary);
+        UsageDTO usage = new UsageDTO();
+        usage.setTotalTokens(120);
+        snapshot.setStepUsage(usage);
+        when(pythonAiClient.startQaEval(any())).thenReturn(snapshot);
+        when(pythonAiClient.stepQaEval(any())).thenReturn(snapshot);
+        when(pythonAiClient.getQaEval("qa-run")).thenReturn(snapshot);
+        when(pythonAiClient.reviewQaEval(any())).thenReturn(snapshot);
+        when(pythonAiClient.judgeQaEval(any())).thenReturn(snapshot);
+        when(pythonAiClient.latestQaEval()).thenReturn(snapshot);
+
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubLoggedInAs(auth, Role.ADMIN, 1L);
+            mockMvc.perform(post("/ai/admin/eval/qa/start").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"dataset\":\"acceptance_v1\",\"maxCases\":null}"))
+                    .andExpect(jsonPath("$.code").value(0))
+                    .andExpect(jsonPath("$.data.summary.correctReviewed").value(0))
+                    .andExpect(jsonPath("$.data.summary.answerAccuracy").isEmpty());
+            mockMvc.perform(post("/ai/admin/eval/qa/step").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"runId\":\"qa-run\"}"))
+                    .andExpect(jsonPath("$.data.stepUsage.totalTokens").value(120));
+            mockMvc.perform(get("/ai/admin/eval/qa/runs/qa-run"))
+                    .andExpect(jsonPath("$.data.runId").value("qa-run"));
+            mockMvc.perform(put("/ai/admin/eval/qa/review").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"runId\":\"qa-run\",\"caseId\":\"a001\",\"correct\":null}"))
+                    .andExpect(jsonPath("$.code").value(0));
+            mockMvc.perform(post("/ai/admin/eval/qa/judge").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"runId\":\"qa-run\",\"caseId\":\"a001\"}"))
+                    .andExpect(jsonPath("$.data.stepUsage.totalTokens").value(120))
+                    .andExpect(jsonPath("$.data.summary.correctReviewed").value(0));
+            mockMvc.perform(get("/ai/admin/eval/qa/latest"))
+                    .andExpect(jsonPath("$.data.runId").value("qa-run"));
+            auth.verify(() -> AuthHelper.requireAtLeast(Role.ADMIN), org.mockito.Mockito.times(6));
+        }
+    }
+
+    @Test
+    @DisplayName("作者不能创建、执行、读取或复核完整问答评测")
+    void authorCannotAccessQaEval() throws Exception {
+        try (MockedStatic<AuthHelper> auth = mockStatic(AuthHelper.class)) {
+            stubLoggedInAs(auth, Role.AUTHOR, 2L);
+            for (String action : List.of("start", "step", "judge")) {
+                mockMvc.perform(post("/ai/admin/eval/qa/" + action)
+                                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                        .andExpect(jsonPath("$.code").value(403));
+            }
+            mockMvc.perform(get("/ai/admin/eval/qa/runs/qa-run"))
+                    .andExpect(jsonPath("$.code").value(403));
+            mockMvc.perform(get("/ai/admin/eval/qa/latest"))
+                    .andExpect(jsonPath("$.code").value(403));
+            mockMvc.perform(put("/ai/admin/eval/qa/review")
+                            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(jsonPath("$.code").value(403));
+            verify(pythonAiClient, never()).stepQaEval(any());
+            verify(pythonAiClient, never()).judgeQaEval(any());
+        }
+    }
 
     /**
      * 语料投影同步：新增 @Service 后，本模块的 @WebMvcTest 切片必须把它 mock 掉 ——

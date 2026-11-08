@@ -22,6 +22,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from starlette.concurrency import run_in_threadpool
+
 from app.core.trace import record_event
 from app.providers.base import EmbeddingModel, RerankModel
 from app.rag.chunking import ChunkingConfig, PostDocument, chunk_document
@@ -305,13 +307,16 @@ class RetrievalPipeline:
     async def retrieve(self, question: str, *, top_k: int) -> RetrievalOutcome:
         if top_k < 1:
             raise ValueError("top_k 必须为正")
-        visible = self._visible_positions()
+        visible = await run_in_threadpool(self._visible_positions)
         if len(visible) != len(self.corpus):
             # 不修改共享管道：同一实例可能正被另一请求使用。
             current = RetrievalPipeline(
                 corpus=[chunk for index, chunk in enumerate(self.corpus) if index in visible],
-                config=self.config, embedder=self.embedder, reranker=self.reranker,
-                dense_store=self.dense_store, refresh_corpus=self.refresh_corpus,
+                config=self.config,
+                embedder=self.embedder,
+                reranker=self.reranker,
+                dense_store=self.dense_store,
+                refresh_corpus=self.refresh_corpus,
             )
             return await current.retrieve(question, top_k=top_k)
         if not self.corpus:
@@ -320,7 +325,7 @@ class RetrievalPipeline:
         started = time.perf_counter()
 
         candidates = await self._gated(self._recall(question))
-        visible = self._visible_positions()
+        visible = await run_in_threadpool(self._visible_positions)
         candidates = [candidate for candidate in candidates if candidate.chunk_index in visible]
         if not candidates:
             # 没有候选就是「没有依据」，如实拒答；不得返回空列表装作「待评估」
@@ -337,7 +342,7 @@ class RetrievalPipeline:
             )
 
         ranked = await self._rerank(question, candidates)
-        visible = self._visible_positions()
+        visible = await run_in_threadpool(self._visible_positions)
         ranked = [candidate for candidate in ranked if candidate.chunk_index in visible]
 
         def key_of(candidate: ScoredChunk) -> tuple[str, int]:
@@ -398,6 +403,11 @@ class RetrievalPipeline:
             return set(range(len(self.corpus)))
         allowed = {chunk.chunk_id for chunk in self.refresh_corpus()}
         return {index for index, chunk in enumerate(self.corpus) if chunk.chunk_id in allowed}
+
+    def visible_chunks(self) -> list[IndexedChunk]:
+        """当前管道仍公开的原文，供明确来源约束复用同一套撤回校验。"""
+        visible = self._visible_positions()
+        return [chunk for index, chunk in enumerate(self.corpus) if index in visible]
 
     async def _gated(self, work: Awaitable[list[ScoredChunk]]) -> list[ScoredChunk]:
         """并发闸门：只包住**召回**这一段。

@@ -332,4 +332,6 @@ def datasets_available(directory: str | Path) -> Iterable[str]:
     path = Path(directory)
     if not path.is_dir():
         return []
-    return sorted(item.name for item in path.glob("*.json"))
+    return sorted(
+        item.name for item in path.glob("*.json") if not item.name.endswith(".sources.json")
+    )

@@ -81,7 +81,8 @@ public class AiAgentController {
         AgentAskResultDTO result = usageService.around(
                 AiCallScene.AGENT,
                 () -> pythonAiClient.agentAsk(internal),
-                answer -> UsageDTO.builder().model(answer.getUsageModel()).build());
+                answer -> answer.getUsage() != null ? answer.getUsage()
+                        : UsageDTO.builder().model(answer.getUsageModel()).build());
 
         // 审计：谁问的、哪个司职、几步、几次工具、是否收敛、用的哪个模型。
         // **不记问题原文与 thought** —— thought 里可能带上作者草稿或隐私片段

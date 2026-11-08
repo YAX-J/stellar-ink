@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import Field
 
 from app.schemas.base import ContractRequest, ContractResponse
+from app.schemas.common import Usage
 
 #: 对比表的列名上限：图表上放不下更多，也避免有人塞一堆列把响应撑爆
 MAX_STRATEGIES = 8
@@ -112,6 +113,8 @@ class EvalStrategySummary(ContractResponse):
 
 
 class EvalRunResponse(ContractResponse):
+    usage: Usage | None = None
+
     """``POST /eval/run`` 的返回体：指标表 + 逐题明细 + 数据来源说明。"""
 
     dataset: str = Field(description="数据集标识")
