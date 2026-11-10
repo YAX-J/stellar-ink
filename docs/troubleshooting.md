@@ -51,6 +51,13 @@
 - **修法**：启动参数加 `-Dfile.encoding=UTF-8`（`spring.cloud.nacos.config.encode=UTF-8` **不管用**）。
 - **一次定位**：日志里搜 `MalformedInputException`；或把 Nacos 配置改成纯 ASCII 试。
 
+### 1.7 本机 Nacos 登录失败，服务列表全部消失
+
+- **症状**：本机8848没有监听，项目服务也没有进程；恢复 Nacos 后，登录返回500，日志反复出现 `UsernameNotFoundException: User nacos not found`。
+- **真因**：2026-11-10现场确认两件事：Nacos及业务进程均未运行；已有 Derby 中命名空间仍在，但用户表为空。Nacos2.4起不再内置管理员默认密码，不能把缺账号当作密码输错。
+- **修法**：保留 `tools/nacos/data`，使用JDK17启动现有 standalone 实例；确认 `/v1/auth/users?pageNo=1&pageSize=100&search=accurate` 返回用户总数为0后，用官方 `POST /nacos/v1/auth/users/admin` 首次初始化，并与本机配置口令一致。已有账号时不得用此过程重置。初始化后等待用户缓存刷新，再验证登录，不要因紧接着的一次旧缓存失败重复初始化。然后恢复Python及四个Java服务，在 `stellar-ink-test` 中核对健康实例。
+- **一次定位**：先检查8848／9848和项目端口是否监听，再看 `nacos.log`；用户列表必须带 `search=accurate`，否则返回参数异常500会被误判为数据库损坏。关闭鉴权也不等于创建了控制台账号；不要删除 Derby 数据、重跑建表或盲目重置密码。官方行为见 [Nacos2.4管理员初始化](https://nacos.io/docs/v2.4/manual/admin/auth/)。
+
 ---
 
 ## 2. 鉴权与会话
