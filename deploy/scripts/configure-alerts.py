@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def load_env(path):
@@ -25,15 +26,29 @@ def build_config(values):
     for key in ("SMTP_SMARTHOST", "SMTP_FROM", "SMTP_AUTH_USERNAME", "SMTP_AUTH_PASSWORD", "ALERT_EMAIL_TO"):
         if not values.get(key) or values[key].startswith("CHANGE_"):
             raise ValueError("请填写 " + key)
-    if values["SMTP_SMARTHOST"].endswith((":465", ":994")):
-        raise ValueError("当前 Alertmanager 使用 STARTTLS，请提供支持 STARTTLS 的 SMTP 地址与端口，例如 587")
+    smarthost = values["SMTP_SMARTHOST"]
+    try:
+        address = urlsplit("//" + smarthost)
+        port = address.port
+        if (not address.hostname or not port or address.username is not None
+                or address.path or address.query or address.fragment or any(c.isspace() for c in smarthost)
+                or smarthost.rsplit(":", 1)[-1] != str(port)):
+            raise ValueError()
+    except ValueError:
+        raise ValueError("SMTP_SMARTHOST 需填写服务器:端口，例如 smtp.163.com:465") from None
+    if port == 994:
+        raise ValueError("当前 Alertmanager 仅在 465 端口直接建立 TLS，请将 163 邮箱地址填为 smtp.163.com:465")
+    # v0.27 的 465 分支先执行 tls.Dial；此时关闭的是重复的 STARTTLS 升级，
+    # TLS 加密和服务器证书校验仍然有效。其他端口始终强制 STARTTLS。
+    require_starttls = port != 465
     return {
         "global": {"resolve_timeout": "5m", "smtp_smarthost": values["SMTP_SMARTHOST"],
                    "smtp_from": values["SMTP_FROM"], "smtp_auth_username": values["SMTP_AUTH_USERNAME"],
-                   "smtp_auth_password": values["SMTP_AUTH_PASSWORD"], "smtp_require_tls": True},
+                   "smtp_auth_password": values["SMTP_AUTH_PASSWORD"], "smtp_require_tls": require_starttls},
         "route": {"receiver": "stellar-email", "group_by": ["alertname", "application", "instance"],
                   "group_wait": "30s", "group_interval": "1m", "repeat_interval": "4h"},
-        "receivers": [{"name": "stellar-email", "email_configs": [{"to": values["ALERT_EMAIL_TO"], "send_resolved": True}]}],
+        "receivers": [{"name": "stellar-email", "email_configs": [{"to": values["ALERT_EMAIL_TO"], "send_resolved": True,
+            "tls_config": {"min_version": "TLS12", "insecure_skip_verify": False}}]}],
     }
 
 

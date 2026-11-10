@@ -22,6 +22,27 @@ preflight = load("production-preflight")
 
 
 class ProductionP0Test(unittest.TestCase):
+    def smtp_values(self, host):
+        return dict(SMTP_SMARTHOST=host, SMTP_FROM="same@example.invalid", SMTP_AUTH_USERNAME="same@example.invalid",
+                    SMTP_AUTH_PASSWORD="test-only-secret", ALERT_EMAIL_TO="same@example.invalid")
+
+    def test_465_uses_implicit_tls_with_certificate_validation(self):
+        config = alerts.build_config(self.smtp_values("smtp.163.com:465"))
+        self.assertFalse(config["global"]["smtp_require_tls"])
+        self.assertEqual(config["global"]["smtp_smarthost"], "smtp.163.com:465")
+        email = config["receivers"][0]["email_configs"][0]
+        self.assertEqual(email["to"], config["global"]["smtp_from"])
+        self.assertFalse(email["tls_config"]["insecure_skip_verify"])
+        self.assertEqual(email["tls_config"]["min_version"], "TLS12")
+
+    def test_other_ports_require_starttls_and_unsupported_addresses_are_rejected(self):
+        for host in ("smtp.example.invalid:587", "smtp.example.invalid:25", "[::1]:587"):
+            self.assertTrue(alerts.build_config(self.smtp_values(host))["global"]["smtp_require_tls"])
+        for host in ("smtp.163.com:994", "smtp.163.com:0465", "smtp.163.com", "smtp.163.com:0",
+                     "smtp.163.com:65536", "ssl://smtp.163.com:465", "smtp.163.com:465/path", "user@smtp.163.com:465"):
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                alerts.build_config(self.smtp_values(host))
+
     def test_private_config_preserves_password_punctuation(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "alerts.env"

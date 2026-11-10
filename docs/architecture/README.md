@@ -4,6 +4,8 @@
 
 账号版本以 user.auth_version 为真值，网关经 Nacos 的响应式内部请求逐次复核，不使用版本缓存。user-service 由此成为带身份请求的可用性依赖。生产初始化、加密备份、恢复换 JWT 密钥、邮件通知与站外监控详见 [P0 运行手册](production-p0.md)。
 
+邮件发送保持 Alertmanager v0.27.0：465 端口直接 TLS，其他端口强制 STARTTLS；生成器统一维护 TLS 1.2 与证书校验。163 使用 `smtp.163.com:465`，无需新增转发服务。
+
 > 2026-11-08 来源约束：Python评测运行前核对题集的来源清单，普通/SSE问答共用明确完整标题限制，公开状态检查继续经有界线程执行。端口及Java契约不变。Python运行镜像须包含 `tests/fixtures/eval/*.json` 题集及来源绑定；详见 [来源复查](../ai/source-bound-qa.md)。
 
 > 2026-11-08 AI：实际模型用量仍由 Python 编排收集，Java 只做账目持久化与价格汇总；同步配置/公开语料网络读取移至 Starlette/AnyIO 有限工作线程，保留撤回时 fail-closed。新增用量迁移23与冻结留出集重复验收，详见 [实施说明](../ai/accounting-and-stability.md)。

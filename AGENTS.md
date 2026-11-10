@@ -272,6 +272,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   Cookie／查询参数／表单不作为令牌来源。普通实体更新不得回写密码、角色或版本。
   发布前执行 `24_auth_version.sql`。生产初始化、备份恢复与邮件验收见
   [`docs/architecture/production-p0.md`](docs/architecture/production-p0.md)。
+- **邮件 TLS**：Alertmanager v0.27.0 的 465 分支已直接 TLS；生成器仅在 465 关闭重复 STARTTLS，
+  仍须保留证书验证与 TLS 1.2。其他端口强制 STARTTLS，994 不支持；不得全局关闭 TLS 或跳过证书验证。
 - user 与 content 不互调；ai-service 通过独立 `stellar-ink-content-client` 读取公开语料，
   使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。

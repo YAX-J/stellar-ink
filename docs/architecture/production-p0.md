@@ -129,8 +129,14 @@ Redis AOF 只保护部分运行故障，不是恢复凭证。撤销列表丢失�
 ## 5. 邮件告警与站外探测
 
 收件邮箱由用户指定，填在本机 `.env.alerts`；发件账号可以不同。
-复制 `.env.alerts.example`，填写支持 STARTTLS（通常 587）的 SMTP 地址、发件账号与授权码，权限 600。
-当前 Alertmanager v0.27.0 方案不支持仅隐式 TLS 的 465/994；不能通过关闭 TLS 来凑通。
+复制 `.env.alerts.example`，填写 SMTP 地址、发件账号与授权码，权限 600。
+163 邮箱填写 `SMTP_SMARTHOST=smtp.163.com:465`，发件、认证账号和收件地址可以相同。
+其他邮箱可填写支持 STARTTLS 的端口（通常 587）；地址不加 `ssl://` 前缀，不使用 994。
+
+Alertmanager v0.27.0 已支持 465：先直接建立 TLS，再执行 SMTP。生成器仅在该端口设置
+`smtp_require_tls: false`，跳过重复 STARTTLS 升级；它不关闭连接加密，仍验证服务器证书并要求 TLS 1.2+。
+其他端口保持 `smtp_require_tls: true`，不得手工改为 false 或跳过证书校验。
+源码依据：[v0.27.0 邮件发送实现](https://github.com/prometheus/alertmanager/blob/v0.27.0/notify/email/email.go)。
 
 ```bash
 python3 deploy/scripts/configure-alerts.py
@@ -144,6 +150,13 @@ cd ../..
 python3 deploy/scripts/test-alert.py
 ```
 
+已有 Alertmanager 时，重新生成配置后显式重建以加载新文件（生成器通过原子替换写入文件）：
+
+```bash
+cd deploy/docker
+docker compose -f docker-compose.yml -f docker-compose.ops.yml up -d --no-deps --force-recreate alertmanager
+```
+
 配置含 SMTP 授权码，已 gitignore；容器内只读挂载，Alertmanager 用 root 读取 600 文件且移除 capabilities。
 Prometheus 通过配置中的 `alerting.alertmanagers` 发送告警，**没有 `--alertmanager.url` 这个启动参数**。
 首批覆盖服务不可用、撤销与账号版本校验、磁盘、备份失败／过期／从未成功、邮件投递失败。
@@ -151,6 +164,11 @@ SMTP 失效的告警本身也可能发不出，必须同时在看板检查，并
 
 `test-alert.py` 经本机 9093 注入一条三分钟后结束的告警。必须实际收到故障和恢复两封邮件，
 HTTP 接收成功不能当作邮件送达。还需在测试环境停服务、模拟备份失败验证真实规则。
+
+本地协议回归不连接真实邮箱：准备 OpenSSL 与同版本 Alertmanager，执行
+`python3 deploy/scripts/test-alerts-smtp.py --alertmanager /path/to/alertmanager`。
+它在回环地址监听 465，Linux 需有低端口绑定权限，且 465 不能被占用；仅使用模拟账号与临时证书。
+已验证故障／恢复通知通过及不受信任证书被拒绝，真实 163 账号送达仍需上面的通知演练。
 
 站外部署位于 `deploy/monitor`，应运行在另一台机器：修改 `prometheus.yml` 中实际站点域名，
 在该机器生成自己的私有邮件配置，再执行 `docker compose up -d`。同时检查首页内容与公开 API 的业务 code。
