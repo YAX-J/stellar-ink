@@ -6,14 +6,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from fastapi import FastAPI
 
+from app.api.v1 import qa
 from app.api.v1.assembly import CorpusError
 from app.core.internal_auth import InternalRequestVerifier
 from app.main import create_app
+from app.providers.fake import FakeProvider
 from app.schemas.qa_stream import FRAME_TERMINATOR
 from tests.fake_providers import install_fake_providers
 from tests.signing import FIXED_TIMESTAMP_MS, call, call_stream, load_vector, signed_headers
@@ -120,15 +123,40 @@ async def test_heartbeat_keeps_the_connection_alive_while_idle(
     app: FastAPI, secret: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """模型第一个 token 之前是静默期：这段时间必须有注释行，否则代理会掐掉连接。"""
-    monkeypatch.setattr("app.api.v1.qa.HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(qa, "HEARTBEAT_SECONDS", 0.01)
+    heartbeats_seen = asyncio.Event()
+    heartbeat_count = 0
+    original_heartbeat = qa.heartbeat
+    original_chat = FakeProvider.chat
 
-    _, body, _ = await stream(app, secret, {"question": QUESTION})
+    def observe_heartbeat() -> str:
+        nonlocal heartbeat_count
+        frame = original_heartbeat()
+        heartbeat_count += 1
+        if heartbeat_count >= 2:
+            heartbeats_seen.set()
+        return frame
 
-    assert any(block.strip().startswith(":") for block in body.split(FRAME_TERMINATOR)), (
+    async def idle_chat(self: FakeProvider, *args, **kwargs):
+        # 明确制造静默期，不能靠模拟模型恰好比心跳慢（快速 CI 上会提前答完）。
+        await heartbeats_seen.wait()
+        return await original_chat(self, *args, **kwargs)
+
+    monkeypatch.setattr(qa, "heartbeat", observe_heartbeat)
+    monkeypatch.setattr(FakeProvider, "chat", idle_chat)
+
+    # 心跳失效时必须失败退出，不能让上游等待把整条 CI 挂住。
+    async with asyncio.timeout(5):
+        status, body, _ = await stream(app, secret, {"question": QUESTION})
+
+    assert status == 200
+    assert sum(block.strip().startswith(":") for block in body.split(FRAME_TERMINATOR)) >= 2, (
         "静默期没有心跳：反向代理会把连接当死连接回收"
     )
     # 心跳是注释行，不该被解析成事件
-    assert all("type" in event for event in frames(body))
+    events = frames(body)
+    assert any(event["type"] == "delta" for event in events)
+    assert events[-1]["type"] == "done", "心跳后必须继续交付完整答案"
 
 
 async def test_missing_corpus_gives_a_readable_error_frame(

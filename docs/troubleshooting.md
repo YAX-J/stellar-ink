@@ -131,6 +131,12 @@
 - **真因**：列表默认 `ORDER BY id DESC`，而种子数据的 id 与 `created_at` 反向。
 - **修法**：种子数据的 id 必须与时间**同向递增**。
 
+### 3.7 CI 偶发报「静默期没有心跳」，本机测试通过（2026-11-10）
+- **症状**：GitHub Actions 的 Python 回归仅 `test_heartbeat_keeps_the_connection_alive_while_idle` 失败，前端和 Java 检查通过。
+- **真因**：用例将心跳间隔缩短到 10ms，却没有制造静默期；FakeProvider 无网络等待，提前答完便没有发送心跳的必要。旧断言把机器执行速度当成了测试条件。
+- **修法**：模拟模型通过 `asyncio.Event` 等到两个真实心跳生成后才回答，保留 SSE 注释帧、正文增量及最终 `done` 校验；用例设置 5s 总超时，避免心跳失效时挂住 CI。生产心跳逻辑和间隔不变。
+- **一次定位**：`cd stellar-ink-ai` 后运行 `uv run pytest tests/test_qa_stream_api.py::test_heartbeat_keeps_the_connection_alive_while_idle`。本机独立进程重复 20 次通过；运行期将心跳帧替换为空字符串时，用例按预期失败。全量 Python 1125 通过、1 跳过，ruff/mypy 通过；远端 CI 待推送后复核。
+
 ---
 
 ## 4. 构建与运行（Windows 特有，最容易反复踩）
