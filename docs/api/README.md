@@ -262,6 +262,14 @@ export COS_SECRET_KEY=<CAM 子账号 SecretKey>
 
 ### content-service :8102 - SEO 出口（sitemap / RSS）
 
+公开页面 HTML 已由 `public-pages` 服务按请求生成：首页、`/archive`、`/notes`、
+`/read/{id}`、`/note/{id}` 在执行 JavaScript 前包含正文和 SEO 元信息。
+它只通过网关匿名读取现有接口，不新增 Java API；`GET/HEAD /notes` 根据 `Accept: text/html`
+返回页面，API 的 JSON 请求继续到 content-service，响应带 `Vary: Accept`。
+公开详情返回200；不存在、草稿或私有内容匿名访问返回404及noindex；上游异常返回503及Retry-After，
+不将读取失败显示为空列表。HTML禁止缓存，部署地址统一由 `SITE_BASE_URL` 决定。
+具体实现、验证命令与范围见 [公开HTML](../architecture/public-html.md)。
+
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/sitemap.xml` | 公开可索引 URL 清单：首页、`/notes`、`/archive` + 全部已发布文章 + 全部公开已发布笔记（带 `lastmod`）。上限 1000 条 | 公开 |

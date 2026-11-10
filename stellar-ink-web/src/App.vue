@@ -8,6 +8,7 @@ import ToastCenter from '@/components/common/ToastCenter.vue'
 import AssistantEntry from '@/components/assistant/AssistantEntry.vue'
 import { navigation } from '@/stores/navigation'
 import router from '@/router'
+import { finishPublicPage } from '@/utils/public-page'
 
 const route = useRoute()
 const settings = useSettingsStore()
@@ -50,7 +51,7 @@ watch(
         <p class="navigation-message">连接可能暂时中断，或页面版本已经更新。请重试；仍无法打开时可刷新页面。</p>
         <div class="navigation-actions"><button class="btn btn-primary" @click="retryNavigation">重新加载页面</button><button class="btn btn-ghost" @click="reloadNavigation">刷新打开</button></div>
       </section>
-      <div v-show="!navigation.error"><RouterView /></div>
+      <div v-show="!navigation.error"><RouterView v-slot="{ Component }"><component :is="Component" :onVnodeMounted="finishPublicPage" /></RouterView></div>
     </main>
     <ToastCenter />
     <!-- 星笺助手（右下角浮层）：不占一级导航，登录/注册页不出现 -->

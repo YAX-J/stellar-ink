@@ -94,6 +94,7 @@ try {
   function element(tag) {
     return { tag, attrs: {}, textContent: '',
       setAttribute(key, value) { this.attrs[key] = value },
+      getAttribute(key) { return this.attrs[key] },
       remove() { children.splice(children.indexOf(this), 1) },
     }
   }
@@ -119,6 +120,13 @@ try {
   resetPageMeta({ title: '此刻' })
   assert.equal(document.head.querySelector('meta[name="robots"]').attrs.content, 'index, follow')
   assert.ok(document.head.querySelector('meta[property="og:title"]').attrs.content.startsWith('此刻'))
+  const siteOrigin = element('meta')
+  siteOrigin.setAttribute('name', 'stellar-site-origin')
+  siteOrigin.setAttribute('content', 'https://canonical.example')
+  document.head.appendChild(siteOrigin)
+  resetPageMeta({ url: location.origin + '/read/7?tracking=x' })
+  assert.equal(document.head.querySelector('link[rel="canonical"]').attrs.href, 'https://canonical.example/read/1')
+  assert.equal(document.head.querySelector('meta[property="og:url"]').attrs.content, 'https://canonical.example/read/1')
   console.log('通过：公开文章结构化数据与安全序列化，管理页 noindex，切页清理元信息')
 } finally {
   await server.close()

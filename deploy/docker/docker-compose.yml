@@ -341,6 +341,7 @@ services:
         required: false
     environment:
       <<: *db-env
+      SITE_BASE_URL: ${SITE_BASE_URL:-https://stellar.ink}
     extra_hosts: *extra-hosts
     volumes:
       - ./logs/content-service:/app/logs
@@ -432,6 +433,34 @@ services:
     logging: *default-logging
 
   # -------------------------------------------------------------------- 前端
+  public-pages:
+    build:
+      context: ../..
+      dockerfile: stellar-ink-web/Dockerfile
+      target: renderer
+    image: stellar-ink/public-pages:latest
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    environment:
+      SITE_BASE_URL: ${SITE_BASE_URL:-https://stellar.ink}
+      PUBLIC_GATEWAY_URL: http://gateway:8080
+      PORT: 4180
+    # 只在 Compose 内网开放；Nginx 托管静态资源并转发页面请求。
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    logging: *default-logging
+
   web:
     build:
       context: ../..
@@ -441,6 +470,7 @@ services:
     restart: unless-stopped
     depends_on:
       - gateway
+      - public-pages
     ports:
       # :80 只做健康检查与到 https 的 301；:443 是 Cloudflare 回源入口
       # （Cloudflare Origin 证书；安全组只放行你的 IP + Cloudflare 网段，见 README 第五节）

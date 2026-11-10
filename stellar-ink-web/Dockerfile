@@ -12,7 +12,18 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY stellar-ink-web/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine
+# 公开 HTML 服务：只有 Node 标准库与共用纯函数，无 node_modules、无构建期业务数据。
+FROM node:22-alpine AS renderer
+WORKDIR /web
+COPY --from=build /web/dist ./dist
+COPY stellar-ink-web/server ./server
+COPY stellar-ink-web/src/utils/markdown.js stellar-ink-web/src/utils/seo.js ./src/utils/
+COPY stellar-ink-web/package.json ./package.json
+USER node
+EXPOSE 4180
+CMD ["node", "server/http.mjs"]
+
+FROM nginx:1.27-alpine AS web
 ENV TZ=Asia/Shanghai
 COPY deploy/docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 # 反代公共指令片段（被 default.conf 中多个 location 通过 include 引用）

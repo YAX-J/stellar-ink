@@ -1,5 +1,15 @@
 # 星笺 STELLAR INK Docker 部署手册
 
+## 公开 HTML（2026-11-10）
+
+编排新增 `public-pages`（Node22、内网4180、128MB上限），按请求生成公开正文和SEO标签，
+Nginx继续托管资源及反代API。`.env` 的 `SITE_BASE_URL` 同时传给该服务和content-service，
+测试环境须填写测试站点地址。首次启用应一起更新 `public-pages` 与 `web`，不要只替换旧静态镜像。
+发布、修改、撤回、转私有不需要重新构建前端；公开HTML每次匿名读取网关并复核状态，不落快照。
+Cloudflare不得使用覆盖 `no-store` 的HTML缓存规则（包括`/notes`的HTML变体）；静态资源可继续长缓存。
+本机开发／预览通过Vite插件接入同一渲染器；已有preview需重启一次才能加载新插件。
+验收范围与命令见 [公开HTML说明](../../docs/architecture/public-html.md)。
+
 ## P0 发布入口（2026-11-09，以本节为准）
 
 生产不再自动导入演示账号；先执行24_auth_version.sql，再发布Java服务，旧令牌需重新登录。Nacos认证项不再提供公开默认值。一次性管理员、age加密异地备份、邮件告警和站外探测步骤见 [P0运行手册](../../docs/architecture/production-p0.md)。运维增强使用 docker-compose.ops.yml；不要使用旧文档中的 --alertmanager.url 参数。

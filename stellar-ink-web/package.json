@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "node scripts/diff-selfcheck.mjs && node scripts/deploy-selfcheck.mjs && node scripts/p1-selfcheck.mjs && node scripts/canvas-selfcheck.mjs && node scripts/ai-store-selfcheck.mjs && node scripts/agent-selfcheck.mjs && node scripts/qa-selfcheck.mjs && node scripts/qa-eval-selfcheck.mjs && node scripts/assistant-dock-selfcheck.mjs && node scripts/wiki-selfcheck.mjs && node scripts/memory-selfcheck.mjs && node scripts/my-models-selfcheck.mjs && node scripts/ai-ops-selfcheck.mjs && vite build && node scripts/bundle-budget.mjs"
+    "check": "node scripts/diff-selfcheck.mjs && node scripts/deploy-selfcheck.mjs && node scripts/p1-selfcheck.mjs && node scripts/canvas-selfcheck.mjs && node scripts/ai-store-selfcheck.mjs && node scripts/agent-selfcheck.mjs && node scripts/qa-selfcheck.mjs && node scripts/qa-eval-selfcheck.mjs && node scripts/assistant-dock-selfcheck.mjs && node scripts/wiki-selfcheck.mjs && node scripts/memory-selfcheck.mjs && node scripts/my-models-selfcheck.mjs && node scripts/ai-ops-selfcheck.mjs && node --test scripts/public-page.test.mjs && vite build && node scripts/bundle-budget.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",

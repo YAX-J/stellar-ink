@@ -5,6 +5,7 @@
 # =============================================================================
 set $gateway http://gateway:8080;
 proxy_pass $gateway;
+add_header Vary Accept always;
 proxy_http_version 1.1;
 proxy_set_header Host $host;
 proxy_set_header X-Real-IP $remote_addr;

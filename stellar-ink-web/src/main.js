@@ -5,10 +5,12 @@ import router from './router'
 import { useAuthStore } from '@/stores/auth'
 import { on, SESSION_EXPIRED } from '@/utils/bus'
 import { navigation } from '@/stores/navigation'
+import { showPublicPageError } from '@/utils/public-page'
 import './styles/fonts.css'
 import './styles/tokens/variables.css'
 import './styles/base.css'
 import './styles/components.css'
+import './styles/public-page.css'
 
 const app = createApp(App)
 app.use(createPinia()).use(router)
@@ -18,6 +20,7 @@ router.onError((error, to) => {
   console.error('[router] 导航失败 ->', to && to.fullPath, error)
   navigation.path = to?.fullPath || window.location.pathname
   navigation.error = true
+  showPublicPageError()
 })
 router.afterEach((to, from, failure) => {
   if (!failure) navigation.error = false

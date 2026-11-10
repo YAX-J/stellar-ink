@@ -1,0 +1,18 @@
+/* 无脚本时也可读、可导航；使用现有三主题语义变量。 */
+[data-public-pending] #app{display:none}
+.public-nav{display:flex; flex-wrap:wrap; gap:24px; align-items:center; padding:24px clamp(20px,5vw,64px); border-bottom:1px solid var(--line)}
+.public-nav a{color:var(--ink-dim); text-decoration:none}
+.public-nav a:first-child{font-family:var(--font-serif); color:var(--ink); font-weight:900; margin-right:auto}
+.public-page{max-width:1240px; margin:0 auto; padding:48px clamp(20px,5vw,64px); overflow-wrap:anywhere}
+.public-page h1{font-family:var(--font-serif); font-weight:900; font-size:clamp(30px,5vw,56px); line-height:1.5; margin-bottom:24px}
+.public-page h2{font-family:var(--font-serif); font-weight:900; font-size:24px; margin:32px 0 16px}
+.public-page p,.public-page li{color:var(--ink-dim); font-size:17px; line-height:2.3}
+.public-page a{color:var(--primary)}
+.public-page time{font-family:var(--font-mono); color:var(--ink-faint); font-size:12px}
+.public-prose{margin-top:40px}
+.public-prose p{margin-bottom:28px}
+.public-prose blockquote,.public-prose aside{border-left:3px solid var(--amber); padding-left:24px; margin:32px 0}
+.public-prose pre{overflow:auto; white-space:pre; padding:20px; background:var(--surface-2); border-radius:var(--r-md); font-family:var(--font-mono)}
+.public-prose ul,.public-prose ol{padding-left:24px}
+.public-list{list-style:none; padding:0}
+.public-list li{padding:16px 0 24px; border-bottom:1px solid var(--line)}

@@ -1,6 +1,7 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { publicPagePlugin } from './server/vite-public-page.mjs'
 
 const gatewayProxy = {
   target: 'http://localhost:8080',
@@ -13,7 +14,7 @@ const gatewayProxy = {
 }
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), publicPagePlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

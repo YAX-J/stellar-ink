@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { usePostStore } from '@/stores/posts'
+import { usePostStore, normalizePost } from '@/stores/posts'
+import { takePublicPage } from '@/utils/public-page'
 import SectionHead from '@/components/common/SectionHead.vue'
 import StarMapCanvas from '@/components/canvas/StarMapCanvas.vue'
 import { fmt } from '@/utils/format'
@@ -9,6 +10,8 @@ import AuthorBadge from '@/components/common/AuthorBadge.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
+const initialPage = takePublicPage('/archive')
+if (initialPage?.records) postStore.posts = initialPage.records.map((item) => normalizePost(item))
 
 const yearAll = computed(() => [...new Set(postStore.posts.map((post) => post.year).filter(Boolean))]
   .sort((a, b) => b - a))

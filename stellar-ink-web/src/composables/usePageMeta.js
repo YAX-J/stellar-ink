@@ -14,12 +14,8 @@
  */
 import { watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { canonicalUrl } from '@/utils/seo'
-
-const SITE_NAME = '星笺 · STELLAR INK'
-const HOME_TITLE = `${SITE_NAME} — 把思绪挂成星图`
-const DEFAULT_DESCRIPTION = '把文章比作星辰的夜间写作与技术笔记博客：随笔、技术笔记与星图。'
-const MAX_DESCRIPTION = 120
+import { canonicalUrl, clip, SITE_NAME, HOME_TITLE, DEFAULT_DESCRIPTION } from '@/utils/seo'
+export { clip } from '@/utils/seo'
 
 function ensureMeta(attr, key) {
   let el = document.head.querySelector(`meta[${attr}="${key}"]`)
@@ -41,23 +37,16 @@ function ensureCanonical() {
   return el
 }
 
-/** 压成一行、去掉 Markdown 标记，再按字数截断：摘要里出现 `##` 与换行会很难看 */
-export function clip(text, max = MAX_DESCRIPTION) {
-  const plain = String(text || '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
-    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
-    .replace(/[#>*_~|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return plain.length > max ? `${plain.slice(0, max)}…` : plain
-}
-
 function apply(meta = {}, { setTitle = true } = {}) {
   const title = meta.title ? `${meta.title} · ${SITE_NAME}` : HOME_TITLE
   const description = clip(meta.description || DEFAULT_DESCRIPTION)
-  const url = canonicalUrl(meta.url, location.origin, location.pathname)
+  let origin = location.origin
+  try {
+    const configured = document.head.querySelector('meta[name="stellar-site-origin"]')?.getAttribute('content')
+    const site = configured && new URL(configured)
+    if (site && ['http:', 'https:'].includes(site.protocol)) origin = site.origin
+  } catch { /* 本地静态页面没有部署地址时沿用浏览器源地址。 */ }
+  const url = canonicalUrl(meta.url, origin, location.pathname)
 
   /* 标题只有页面自己知道时才算「元信息」：路由切换的缺省标题由 router.afterEach 写，
    * 这里不能覆盖 —— 否则 reset 会把 `星笺 · 深读` 抹回首页标题。 */

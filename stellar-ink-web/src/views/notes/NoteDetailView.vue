@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNoteStore } from '@/stores/notes'
+import { useNoteStore, normalizeNote } from '@/stores/notes'
+import { takePublicPage } from '@/utils/public-page'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { fmt } from '@/utils/format'
@@ -16,6 +17,8 @@ import MarkdownBody from '@/components/common/MarkdownBody.vue'
 const route = useRoute()
 const router = useRouter()
 const noteStore = useNoteStore()
+const initialPage = takePublicPage(route.path)
+if (initialPage?.kind === 'note') noteStore.details[Number(initialPage.item.id)] = normalizeNote(initialPage.item, true)
 const auth = useAuthStore()
 const settings = useSettingsStore()
 const authorStore = useAuthorStore()

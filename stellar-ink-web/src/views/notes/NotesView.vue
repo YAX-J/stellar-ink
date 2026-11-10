@@ -1,7 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNoteStore, NOTE_TYPES } from '@/stores/notes'
+import { useNoteStore, normalizeNote, NOTE_TYPES } from '@/stores/notes'
+import { takePublicPage } from '@/utils/public-page'
 import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
 import NoteCard from '@/components/post/NoteCard.vue'
@@ -10,6 +11,8 @@ import { usePageMeta } from '@/composables/usePageMeta'
 const route = useRoute()
 const router = useRouter()
 const noteStore = useNoteStore()
+const initialPage = takePublicPage(route.path)
+if (initialPage?.records) noteStore.notes = initialPage.records.map((item) => normalizeNote(item))
 const auth = useAuthStore()
 
 /* 技术笔记列表页的摘要：这一页是技术内容的总入口，值得有独立的 description */

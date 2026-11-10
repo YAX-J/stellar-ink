@@ -20,3 +20,20 @@ export function articleData(item, kind, author) {
   if (Number.isFinite(Number(item.words)) && Number(item.words) > 0) data.wordCount = Number(item.words)
   return data
 }
+
+export const SITE_NAME = '星笺 · STELLAR INK'
+export const HOME_TITLE = `${SITE_NAME} — 把思绪挂成星图`
+export const DEFAULT_DESCRIPTION = '把文章比作星辰的夜间写作与技术笔记博客：随笔、技术笔记与星图。'
+
+/** 服务端与浏览器共用摘要规则，避免原始 Markdown 出现在分享卡片里。 */
+export function clip(text, max = 120) {
+  const plain = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+    .replace(/[#>*_~|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain.length > max ? `${plain.slice(0, max)}…` : plain
+}

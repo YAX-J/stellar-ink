@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { usePostStore } from '@/stores/posts'
+import { usePostStore, normalizePost } from '@/stores/posts'
+import { takePublicPage } from '@/utils/public-page'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore, READ_LIMITS, READ_DEFAULTS } from '@/stores/settings'
 import { useCommentStore } from '@/stores/comments'
@@ -24,6 +25,8 @@ import QaCitationList from '@/components/ai/QaCitationList.vue'
 const route = useRoute()
 const router = useRouter()
 const postStore = usePostStore()
+const initialPage = takePublicPage(route.path)
+if (initialPage?.kind === 'post') postStore.details[Number(initialPage.item.id)] = normalizePost(initialPage.item, true)
 const auth = useAuthStore()
 const settings = useSettingsStore()
 const commentStore = useCommentStore()

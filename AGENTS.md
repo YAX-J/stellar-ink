@@ -19,6 +19,7 @@
 ```
 stellar-ink/
 ├── stellar-ink-web/                前端：Vue 3 + Vite + Pinia + Vue Router（已接网关）
+│   └── server/                    公开 HTML 按请求生成（Node 标准库，生产内网 :4180）
 ├── stellar-ink-server/             后端：Spring Cloud Alibaba 微服务（已跑通）
 │   ├── common-components/          公共组件聚合（非独立运行）
 │   │   ├── shared-model/           共享模型：Response/ErrorCode/异常/DTO/VO（含 ai 子包）
@@ -210,6 +211,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   提交失败的原因也留在按钮上方（`roleFormError` / `modelFormError`），不只靠会消失的全局 toast。
 
 ### 正文渲染与阅读体验
+- **公开 HTML 与客户端共用安全边界**：首页、星图／笔记列表及公开文章／笔记详情由
+  `stellar-ink-web/server/` 按请求生成正文与 head，再由 Vue 接管；所有访客同一处理路径，不识别爬虫。
+  渲染器只匿名请求固定网关接口，不转发 Authorization/Cookie，不读取草稿／管理接口；
+  必须复核 `status=1` 与笔记 `visibility=PUBLIC`。HTML 使用 `no-store`，撤回／转私有后不得保留旧快照。
+  canonical 使用配置的 `SITE_BASE_URL`，浏览器接管后也不得退回不可信 Host。
+  `npm run check` 包含真实 HTTP 回归；生产 `public-pages:4180` 仅由 Nginx 内网访问。
 - 正文 Markdown 由 `utils/markdown.js` 解析成块级结构，视图按白名单标签渲染（**不引依赖**）。
   该文件先 `escapeHtml` 再插入自己的标签，链接有协议白名单，因此 `v-html` 处是安全的。
 - **编辑区**（仅技术笔记）由 `components/editor/MarkdownEditor.vue` 提供，基于 CodeMirror 6：

@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { usePostStore } from '@/stores/posts'
+import { usePostStore, normalizePost } from '@/stores/posts'
+import { takePublicPage } from '@/utils/public-page'
 import { useStatsStore } from '@/stores/stats'
 import { useAuthStore } from '@/stores/auth'
 import SectionHead from '@/components/common/SectionHead.vue'
@@ -11,6 +12,8 @@ import MiniStarMap from '@/components/canvas/MiniStarMap.vue'
 
 const router = useRouter()
 const postStore = usePostStore()
+const initialPage = takePublicPage('/')
+if (initialPage?.records) postStore.posts = initialPage.records.map((item) => normalizePost(item))
 const statsStore = useStatsStore()
 const auth = useAuthStore()
 
