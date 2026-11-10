@@ -160,7 +160,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
     400/500/700 返回的是同一个文件，因此按「字族 × latin/latin-ext 子集」各留一份，
     再由 `src/styles/fonts.css` 按字重声明成多条 `@font-face`）+ `main.js` 里在 tokens 之前 import。
     别按字重各存一份文件（曾存成 10 片，多出 123KB 纯重复），也别把拉丁字族挂回 Google。
-  - 中文（Noto Sans SC 300/400/500/700、Noto Serif SC 600/900）走 Google，
+  - 中文（Noto Sans SC 300–700、Noto Serif SC 600–900）走 Google 变量字重区间，
+    不要改回逐字重枚举：同一批字体文件会重复生成大量 @font-face（实测606→202条，CSS gzip约187→62KB）。
     单字重 4.4-5.9MB 不进仓库。**域名用 `fonts.googleapis.cn` / `fonts.gstatic.cn`**（Google 自家中国域名，
     CSS 与 .com 逐字节相同）：国内实测 0.25-0.28s vs .com 0.95-1.13s（偶发 20s 卡死），
     字体分片两边都是 0.12-0.16s。`index.html` 里 preconnect 与 link/noscript 三处必须同时改域名。
@@ -227,6 +228,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   那样进页面先看到两个孤零零的按钮，中间留一大片空白。笔记详情页的返回按钮同样贴着页面顶部。
 
 ### Canvas 惯例
+- 首页 `Starfield/MiniStarMap` 使用 `useCanvasAnimation`：ResizeObserver 尺寸回调中适配位图，动画帧不读 clientWidth/clientHeight；30fps上限，隐藏／离屏暂停，减少动效时静态绘制。CSS必须明确尺寸，不能让2倍位图尺寸反向撑大替换元素。
 - 画布位图尺寸 = CSS 尺寸 × 2，用 `utils/canvas.js` 的 `fitCanvas`，别自己写。
 - 动画统一 `requestAnimationFrame` 循环：`onMounted` 启动、`onUnmounted` 取消；
   绘制数据要过滤**带坐标的点位数组**，不能拿原始业务数据（曾因 `arc(undefined)` 静默失败排查很久）。

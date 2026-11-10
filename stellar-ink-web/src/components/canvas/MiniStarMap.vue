@@ -1,52 +1,53 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { usePostStore } from '@/stores/posts'
-import { fitCanvas } from '@/utils/canvas'
+import { useSettingsStore } from '@/stores/settings'
+import { useCanvasAnimation } from '@/composables/useCanvasAnimation'
 
 const postStore = usePostStore()
+const settings = useSettingsStore()
 const cvs = ref(null)
-let ctx = null
-let raf = 0
-
-function draw() {
-  const c = cvs.value
-  ctx = fitCanvas(c)
-  const w = c.width, h = c.height
+let primary = '', amber = ''
+function palette() {
+  const style = getComputedStyle(document.documentElement)
+  primary = style.getPropertyValue('--primary').trim()
+  amber = style.getPropertyValue('--amber').trim()
+}
+onMounted(palette)
+watch(() => settings.theme, palette, { flush: 'post' })
+const points = computed(() => postStore.posts.map((post, i) => ({
+  x: .14 + ((i * 73) % 80) / 100,
+  y: .12 + ((i * 41) % 76) / 100,
+  r: Math.sqrt(Math.max(0, Number(post.words) || 0)) / 14 * 2,
+})))
+useCanvasAnimation(cvs, (ctx, w, h, time) => {
   ctx.clearRect(0, 0, w, h)
-
-  const pts = postStore.posts.map((p, i) => ({
-    x: (.14 + ((i * 73) % 80) / 100) * w,
-    y: (.12 + ((i * 41) % 76) / 100) * h,
-    r: Math.sqrt(p.words) / 14 * 2,
-  }))
-  ctx.strokeStyle = 'rgba(139,124,255,.25)'
+  const pts = points.value
+  ctx.strokeStyle = primary
+  ctx.globalAlpha = .25
   ctx.lineWidth = 1
   for (let i = 0; i < pts.length - 1; i++) {
     ctx.beginPath()
-    ctx.moveTo(pts[i].x, pts[i].y)
-    ctx.lineTo(pts[i + 1].x, pts[i + 1].y)
+    ctx.moveTo(pts[i].x * w, pts[i].y * h)
+    ctx.lineTo(pts[i + 1].x * w, pts[i + 1].y * h)
     ctx.stroke()
   }
-  const t = Date.now()
+  ctx.globalAlpha = 1
   pts.forEach((p, i) => {
-    const tw = ((Math.sin(t / 700 + i) + 1) / 2) * .4 + .6
+    const tw = ((Math.sin(time / 700 + i) + 1) / 2) * .4 + .6
     ctx.beginPath()
-    ctx.arc(p.x, p.y, p.r * tw, 0, 7)
-    ctx.fillStyle = i === 0 ? '#FFB454' : '#8B7CFF'
+    ctx.arc(p.x * w, p.y * h, p.r * tw, 0, 7)
+    ctx.fillStyle = i === 0 ? amber : primary
     ctx.shadowColor = ctx.fillStyle
     ctx.shadowBlur = 18
     ctx.fill()
     ctx.shadowBlur = 0
   })
-  raf = requestAnimationFrame(draw)
-}
-
-onMounted(draw)
-onUnmounted(() => cancelAnimationFrame(raf))
+}, { sources: () => [points.value, settings.theme] })
 </script>
 
 <template>
-  <canvas ref="cvs" class="mini-map"></canvas>
+  <canvas ref="cvs" class="mini-map" aria-hidden="true"></canvas>
 </template>
 
 <style scoped>

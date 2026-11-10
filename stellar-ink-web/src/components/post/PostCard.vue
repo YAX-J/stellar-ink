@@ -24,7 +24,7 @@ function onMove(e) {
   >
     <span class="wc">{{ kWords(props.post.words) }}</span>
     <div class="date">{{ props.post.date }}</div>
-    <h4>{{ props.post.title }}</h4>
+    <h3>{{ props.post.title }}</h3>
     <p class="ex">{{ props.post.excerpt || '这颗星还没有留下摘要。' }}</p>
     <AuthorBadge class="author" :user-id="props.post.userId" compact />
     <div class="chips">
@@ -46,7 +46,7 @@ function onMove(e) {
 .dust:hover{transform:translateY(-6px) rotate(-.4deg); border-color:var(--primary)}
 .dust:hover::before{opacity:1}
 .dust .date{font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.1em}
-.dust h4{font-family:var(--font-serif); font-weight:600; font-size:18px; margin:12px 0 10px; line-height:1.5}
+.dust h3{font-family:var(--font-serif); font-weight:600; font-size:18px; margin:12px 0 10px; line-height:1.5}
 .dust .ex{font-size:13px; color:var(--ink-dim); line-height:1.9;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
 .dust .author{margin-top:14px; font-family:var(--font-mono); font-size:10px}
