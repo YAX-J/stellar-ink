@@ -1,5 +1,9 @@
 # 星笺后端架构（Spring Cloud Alibaba 微服务）
 
+## P0 生产准备（2026-11-09）
+
+账号版本以 user.auth_version 为真值，网关经 Nacos 的响应式内部请求逐次复核，不使用版本缓存。user-service 由此成为带身份请求的可用性依赖。生产初始化、加密备份、恢复换 JWT 密钥、邮件通知与站外监控详见 [P0 运行手册](production-p0.md)。
+
 > 2026-11-08 来源约束：Python评测运行前核对题集的来源清单，普通/SSE问答共用明确完整标题限制，公开状态检查继续经有界线程执行。端口及Java契约不变。Python运行镜像须包含 `tests/fixtures/eval/*.json` 题集及来源绑定；详见 [来源复查](../ai/source-bound-qa.md)。
 
 > 2026-11-08 AI：实际模型用量仍由 Python 编排收集，Java 只做账目持久化与价格汇总；同步配置/公开语料网络读取移至 Starlette/AnyIO 有限工作线程，保留撤回时 fail-closed。新增用量迁移23与冻结留出集重复验收，详见 [实施说明](../ai/accounting-and-stability.md)。
@@ -184,7 +188,7 @@ AI 技术路线与实施顺序见
 - 友链使用 `0 待审核 / 1 已接入 / 2 已驳回` 三态；公开 `/links` 只返回已接入项，
   `/links/pending` 在网关 GET 放行规则之前单独校验 ADMIN，内容服务再做一次角色复核。
 - JWT 无状态验签，网关与两个业务服务必须使用同一 `SA_TOKEN_JWT_SECRET`。
-- JWT 仍是无状态主体，但登出/改密会把当前令牌摘要写入 Redis 撤销列表；网关用响应式 Redis 在路由前统一拦截，键只保存 SHA-256 摘要并随 JWT 到期删除。
+- 普通登出把当前令牌摘要写入 Redis 撤销列表，随 JWT 到期删除；改密与改角色原子递增数据库账号版本，使全部旧会话失效。网关同时复核撤销列表与账号版本，依赖故障拒绝放行。
 - **笔记的私有隔离不在网关**：网关对所有 GET 放行，`PRIVATE` 笔记的可读性由 content-service 的
   `NoteServiceImpl#ensureReadable` 判定（非作者一律 404，ADMIN 也不能读他人私有笔记）；
   归属判定 `ensureOwned` 比文章更严格，只有作者本人能改删。

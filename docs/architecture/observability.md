@@ -1,5 +1,9 @@
 # 可观测性（Prometheus + Grafana）
 
+## P0 邮件通知（2026-11-09）
+
+邮件配置由 configure-alerts.py 从私有 .env.alerts 生成，运维覆盖编排 docker-compose.ops.yml 启用通知与宿主机采集；Prometheus 使用 alerting.alertmanagers 配置。备份与账号版本新增告警，站外探测位于 deploy/monitor。完整启用及送达验收见 [P0运行手册](production-p0.md)。
+
 > 这份文档回答三个问题：**观测什么**、**怎么起来的**、**坏了怎么用它定位**。
 > 它只记结论与口径，不记过程；排查过程写进本文末尾的「已知限制」与 `docs/troubleshooting.md`。
 
@@ -10,7 +14,7 @@
 | Metrics | **做**：Prometheus + Grafana + 告警规则 | 四个 Java 模块本来就有 `micrometer-registry-prometheus`、prod 档也已暴露 `/actuator/prometheus`，只差有人抓 —— 不做才是浪费 |
 | Logs | **不动**：沿用 logback + `TraceIdFilter` | 已有 MDC、响应头 `X-Trace-Id`、响应体 `traceId`，单链路排查够用；引 Loki 是纯增量成本 |
 | Traces | **不引** OTel / SkyWalking / Zipkin | 已拍板不部署（跨副本回放是**已知且被接受的限制**）；`traceId` 已能把「网关 → 服务 → Python」串起来 |
-| 通知通道 | **默认关闭**，模板见 `observability/alertmanager/alertmanager.yml.example` | 必须填你自己的接收地址；而 Alertmanager 在配置校验失败时**拒绝启动** —— 挂成默认服务会让没填地址的人先遇到「整栈里有个容器起不来」 |
+| 通知通道 | 配置私有 `.env.alerts` 并用 `configure-alerts.py` 生成，通过 `docker-compose.ops.yml` 启用 | 发件配置与收件地址都需填写；上线前必须实际验证故障和恢复邮件送达 |
 | Python 侧埋点 | **不做** | 它没有 `/metrics`（`app/rag/metrics.py` 是 recall@k / MRR 那类**评测**指标）。AI 侧可见性由 ai-service 聚合 `ai_call_log` + 探活 Python 得出 |
 
 **安全姿态（不要破坏）**：三个业务服务的端口在 compose 里**刻意一个都没发布**（把 8101/8102/8107/8080 暴露到宿主机 = 同时绕过 nginx 边缘限流、并让 `/actuator/**` 匿名可达）。
@@ -83,7 +87,7 @@ Prometheus 用**服务名 + 容器端口**从编排内网抓取，因此它**不
 | `stellar_auth_revoked_check_total{result}` | 含义 | 该往哪查 |
 |---|---|---|
 | `ok` | 查询成功且未撤销，放行 | — |
-| `revoked` | 命中撤销列表，401（用户登出/改密，**正常**） | — |
+| `revoked` | 命中撤销列表，401（用户普通登出，**正常**）；改密计入账号版本校验 | — |
 | `error` | 两次都失败，fail-closed 503 | Redis 可达性与超时、网络质量 |
 | `timeout` | 撞上 2 秒整体上限，fail-closed 503 | 响应式连接池被占满 / 连接卡死（与上一条**修法不同**，故必须分开） |
 

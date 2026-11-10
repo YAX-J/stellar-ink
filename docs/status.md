@@ -1,5 +1,9 @@
 # 星笺 STELLAR INK · 进度快照
 
+- 2026-11-10 P0：生产演示数据隔离、一次性管理员初始化、账号版本失效、age 加密异地备份、恢复换 JWT 密钥、邮件告警与站外探测已实现。
+  本机网关多设备登出／改密／降权验证、隔离 MySQL 加密恢复演练通过；前端 check 与完整 Maven 打包通过。
+  生产尚未发布，SMTP 发件配置、异地备份目标、独立监控主机与真实故障／恢复邮件仍待验收；见 [P0 运行手册](architecture/production-p0.md)。
+
 - 2026-11-08 h007复查与来源约束：旧v1的h005–h008绑定了线上不存在的种子文章，撤回“46/48正确、两次误拒”结论。新增来源清单预检及明确完整标题的普通/SSE问答约束；新v3三轮48/48核心正确、误拒0/24、引用63/63原文一致（Codex逐题复核，非独立人工盲评），保留4条拒答编号格式警告。Python1125项通过、1跳过，前端check通过；详见 [来源复查](ai/source-bound-qa.md)。
 - 2026-11-08 AI 用量/价格/异步读取/稳定性四项改进：逐模型调用明细与价格快照、个人配置隔离、有限线程移走同步网络读取、冻结题集及重复验收。本机迁移23及网关联调通过；详见 [实施与验收](ai/accounting-and-stability.md)。
 
@@ -56,8 +60,8 @@
 
 - 后端微服务化完成：网关 `:8080`（路由 / CORS / Sa-Token 鉴权 / Sentinel）+ user `:8101` +
   content `:8102` + ai `:8107`，注册与配置走 Nacos，Python `stellar-ink-ai :8200` 仅内网可达。
-- 鉴权：Sa-Token JWT 无状态；**JWT 可撤销**（登出/改密把令牌摘要写 Redis，网关路由前校验，fail-closed）；
-  角色三档 READER ⊂ AUTHOR ⊂ ADMIN，写进 JWT extra（**改角色后必须重新登录才生效**）。
+- 鉴权：普通登出将当前 JWT 摘要写 Redis；改密、改角色原子递增账号版本，全部旧会话立即失效。
+  网关逐次复核版本与角色，依赖故障拒绝放行；重新登录获取新角色，三档 READER ⊂ AUTHOR ⊂ ADMIN。
 - Redis 已接入：`RedisUtils` + 故障回源的 `RedisCache`。**已进缓存**：登录失败计数与账号锁定、JWT 撤销、
   公开作者摘要、公开文章/笔记列表与详情、标签、统计、评论、友链、流星、回声。
   **刻意不进缓存**：完整用户资料、草稿、私有/审核数据、JWT 原文、浏览闸门、点赞明细、持久计数。
@@ -69,8 +73,8 @@
   经**编排内网服务名**抓取（业务服务一个端口都不发布），四块看板与 13 条告警规则全部 provisioning 入库；
   埋点覆盖撤销校验四档结果与耗时、缓存命中/出错/熔断（`bypass` 与 `miss` 分开）、浏览与点赞的去重结果、
   Druid 连接池、AI 配额触顶四档、AI 成本与两个成本缺口、Python 可用性。
-  **通知通道默认关闭**（需要你填接收地址，模板见 `observability/alertmanager/*.example`）——
-  这是刻意的，不是缺陷。口径见 [`architecture/observability.md`](architecture/observability.md)。
+  邮件通知由私有 `.env.alerts` 生成，通过运维覆盖编排启用；收件人已确定，发件配置和实际送达仍待验收。
+  P0 另补 7 条账号／磁盘／备份／投递规则和站外探测，口径见 [`architecture/observability.md`](architecture/observability.md)。
 - 本机开发默认连本机 Redis / MySQL / Nacos，本机 dev/stellar-ink-test 与测试机 test/stellar-ink-test 由不同 Nacos 地址隔离；
   四个 Java 服务默认地址统一，Compose 显式共用 profile 与 namespace。本机库与服务器库互不同步。
 - 2026-11-07：内部语料改为 kind+id 稳定分页，异常/截断不完整时禁止删除快照，写入事务化；

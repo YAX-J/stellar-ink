@@ -1,5 +1,9 @@
 # 星笺 STELLAR INK Docker 部署手册
 
+## P0 发布入口（2026-11-09，以本节为准）
+
+生产不再自动导入演示账号；先执行24_auth_version.sql，再发布Java服务，旧令牌需重新登录。Nacos认证项不再提供公开默认值。一次性管理员、age加密异地备份、邮件告警和站外探测步骤见 [P0运行手册](../../docs/architecture/production-p0.md)。运维增强使用 docker-compose.ops.yml；不要使用旧文档中的 --alertmanager.url 参数。
+
 Docker Compose 一键编排。所有 Java 服务走 `prod` profile，敏感配置统一放同目录 `.env`。
 
 Python镜像中的评测运行依赖 `tests/fixtures/eval/*.json`（题集及同名来源清单）；
@@ -38,7 +42,7 @@ Python镜像中的评测运行依赖 `tests/fixtures/eval/*.json`（题集及同
 | gateway | 8080 | 仅宿主机 `127.0.0.1`（`GATEWAY_PORT`） | 后端唯一入口；前端经 web 容器走容器内网访问，不经宿主机端口 |
 | user / content | 8101-8102 | 不暴露 | 网关经 Nacos 服务发现路由；user-service 另挂载 `./data/uploads` 存头像 |
 | nacos | 8848 / 9848 | 仅宿主机 `127.0.0.1:8848`（控制台） | 单机模式 + 内置 Derby；容器间走服务名 `nacos:8848`；**形态 B 下由宿主机提供，本编排不启动** |
-| mysql | 3306 | 仅宿主机 `127.0.0.1`（`MYSQL_BIND_PORT`） | 首次启动自动导入 `deploy/sql/01_schema.sql` + `02_init-data.sql`；**形态 B 下由宿主机提供** |
+| mysql | 3306 | 仅宿主机 `127.0.0.1`（`MYSQL_BIND_PORT`） | 首次启动初始化业务结构与 AI 迁移，不导入演示账号；**形态 B 下由宿主机提供** |
 | redis | 6379 | 仅宿主机 `127.0.0.1`（`REDIS_BIND_PORT`） | 开启 AOF：JWT 撤销列表与登录失败计数需跨重启保留；**形态 B 下由宿主机提供** |
 | qdrant | 6333 | 仅宿主机 `127.0.0.1`（`QDRANT_BIND_PORT`） | 业务暂未使用，AI 阶段（M3 起）接入；**形态 B 下由宿主机提供** |
 
@@ -72,7 +76,7 @@ cp .env.example .env
 vi .env
 ```
 
-必填四项，**留空会导致 `docker compose` 直接报错退出**（刻意设计的 fail-safe：宁可起不来，也不要默认放开）：
+以下敏感项与来源配置必填，留空会导致 `docker compose` 报错退出：
 
 | 变量 | 说明 |
 |---|---|
@@ -80,8 +84,11 @@ vi .env
 | `MYSQL_PASSWORD` | 业务专用账号（`MYSQL_USER`，默认 `stellar`）的口令 |
 | `SA_TOKEN_JWT_SECRET` | JWT 签名密钥，`openssl rand -base64 48` 生成 |
 | `GATEWAY_CORS_ORIGINS` | 前端实际域名，多个用逗号分隔；**不要填 `*`** |
+| `NACOS_PASSWORD` / `NACOS_AUTH_TOKEN` / `NACOS_AUTH_IDENTITY_KEY` / `NACOS_AUTH_IDENTITY_VALUE` | 独立口令与随机认证值，账号口令须与 Nacos 实际账号一致 |
+| `AI_INTERNAL_SECRET` / `AI_SECRET_MASTER_KEY` | Java 与 Python 共用的内部调用密钥及 AI 凭据加密主密钥 |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana 管理口令 |
 
-其余变量都有可用默认值。容器之间用服务名互访（`mysql` / `redis` / `nacos`）；
+地址与端口通常可保持默认，COS 等按需能力另有必填项，以 `.env.example` 为准。容器之间用服务名互访（`mysql` / `redis` / `nacos`）；
 只有把中间件换回宿主机进程时，才需要改 `MYSQL_HOST` / `REDIS_HOST` / `NACOS_ADDR` 为 `host.docker.internal`。
 
 > ⚠️ 别忘了把 Cloudflare Origin 证书放到 `data/certs/origin.pem` 与 `origin.key`（第五节第 1 条），否则 web 容器起不来。
@@ -100,8 +107,11 @@ selfcontained 档保留容器服务名。Python 的语料复核只通过编排�
 `mysql` 容器**首次启动**（数据卷为空）时会自动按文件名顺序执行挂载到 `/docker-entrypoint-initdb.d` 的：
 
 - `01_schema.sql` —— 建表（当前完整结构）
-- `02_init-data.sql` —— 种子内容（文章/笔记/流星/回声/友链/评论/用户）
 - `mysql/03_ai.sh` —— 按 `deploy/sql/ai-migrations.txt` 顺序执行全部 AI 迁移（10–21）
+- `24_auth_version.sql`（挂载名 `04_auth_version.sql`）—— 幂等复核账号版本列
+
+生产管理员通过 `python3 deploy/scripts/bootstrap-admin.py` 一次性创建。
+`02_init-data.sql` 只允许开发使用 `docker-compose.demo.yml` 显式导入；已有库不会自动执行上述初始化，发布前须补齐 `24_auth_version.sql`。
 
 现有数据卷不会重新运行初始化脚本。已有库补齐 AI 表可执行：
 
@@ -344,7 +354,7 @@ curl -skI --max-time 8 --resolve www.baidu.com:443:<源站IP> https://www.baidu.
 | AI 出口反代 | 已启用 | `/ai/**` 转网关 → ai-service。**必须 `proxy_buffering off` + `proxy_read_timeout 120s`**：前者漏了流式问答会被攒成一整块再吐（「逐字生成」变成转圈等到最后），后者漏了长回答会 504（用户看到「答到一半断了」）。`/ai` 不是前端 history 路由，因此没有 `$spa_navigation` 判定。**改前端接口前缀时，`stellar-ink-web/scripts/deploy-selfcheck.mjs`（在 `npm run check` 里）会核对本文件与 vite 代理是否同步** |
 | 头像上传 | 已加固 | 服务端重命名（不用客户端文件名，杜绝 `../` 与可执行后缀）、ImageIO 读魔数认格式、1MB 双拦（multipart + 业务层），Nginx `client_max_body_size 2m` 兜底；`/uploads/` 只读且由 nginx 单独转发到网关（不放静态目录，避免被长缓存规则截走） |
 | 登录防爆破 | 已启用 | user-service 按规范化用户名在 Redis 中维护 15 分钟失败窗口，连续失败 5 次锁定 15 分钟，多实例共享状态 |
-| JWT 撤销 | 已启用 | 登出或改密后，当前 JWT 摘要进入 Redis 直到自然过期；网关响应式检查，Redis 故障时返回 503 而不是放行撤销令牌。Redis 已开 AOF，重启不丢撤销记录 |
+| JWT 撤销 | 已启用 | 普通登出撤销当前令牌；改密、改角色原子递增账号版本，使全部旧会话失效。网关依赖故障返回 503。Redis 已开 AOF，但丢失撤销记录或恢复旧快照仍须轮换 JWT 密钥 |
 | Redis 业务缓存 | 已启用 | 公开文章/笔记及聚合读模型采用 30 秒至 5 分钟 TTL，写后按命名空间失效；完整用户资料、JWT 原文与持久业务明细不进 Redis |
 | 容器权限 | 已加固 | 3 个 Java 服务均 `cap_drop: ALL` + `no-new-privileges:true`。容器仍以 root 运行：日志目录是 bind mount，会覆盖镜像内的属主设置，改非 root 需同步调整 `deploy/docker/logs/` 的属主 |
 | 中间件暴露面 | **只绑回环** | MySQL / Redis / Qdrant / Nacos 与网关都只绑宿主机 `127.0.0.1`（公网与安全组均不可达），本地开发经 SSH 隧道访问（第十节）。公网入口只有一个：web 的 80/443 |
@@ -390,35 +400,13 @@ AI 阶段的 Python 服务建议再留 `512m`。
 
 ## 八、备份与恢复
 
-备份脚本：`deploy/scripts/backup.sh`（MySQL 逻辑备份 + 上传文件 + `.env`）。
+`backup.sh` 转发到 `backup-encrypted.sh`，使用 age 公钥加密整个备份包，异地 rsync 成功后才记为成功。
+须先配置 `backup.env.example` 中的公钥和异地目标，再安装 `deploy/systemd/stellar-ink-backup.*`。
+本机默认保留 7 天，目标机独立设置保留策略；备份包含 MySQL、`.env`、上传、评测报告、证书和邮件配置。
 
-```bash
-# 手动跑一次
-bash deploy/scripts/backup.sh
-
-# 顺带同步到异地（强烈建议：测试/备份机）
-BACKUP_REMOTE=ubuntu@<测试机IP>:/data/stellar-ink/backups bash deploy/scripts/backup.sh
-
-# cron（每天 03:00）
-0 3 * * * BACKUP_REMOTE=ubuntu@<测试机IP>:/data/stellar-ink/backups /bin/bash /app/stellar-ink/deploy/scripts/backup.sh >> /data/stellar-ink/backups/backup.log 2>&1
-```
-
-- 备份落在 `/data/stellar-ink/backups/<日期_时间>/`（可用 `BACKUP_ROOT` 改），默认保留 7 份；
-- **不备份** Qdrant（AI 阶段可由 MySQL 重建索引）、Nacos（prod 不 import Nacos 配置，注册表是临时数据）、
-  Redis（缓存，丢了只是所有人重新登录一次）；
-- `env.backup` 含 JWT 密钥与数据库口令，注意保管，别丢进公开位置。
-
-**恢复步骤**：
-
-```bash
-cd /app/stellar-ink/deploy/docker
-cp /data/stellar-ink/backups/<某次>/env.backup .env      # 先恢复 .env（密钥必须与库一致）
-docker compose up -d mysql && sleep 30                    # 只起 MySQL
-gunzip -c /data/stellar-ink/backups/<某次>/mysql.sql.gz | docker compose exec -T mysql \
-  mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 stellar_ink
-tar xzf /data/stellar-ink/backups/<某次>/uploads.tar.gz -C ./data    # 恢复头像
-docker compose up -d                                      # 起其余服务
-```
+恢复通过 `restore-backup.py restore` 解密校验到全新目录，自动生成新的 JWT 密钥，保留 AI 主密钥。
+只能将生成的 `.env` 用于恢复启动，不能复制原始 `env.backup`；之后导入数据库、恢复文件并重建所有 Java 服务。
+完整命令、密钥保管、COS／Qdrant／Nacos 边界与恢复验收见 [P0 运行手册](../../docs/architecture/production-p0.md)。
 
 ## 九、常见问题
 

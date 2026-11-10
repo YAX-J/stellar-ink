@@ -255,7 +255,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 - **鉴权失败的返回形态不统一，前后端都必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；
   但 GET 在网关是放行的，token 失效时读接口由服务端 `NotLoginException` 兜底，
   返回 **HTTP 200 + body code=401**。
-- **当前 JWT 可撤销**：登出与修改密码会把令牌 SHA-256 摘要写入 Redis，TTL 等于令牌剩余寿命；
+- **当前 JWT 可撤销**：普通登出把当前令牌 SHA-256 摘要写入 Redis，TTL 等于令牌剩余寿命；改密走下述账号版本失效。
   网关用 Reactive Redis 在路由前检查，已撤销返回 HTTP 401。Redis 不可用时返回 503，不得故障放行；
   登录/注册不依赖撤销列表，避免 Redis 故障时把恢复入口一并锁死。
 - **角色门槛（三档，权限累积，仅做操作开关、不做数据隔离）**：`READER 读者` ⊃ 基础读与公开互动；
@@ -266,8 +266,12 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `GET /notes/mine`、`GET /notes/review` 都是「读」但需更高角色，**必须在网关「GET 全放行」之前单独拦下**），
   角色不足返回 403；服务内用 `AuthHelper.currentRole()/requireAtLeast()` 做防御性复核。
   注册固定 READER，种子账号 stellar 为 ADMIN。
-- ⚠️ **角色变更需重新登录才生效**：`PUT /user/{id}/role` 只改库、不重签 JWT，而网关读的是 token 里的
-  `role` extra。调整角色后必须让该用户重新登录，新角色才会生效（后续可考虑实现「重新签发 token」）。
+- **账号级失效（P0）**：`user.auth_version` 写入 JWT；改密、改角色以单条 SQL 同步递增，
+  网关经内部 `/internal/auth/session` 每次查主库复核，2s 超时失败拒绝放行；不得引入旧版本缓存。
+  旧 JWT 缺少版本也需重新登录；普通登出仅撤销当前令牌。认证只读 Authorization 请求头，
+  Cookie／查询参数／表单不作为令牌来源。普通实体更新不得回写密码、角色或版本。
+  发布前执行 `24_auth_version.sql`。生产初始化、备份恢复与邮件验收见
+  [`docs/architecture/production-p0.md`](docs/architecture/production-p0.md)。
 - user 与 content 不互调；ai-service 通过独立 `stellar-ink-content-client` 读取公开语料，
   使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
@@ -512,7 +516,8 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   撤回/旧版本不得继续进入模型。内容服务不可达时 fail-closed；TTL 只控制投影新鲜度。
   `AI_CORPUS_SOURCE` 默认 `online`，空库保持空、来源失败报 503；`seed` 仅显式用于离线开发/测试，
   `AI_APP_ENV=test/prod` 禁用 seed，禁止把种子回退当线上恢复措施。
-- **数据库初始化**：Docker 新库依次执行 `01_schema.sql`、`02_init-data.sql`、`mysql/03_ai.sh`；
+- **数据库初始化**：生产 Docker 新库执行 `01_schema.sql`、`mysql/03_ai.sh`、`24_auth_version.sql`；
+  `02_init-data.sql` 仅开发通过 `docker-compose.demo.yml` 显式导入，生产管理员用一次性初始化命令创建。
   AI 迁移唯一清单为 `deploy/sql/ai-migrations.txt`（10–21、23）。已有库用
   `python deploy/scripts/migrate-ai.py`（先显式设置 `MYSQL_DB` 和凭据）补齐，不重跑种子与 03–09 的旧 ALTER。
 - **AI 能力一律写在 Python 侧（重要）**：模型调用与厂商 SDK、Prompt 与模板、结构化输出校验、

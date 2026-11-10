@@ -1,5 +1,9 @@
 # 星笺后端接口文档（Spring Cloud Alibaba 微服务）
 
+## P0 会话变更（2026-11-09）
+
+改密与角色调整成功后，该用户全部旧 JWT 立即失效（已执行中的请求除外）；普通登出只撤销当前令牌。认证只接受 Authorization 请求头。新增仅内网 GET /internal/auth/session，返回 Response<Boolean>；网关校验失败返回401，依赖故障返回503。该内部路径不配置对外路由。
+
 > 2026-11-08 来源约束增量：`/ai/qa` 与 `/ai/qa/stream` 对“只/仅根据/依据《完整标题》”限制证据范围；缺失来源返回 `refused`、空引用及零模型调用。评测清单支持 `holdout_v1/v2/v3`，当前验收用v3；有来源清单的题集在执行前校验，失败返回现有业务错误信封及可读原因，不创建新运行、不调用模型。旧v1的h005–h008与本机公开库不符会被拒绝。JSON结构不变，详见 [来源复查](../ai/source-bound-qa.md)。
 
 > 2026-11-08 AI 用量协议增量：`Usage` 增加 `modelCalls`（实际调用及价格快照）、`usageComplete` 与 `modelFingerprints`（缓存命中仍保留的生效配置指纹）；Agent 和检索评测结果增加 `usage`。字段为可选，旧响应可解析。Token 为整条业务链已知小计；完整性为 false 时不能当完整账单。详见 [用量与重复验收](../ai/accounting-and-stability.md)。
@@ -17,7 +21,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 
 环境变量：`NACOS_ADDR`（默认 127.0.0.1:8848）、`MYSQL_HOST/PORT/DB/USER/PASSWORD`、`REDIS_HOST/PORT/PASSWORD/DATABASE`、`SA_TOKEN_JWT_SECRET`。
 环境档位（`--spring.profiles.active=`）：`dev`（本机开发，默认）/ `test`（测试机：应用与中间件**同机**，地址默认全 `127.0.0.1`，`SA_TOKEN_JWT_SECRET` 与 `MYSQL_PASSWORD` **必填**；⚠️ 无默认值不等于 fail-fast，见 `AGENTS.md` §5「安全」）/ `prod`（生产）。
-种子账号：`stellar / stellar123`。
+开发演示账号：`stellar / stellar123`，只允许开发显式导入种子使用；生产通过 `bootstrap-admin.py` 创建独立管理员。
 
 ## 服务与端口
 
@@ -32,7 +36,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 ## 鉴权（Sa-Token，网关统一）
 
 - 登录返回 `tokenName: Authorization` 与 `tokenValue`；后续请求带 `Authorization: <tokenValue>`（无 Bearer 前缀）
-- 登出与修改密码会把当前 JWT 的 SHA-256 摘要写入 Redis 撤销列表，网关在令牌自然过期前拒绝它；Redis 不可用时会话校验返回 HTTP 503，不故障放行
+- 普通登出把当前 JWT 摘要写入 Redis 撤销列表；改密与改角色递增账号版本，使全部旧 JWT 失效。Redis 或账号版本校验不可用时返回 HTTP 503，不故障放行
 - 放行：GET/OPTIONS、`POST /auth/login`、`POST /auth/register`、公开写接口（`POST /echos`、`POST /links`、`POST /posts/{id}/glow`、`POST /posts/{id}/viewed`、`POST /notes/{id}/viewed`）
 - 其余写请求需有效 token，失败返回 `{"code":401,...}`（网关同时设置真实 HTTP 状态 401/403）
 - **鉴权失败返回形态不一致，前端必须 code/status 联合判断**：网关层拦截是 HTTP 401/403；而 GET 请求在网关是放行的，token 失效时由服务端 `NotLoginException` 兜底，返回的是 **HTTP 200 + `code:401`**
@@ -49,7 +53,7 @@ deploy\scripts\start-all.bat        # 一键：user/content 两个业务服务 +
 - 网关按角色做门槛：文章/笔记/流星写操作需 `AUTHOR`；`PUT /links/{id}/status`、`PUT /user/{id}/role`、`GET /user/list` 需 `ADMIN`
 - 角色不足返回 `{"code":403,...}`；文章与流星按 `user_id` 记录作者归属，AUTHOR 只能维护自己的内容，ADMIN 可管理全部内容
 - **技术笔记归属更严格**：只有作者本人能改/删自己的笔记，**ADMIN 也不能操作他人笔记**（`笔记比文章严格`）
-- ⚠️ **角色变更需要重新登录才生效**：`PUT /user/{id}/role` 只更新数据库，不会重签 JWT；网关读的是 token 里的 `role` extra，所以被调整的用户必须重新登录，新角色才会生效
+- **角色变更立即使旧会话失效**：`PUT /user/{id}/role` 同时更新角色与账号版本；用户重新登录获取新角色，旧令牌不能继续使用原权限。
 
 ### 作者申请（读者 → 作者）
 
@@ -1348,7 +1352,7 @@ Python 使用投影语料前通过同一个清单接口实时复核 `(kind,id,do
 ## 数据库
 
 共享库模式：一个 `stellar_ink` 库；user-service 负责 `user` 表，content-service 负责内容领域各表（Druid 连接池，dev 直连本机 MySQL）。
-初始化：`deploy/sql/01_schema.sql` + `02_init-data.sql`（幂等）。
+生产初始化：`deploy/sql/01_schema.sql` + AI 迁移清单 + `24_auth_version.sql`；`02_init-data.sql` 仅开发演示使用。已有库先执行幂等的 `24_auth_version.sql` 再发布新服务。
 已有数据库升级脚本（按需各执行一次）：`03_multi-author.sql`（多作者归属）、`04_post_views_glow.sql`（浏览量 `post.view_count` + 点赞明细 `post_glow` + 浏览闸门 `post_view`）、`05_user_role.sql`（补齐 `user.role`）、`06_note.sql`（技术笔记 `note` 表）、`07_role_apply.sql`（`user.role_applied_at` / `role_apply_note`）、`08_user_avatar.sql`（`user.avatar_url` 头像图片路径）、`09_comment.sql`（文章评论 `post_comment`）。拆库：改各服务 `MYSQL_DB` 环境变量。
 
 > `04_post_views_glow.sql` 最后一段会用 `post_glow` 明细重算 `post.glow`，升级前的历史点赞没有 user_id 明细，重算后会计数归零——需要保留旧计数时跳过该段。
@@ -1365,7 +1369,7 @@ dev 环境控制台打印 SQL（mybatis-plus log-impl）。
 - 搜索为 LIKE；已做开放注册（`POST /auth/register`，注册即 READER）
 - 未做通用附件上传/多租户数据隔离；`echo`/`link` 仍无 `user_id`（友链为全局数据）
 - 技术笔记：`/tags` 与 `/stats` **尚未合并**笔记的标签计数（星图页的「标签星座」目前只反映文章）；笔记无点赞、无笔记间反向链接、无全文索引；`note` 已预留 `source_post_id` 概念但**一期未落库**（笔记 ↔ 文章互链留待二期）
-- 角色变更需重新登录才生效（见上「角色模型」）；作者申请同样如此（通过后用户要重新登录）
+- 角色变更（含作者申请审核）使旧会话立即失效，用户需要重新登录获取新角色；已执行中的请求不会被追溯取消。
 - 点赞不支持取消（只有「已赞」状态，没有取消接口）；浏览量匿名每次计数，无 IP 维度去重
 - `GET /health` 经网关不可达（网关无 common-core 依赖、路由未声明），只能直连 :8101/:8102
 - 头像没有缩略图与历史版本；`local` 模式下文件在 user-service 本地磁盘，多实例部署应切换到
