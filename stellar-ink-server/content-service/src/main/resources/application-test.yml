@@ -142,6 +142,8 @@ management:
 
 sa-token:
   token-name: Authorization
+  is-read-cookie: false
+  is-read-body: false
   token-style: uuid
   is-log: false
   # JWT 密钥（必须与网关及其它服务一致）；无默认值：测试环境不许用仓库里公开的那个串

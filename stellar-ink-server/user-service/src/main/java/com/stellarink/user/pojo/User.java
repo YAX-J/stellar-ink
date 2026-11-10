@@ -3,6 +3,8 @@ package com.stellarink.user.pojo;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -20,6 +22,7 @@ public class User {
     private String username;
 
     /** BCrypt 哈希 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
     private String password;
 
     /** 笔名 */
@@ -38,7 +41,12 @@ public class User {
     private Integer dailyGoal;
 
     /** 角色：READER 读者 / AUTHOR 作者 / ADMIN 站长 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
     private String role;
+
+    /** 仅专用原子 SQL 可以推进；普通资料更新不能回写旧版本或旧权限。 */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private Long authVersion = 0L;
 
     /** 申请成为作者的时间；非空即「有一条待审核申请」，审批或撤回后清空 */
     private LocalDateTime roleAppliedAt;

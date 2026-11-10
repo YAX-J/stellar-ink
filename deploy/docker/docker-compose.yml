@@ -58,7 +58,7 @@ x-common-env: &common-env
   # Nacos 与 Redis 都在本编排内，直接用服务名访问（改回宿主机服务时填 host.docker.internal）
   NACOS_ADDR: ${NACOS_ADDR:-nacos:8848}
   NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
-  NACOS_PASSWORD: ${NACOS_PASSWORD:-nacos}
+  NACOS_PASSWORD: ${NACOS_PASSWORD:?请设置独立的 Nacos 口令}
   SA_TOKEN_JWT_SECRET: ${SA_TOKEN_JWT_SECRET:?请在 deploy/docker/.env 中设置 SA_TOKEN_JWT_SECRET}
   REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
@@ -131,9 +131,9 @@ services:
       MODE: standalone
       # 单机模式用内置 Derby，无需外部数据库；数据落在 nacos-data 卷
       NACOS_AUTH_ENABLE: "true"
-      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-SecretKey012345678901234567890123456789012345678901234567890123456789}
-      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-serverIdentity}
-      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-security}
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?请设置随机 Base64 认证密钥}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:?请设置 Nacos 身份键}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?请设置随机 Nacos 身份值}
       JVM_XMS: 256m
       JVM_XMX: 512m
     volumes:
@@ -169,10 +169,10 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       # 首次启动（数据卷为空时）自动按文件名顺序执行，建库由 MYSQL_DATABASE 完成。
-      # ⚠️ 只挂 01/02：01_schema.sql 已是「当前完整表结构」，03-09 是给早期库做增量升级的，
+      # ⚠️ 主编排只初始化结构，不导入演示账号；01_schema.sql 已是「当前完整表结构」，03-09 是给早期库做增量升级的，
       #    在全新库上重复执行会报列已存在。
       - ../sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ../sql/02_init-data.sql:/docker-entrypoint-initdb.d/02_init-data.sql:ro
+      - ../sql/24_auth_version.sql:/docker-entrypoint-initdb.d/04_auth_version.sql:ro
       - ./mysql/03_ai.sh:/docker-entrypoint-initdb.d/03_ai.sh:ro
       - ../sql:/stellar-sql:ro
     healthcheck:
@@ -482,8 +482,7 @@ services:
       - --storage.tsdb.retention.size=1GB
       # 允许 POST /-/reload 热加载配置与规则（改完规则不必重建容器）
       - --web.enable-lifecycle
-      # 通知通道：启用 Alertmanager 后放开下面这行（见 observability/alertmanager/*.example）
-      # - --alertmanager.url=http://alertmanager:9093
+      # ops 覆盖编排使用 prometheus-ops.yml 中的 alerting.alertmanagers。
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/rules:/etc/prometheus/rules:ro
@@ -531,21 +530,4 @@ services:
     mem_limit: 256m
     logging: *default-logging
 
-  # ---- 通知通道（默认关闭，启用步骤见 observability/alertmanager/alertmanager.yml.example）----
-  # 为什么默认关闭：配置里的接收地址必须由你填，而 Alertmanager **在配置校验失败时
-  # 会拒绝启动**（url 为空即失败）—— 挂成默认服务的话，没填地址的人会先遇到
-  # 「整栈里有一个容器起不来」。所以在文档里留一步，也不留一个配错就让部署失败的文件。
-  # 启用时同时放开上面 prometheus 的 --alertmanager.url 注释行。
-  #
-  # alertmanager:
-  #   image: prom/alertmanager:v0.27.0
-  #   container_name: stellar-ink-alertmanager
-  #   restart: unless-stopped
-  #   command:
-  #     - --config.file=/etc/alertmanager/alertmanager.yml
-  #     - --storage.path=/alertmanager
-  #   volumes:
-  #     - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-  #     - ./data/alertmanager:/alertmanager
-  #   mem_limit: 64m
-  #   logging: *default-logging
+  # 邮件通知与宿主机采集通过 docker-compose.ops.yml 启用，见 P0 运行手册。

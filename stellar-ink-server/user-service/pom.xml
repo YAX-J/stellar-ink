@@ -13,6 +13,11 @@
     <description>用户服务 - 提供登录认证、站长资料（身份舱/星籍）等功能</description>
 
     <dependencies>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Spring Boot -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

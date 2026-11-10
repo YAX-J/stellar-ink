@@ -60,6 +60,8 @@ spring:
       test-on-return: false
 sa-token:
   token-name: Authorization
+  is-read-cookie: false
+  is-read-body: false
   token-style: uuid
   is-log: false
   jwt-secret-key: ${SA_TOKEN_JWT_SECRET}

@@ -73,6 +73,8 @@ knife4j:
 sa-token:
   # 与网关、user-service 保持一致；jwt-secret-key 不在这里，只从环境变量注入
   token-name: Authorization
+  is-read-cookie: false
+  is-read-body: false
   token-style: uuid
   is-log: false
   timeout: 604800        # 7 天（秒）

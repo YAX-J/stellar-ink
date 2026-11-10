@@ -5,6 +5,7 @@ import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.stellarink.common.auth.AuthHelper;
+import com.stellarink.sharedmodel.auth.AuthVersion;
 import com.stellarink.common.redis.RedisCache;
 import com.stellarink.common.redis.RedisUtils;
 import com.stellarink.sharedmodel.dto.user.ChangePasswordDTO;
@@ -99,7 +100,8 @@ public class UserServiceImpl implements UserService {
         }
         clearFailures(attemptKey);
         // Sa-Token JWT 无状态登录：token 由网关与各服务用相同密钥验签；角色一并写入 JWT 供门槛校验
-        StpUtil.login(user.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, roleOf(user)));
+        StpUtil.login(user.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, roleOf(user))
+                .setExtra(AuthVersion.JWT_KEY, user.getAuthVersion()).setExtra("sessionId", java.util.UUID.randomUUID().toString()));
         cacheUser(user);
         log.info("登录成功 userId={} username={}", user.getId(), user.getUsername());
         return toVO(user);
@@ -131,7 +133,8 @@ public class UserServiceImpl implements UserService {
         }
         log.info("注册新账号 userId={} username={}", entity.getId(), entity.getUsername());
         // 注册即登录：与 login 一致签发 JWT（新账号固定 READER）
-        StpUtil.login(entity.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, Role.READER.name()));
+        StpUtil.login(entity.getId(), SaLoginParameter.create().setExtra(Role.JWT_KEY, Role.READER.name())
+                .setExtra(AuthVersion.JWT_KEY, entity.getAuthVersion()).setExtra("sessionId", java.util.UUID.randomUUID().toString()));
         cacheUser(entity);
         return toVO(entity);
     }
@@ -204,7 +207,9 @@ public class UserServiceImpl implements UserService {
          * 这样「点通过」与「直接在成员列表里改角色」两条路径不会留下自相矛盾的待审状态。 */
         user.setRoleAppliedAt(null);
         user.setRoleApplyNote(null);
-        userMapper.updateById(user);
+        if (userMapper.changeRoleAndInvalidate(targetUserId, target.name()) != 1) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在。");
+        }
         evictUserCache(targetUserId, false);
         log.info("调整角色 operatorId={} targetUserId={} role={}（同时清空待审申请）",
                 operatorId, targetUserId, target.name());
@@ -294,9 +299,11 @@ public class UserServiceImpl implements UserService {
         if (passwordEncoder.matches(dto.getNewPassword(), user.getPassword())) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "新密码不能与旧密码相同。");
         }
-        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
-        userMapper.updateById(user);
-        tokenRevocationService.revokeCurrentToken();
+        // 密码与版本在一条 SQL 中提交，Redis 故障不再把已完成的改密显示成失败。
+        if (userMapper.changePasswordAndInvalidate(userId, user.getPassword(),
+                passwordEncoder.encode(dto.getNewPassword())) != 1) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号已发生变更，请重新登录后再试。");
+        }
         log.info("修改密码成功 userId={}", userId);
     }
 

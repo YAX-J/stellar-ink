@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS `user` (
     `avatar_url`  VARCHAR(255)                          COMMENT '头像图片相对路径（/uploads/avatars/x.png），空则用底字',
     `daily_goal`  INT          DEFAULT 500             COMMENT '每日星尘目标（字）',
     `role`        VARCHAR(20)  NOT NULL DEFAULT 'READER' COMMENT '角色：READER 读者 / AUTHOR 作者 / ADMIN 站长',
+    `auth_version` BIGINT NOT NULL DEFAULT 0 COMMENT '账号令牌版本',
     `role_applied_at` DATETIME                          COMMENT '申请成为作者的时间；非空即有待审核申请',
     `role_apply_note` VARCHAR(200)                      COMMENT '申请理由（供站长审核参考）',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '注册星历',

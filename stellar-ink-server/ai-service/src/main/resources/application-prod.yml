@@ -101,6 +101,8 @@ stellar:
         inflight-ttl-seconds: 300
 sa-token:
   token-name: Authorization
+  is-read-cookie: false
+  is-read-body: false
   token-style: uuid
   is-log: false
   # 必须由环境变量提供，与网关/其它服务保持一致。

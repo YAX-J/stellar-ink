@@ -113,6 +113,8 @@ mybatis-plus:
 # Sa-Token：服务内防御性复核（主门槛在网关；M1 才接入 /ai/** 路由）
 sa-token:
   token-name: Authorization
+  is-read-cookie: false
+  is-read-body: false
   token-style: uuid
   is-log: false
   # JWT 密钥（必须与网关一致）

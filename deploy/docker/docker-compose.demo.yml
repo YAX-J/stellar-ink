@@ -1,0 +1,5 @@
+# 仅用于全新开发数据库。生产禁止加载此覆盖文件。
+services:
+  mysql:
+    volumes:
+      - ../sql/02_init-data.sql:/docker-entrypoint-initdb.d/02_init-data.sql:ro
