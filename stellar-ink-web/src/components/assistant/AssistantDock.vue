@@ -134,7 +134,7 @@ const {
  * 为什么它不影响生产：全站只有 `App.vue` 一处使用本组件、且没有绑 `ref`，也从不传这个 prop，
  * 所以它恒为 `null`、一个分支都不会走。
  */
-const props = defineProps({ debugState: { type: Object, default: null } })
+const props = defineProps({ debugState: { type: Object, default: null }, initialOpen: { type: Boolean, default: false } })
 
 const open = ref(false)
 /** 调试开关（见上面 `debugState` 的说明）：只读一次，默认 null（运行时一个分支都不走） */
@@ -438,7 +438,8 @@ watch(open, (value) => {
 })
 
 onMounted(() => {
-  loadMyModels()
+  if (props.initialOpen) open.value = true
+  else loadMyModels()
   try {
     const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || 'null')
     if (Array.isArray(saved)) {
@@ -651,7 +652,7 @@ function clearAll() {
     <!-- 入口：右下角圆形图标。不占一级导航（那 6 项是内容维度），也不留文字挡内容 -->
     <button
       v-if="!open"
-      class="dock-bubble" type="button" aria-label="打开星笺助手" title="星笺助手"
+      class="dock-bubble assistant-bubble" type="button" aria-label="打开星笺助手" title="星笺助手"
       @click="open = true"
     >
       <span aria-hidden="true">✦</span>
@@ -961,13 +962,6 @@ function clearAll() {
 .dock{position:fixed; right:22px; bottom:22px; z-index:70; display:flex; flex-direction:column;
   align-items:flex-end}
 /* 收起态：44px 圆形图标（毛玻璃与顶栏下拉同族） */
-.dock-bubble{width:44px; height:44px; display:grid; place-items:center; cursor:pointer; font:inherit;
-  padding:0; border:1px solid var(--line); border-radius:var(--r-pill);
-  background:color-mix(in srgb, var(--bg-2) 86%, transparent); backdrop-filter:blur(18px);
-  color:var(--primary); font-size:17px;
-  box-shadow:0 12px 34px color-mix(in srgb, var(--bg) 70%, transparent);
-  transition:transform .3s var(--ease-spring), border-color .25s var(--ease-standard)}
-.dock-bubble:hover{transform:translateY(-3px); border-color:var(--primary)}
 /* 展开态：与 Toast / 顶栏下拉同一套浮件语言（半透明 + 毛玻璃 + --r-md）。 */
 /* 展开态：与 Toast / 顶栏下拉同一套浮件语言（半透明 + 毛玻璃 + --r-md）。
    ⚠️ 面板是 `overflow:hidden`，所以**任何 absolute 的后代只要跑出面板就没了**：

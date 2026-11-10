@@ -8,6 +8,8 @@ import { fmt } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
 import { usePageMeta } from '@/composables/usePageMeta'
+import { articleData } from '@/utils/seo'
+import { useAuthorStore } from '@/stores/authors'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
 
@@ -16,6 +18,7 @@ const router = useRouter()
 const noteStore = useNoteStore()
 const auth = useAuthStore()
 const settings = useSettingsStore()
+const authorStore = useAuthorStore()
 
 const note = computed(() => noteStore.byId(route.params.id))
 const rendered = computed(() => parseMarkdown(note.value?.content || ''))
@@ -29,6 +32,8 @@ usePageMeta(() => ({
   description: note.value?.excerpt || note.value?.content || '',
   type: 'article',
   url: `${location.origin}/note/${note.value?.id || route.params.id}`,
+  noindex: note.value?.visibility !== 'PUBLIC' || Number(note.value?.status) !== 1,
+  structuredData: articleData(note.value, 'note', authorStore.find(note.value?.userId)?.nickname),
 }))
 
 const isOwner = computed(() => auth.isLoggedIn && Number(auth.user?.id) === Number(note.value?.userId))

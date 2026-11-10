@@ -53,11 +53,17 @@ router.beforeEach((to) => {
    * 角色门槛的主判断始终在网关与服务端，前端只决定「给不给看这个入口」。 */
 })
 
-router.afterEach((to) => {
+router.afterEach((to, from, failure) => {
+  if (failure) return
   document.title = to.meta.title ? `星笺 · ${to.meta.title}` : '星笺 · STELLAR INK'
   /* 先把 head 里的标题/摘要/canonical 恢复成站点缺省值，
    * 具体页面再在自己的 setup 里用 usePageMeta 覆盖（否则会残留上一页的分享卡片） */
-  resetPageMeta()
+  resetPageMeta({
+    title: to.name === 'home' ? '' : to.meta.title,
+    url: `${location.origin}${to.path}`,
+    noindex: !!(to.meta.requiresAuth || to.meta.requiresRole || to.meta.layout === 'auth'
+      || ['search', 'not-found', 'read', 'note'].includes(to.name)),
+  })
 })
 
 export default router

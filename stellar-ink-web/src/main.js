@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './router'
 import { useAuthStore } from '@/stores/auth'
 import { on, SESSION_EXPIRED } from '@/utils/bus'
+import { navigation } from '@/stores/navigation'
 import './styles/fonts.css'
 import './styles/tokens/variables.css'
 import './styles/base.css'
@@ -15,6 +16,11 @@ app.use(createPinia()).use(router)
 /* 首屏懒加载或导航守卫失败时显式记录，避免只留下空的 RouterView。 */
 router.onError((error, to) => {
   console.error('[router] 导航失败 ->', to && to.fullPath, error)
+  navigation.path = to?.fullPath || window.location.pathname
+  navigation.error = true
+})
+router.afterEach((to, from, failure) => {
+  if (!failure) navigation.error = false
 })
 
 /* 会话失效统一兜底：无论从哪个页面发现 token 过期（含 GET 接口返回的 code=401），

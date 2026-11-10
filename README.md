@@ -2,6 +2,9 @@
 
 星笺是一个将文章比作星辰的夜间写作博客。前端以深色星空、缓慢和诗意为视觉基调；后端使用 Spring Cloud Alibaba，按网关、身份、内容和 AI 划分运行边界，Python 负责 AI 编排。
 
+质量检查由 [GitHub Actions](.github/workflows/quality.yml) 运行：前端自检与构建、Java测试与打包、Python检查与离线测试。
+本机首发优化结果及待验收项见 [P1记录](docs/architecture/launch-p1.md)。
+
 ## 当前架构
 
 ```text

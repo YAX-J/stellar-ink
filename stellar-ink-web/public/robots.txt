@@ -9,6 +9,8 @@ Disallow: /account
 Disallow: /write
 Disallow: /notes/mine
 Disallow: /ai-lab
+Disallow: /note/edit
+Disallow: /search
 
 # 测试机用 IP 直连时这份文件同样会被访问到，Sitemap 指向生产域名会白白浪费抓取预算；
 # 换域名部署时记得同步改这里（或只在生产镜像里保留）。

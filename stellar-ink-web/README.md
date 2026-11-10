@@ -29,6 +29,9 @@ npm run preview
 
 构建结果写入 `dist/`，该目录不入库。
 
+完整验证运行 `npm run check`：包含 P1 搜索／SEO回归、现有AI自检、生产构建及入口预算
+（150 KiB，gzip60 KiB）。助手面板仅首次点击时加载；SEO与故障恢复边界见 [P1验收](../docs/architecture/launch-p1.md)。
+
 ## 源码结构
 
 | 目录 | 职责 |

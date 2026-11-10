@@ -1,0 +1,72 @@
+name: 质量检查
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, test, 'feature/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: 前端自检与构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: stellar-ink-web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: stellar-ink-web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  java:
+    name: Java 测试与打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: mvn -B -ntp -f stellar-ink-server/pom.xml package
+
+  python:
+    name: Python 与部署脚本回归
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: stellar-ink-ai/uv.lock
+      - run: uv sync --frozen --project stellar-ink-ai --python 3.11
+      - run: uv run ruff check .
+        working-directory: stellar-ink-ai
+      - run: uv run mypy
+        working-directory: stellar-ink-ai
+      - run: uv run pytest
+        working-directory: stellar-ink-ai
+      - run: uv run --project stellar-ink-ai python deploy/scripts/test-production-p0.py
+      - run: uv run --project stellar-ink-ai python deploy/scripts/test-backup-pull.py
+      - run: bash -n deploy/scripts/backup.sh deploy/scripts/backup-encrypted.sh

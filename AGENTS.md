@@ -170,6 +170,9 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   `:focus-visible` 统一焦点环；`prefers-reduced-motion: reduce` 时关掉全部动画与过渡（星野/漂流瓶都要停）。
 
 ### 错误处理与提示
+- **P1 基线**：助手入口只加载 `AssistantEntry`，首次点击再 import 面板；不得在 App 恢复静态引入面板。
+  搜索文章／笔记结果独立处理失败，不能用整体失败覆盖另一类已成功结果；新增搜索要中止旧请求并隔离晚到结果。
+  `npm run check` 包含入口150 KiB／gzip60 KiB预算。SEO 只为公开已发布内容生成 JSON-LD，私有／草稿不得生成；详见 `docs/architecture/launch-p1.md`。
 - **会话失效判定必须 code/status 联合**：用 `api/client.js` 导出的 `isAuthError()`，它判定
   `code === 401 || status === 401`。原因见上：网关放行 GET，读接口的未登录由服务端兜底返回
   **HTTP 200 + code 401**，只看 `status` 会漏判（曾导致 token 过期后页面只显示「读取失败」）。

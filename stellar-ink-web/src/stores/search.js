@@ -5,12 +5,15 @@ import { normalizeNote } from '@/stores/notes'
 import { useAuthorStore } from '@/stores/authors'
 
 const PAGE_SIZE = 12
+const controllers = new WeakMap()
 
 function pageData(page, normalize, fallbackPage) {
-  const records = page?.records || page?.list || []
-  const items = records.map((item) => normalize(item))
+  const records = page?.records ?? page?.list
+  if (!Array.isArray(records)) throw new Error('搜索结果格式不完整，请重试')
+  const items = records.map((item) => normalize(item)).filter(Boolean)
   const current = Number(page?.current ?? fallbackPage)
   const total = Number(page?.total ?? items.length)
+  if (!Number.isInteger(current) || current < 1 || !Number.isFinite(total) || total < 0) throw new Error('搜索分页信息无效，请重试')
   return { items, current, total, hasMore: current * PAGE_SIZE < total && items.length > 0 }
 }
 
@@ -27,12 +30,21 @@ export const useSearchStore = defineStore('search', {
     noteHasMore: false,
     loading: false,
     loadingMore: '',
-    error: '',
+    postError: '',
+    noteError: '',
+    postTraceId: '',
+    noteTraceId: '',
     searched: false,
     sequence: 0,
   }),
+  getters: {
+    error: (state) => [state.postError, state.noteError].filter(Boolean).join('；'),
+  },
   actions: {
     reset() {
+      this.sequence++
+      controllers.get(this)?.abort()
+      controllers.delete(this)
       this.keyword = ''
       this.posts = []
       this.notes = []
@@ -44,52 +56,47 @@ export const useSearchStore = defineStore('search', {
       this.noteHasMore = false
       this.loading = false
       this.loadingMore = ''
-      this.error = ''
+      this.postError = ''
+      this.noteError = ''
+      this.postTraceId = ''
+      this.noteTraceId = ''
       this.searched = false
     },
 
     async search(keyword) {
       const normalizedKeyword = String(keyword || '').trim()
-      const sequence = ++this.sequence
-      if (!normalizedKeyword) {
-        this.reset()
-        return
-      }
+      this.reset()
+      const sequence = this.sequence
+      if (!normalizedKeyword) return
+      const controller = new AbortController()
+      controllers.set(this, controller)
       this.keyword = normalizedKeyword
-      this.posts = []
-      this.notes = []
-      this.postPage = 0
-      this.notePage = 0
-      this.postTotal = 0
-      this.noteTotal = 0
-      this.postHasMore = false
-      this.noteHasMore = false
-      this.loadingMore = ''
       this.loading = true
-      this.error = ''
       this.searched = true
       try {
-        const [postPage, notePage] = await Promise.all([
-          request('/search', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true }),
-          request('/search/notes', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true }),
+        const results = await Promise.allSettled([
+          request('/search', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true, signal: controller.signal }).then((page) => pageData(page, normalizePost, 1)),
+          request('/search/notes', { query: { keyword: normalizedKeyword, page: 1, size: PAGE_SIZE }, silent: true, signal: controller.signal }).then((page) => pageData(page, normalizeNote, 1)),
         ])
         if (sequence !== this.sequence) return
-        const postData = pageData(postPage, normalizePost, 1)
-        const noteData = pageData(notePage, normalizeNote, 1)
-        this.posts = postData.items
-        this.notes = noteData.items
-        this.postPage = postData.current
-        this.notePage = noteData.current
-        this.postTotal = postData.total
-        this.noteTotal = noteData.total
-        this.postHasMore = postData.hasMore
-        this.noteHasMore = noteData.hasMore
-        await useAuthorStore().ensureAuthors([
+        for (const [index, type] of ['post', 'note'].entries()) {
+          const result = results[index]
+          if (result.status === 'rejected') {
+            this[`${type}Error`] = result.reason.message || '暂时无法读取'
+            this[`${type}TraceId`] = result.reason.traceId || ''
+            continue
+          }
+          const data = result.value
+          this[type === 'post' ? 'posts' : 'notes'] = data.items
+          this[`${type}Page`] = data.current
+          this[`${type}Total`] = data.total
+          this[`${type}HasMore`] = data.hasMore
+        }
+        // 作者信息是辅助数据，不让它拖住已返回的搜索结果。
+        useAuthorStore().ensureAuthors([
           ...this.posts.map((post) => post.userId),
           ...this.notes.map((note) => note.userId),
         ]).catch(() => {})
-      } catch (error) {
-        if (sequence === this.sequence) this.error = error.message
       } finally {
         if (sequence === this.sequence) this.loading = false
       }
@@ -100,7 +107,8 @@ export const useSearchStore = defineStore('search', {
       const isPost = type === 'post'
       if (isPost ? !this.postHasMore : !this.noteHasMore) return
       this.loadingMore = type
-      this.error = ''
+      this[`${type}Error`] = ''
+      this[`${type}TraceId`] = ''
       const sequence = this.sequence
       const keyword = this.keyword
       try {
@@ -108,6 +116,7 @@ export const useSearchStore = defineStore('search', {
         const page = await request(isPost ? '/search' : '/search/notes', {
           query: { keyword, page: nextPage, size: PAGE_SIZE },
           silent: true,
+          signal: controllers.get(this)?.signal,
         })
         if (sequence !== this.sequence || keyword !== this.keyword) return
         const data = pageData(page, isPost ? normalizePost : normalizeNote, nextPage)
@@ -123,9 +132,12 @@ export const useSearchStore = defineStore('search', {
           this.noteTotal = data.total
           this.noteHasMore = this.notes.length < data.total && data.items.length > 0
         }
-        await useAuthorStore().ensureAuthors(data.items.map((item) => item.userId)).catch(() => {})
+        useAuthorStore().ensureAuthors(data.items.map((item) => item.userId)).catch(() => {})
       } catch (error) {
-        if (sequence === this.sequence && keyword === this.keyword) this.error = error.message
+        if (sequence === this.sequence && keyword === this.keyword) {
+          this[`${type}Error`] = error.message
+          this[`${type}TraceId`] = error.traceId || ''
+        }
       } finally {
         if (sequence === this.sequence && keyword === this.keyword) this.loadingMore = ''
       }

@@ -14,6 +14,7 @@ import { fmt, readMinutes } from '@/utils/format'
 import { parseMarkdown } from '@/utils/markdown'
 import { emit, TOAST } from '@/utils/bus'
 import { usePageMeta } from '@/composables/usePageMeta'
+import { articleData } from '@/utils/seo'
 import AuthorBadge from '@/components/common/AuthorBadge.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import MarkdownBody from '@/components/common/MarkdownBody.vue'
@@ -42,6 +43,8 @@ usePageMeta(() => ({
   description: post.value?.excerpt || post.value?.content || '',
   type: 'article',
   url: `${location.origin}/read/${post.value?.id || route.params.id}`,
+  noindex: Number(post.value?.status) !== 1,
+  structuredData: articleData(post.value, 'post', authorStore.find(post.value?.userId)?.nickname),
 }))
 
 const canEdit = computed(() => auth.isAdmin || (

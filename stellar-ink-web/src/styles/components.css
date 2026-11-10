@@ -89,3 +89,11 @@ input[type=range]{width:100%; accent-color:var(--primary); cursor:pointer}
 .foot{margin-top:90px; padding:30px 0 10px; border-top:1px solid var(--line);
   display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;
   font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); letter-spacing:.1em}
+/* 助手未加载与已收起时共用入口样式，维持按需加载前后的尺寸与主题一致。 */
+.assistant-bubble{width:44px; height:44px; display:grid; place-items:center; cursor:pointer; font:inherit;
+  padding:0; border:1px solid var(--line); border-radius:var(--r-pill);
+  background:color-mix(in srgb, var(--bg-2) 86%, transparent); backdrop-filter:blur(18px);
+  color:var(--primary); font-size:17px; box-shadow:0 12px 34px color-mix(in srgb, var(--bg) 70%, transparent);
+  transition:transform .3s var(--ease-spring), border-color .25s var(--ease-standard)}
+.assistant-bubble:hover{transform:translateY(-3px); border-color:var(--primary)}
+.assistant-bubble:disabled{opacity:.55; cursor:wait}

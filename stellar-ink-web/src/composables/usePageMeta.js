@@ -13,6 +13,8 @@
  * usePageMeta 拿到具体标题后会覆盖成 `标题 · 星笺`；两者顺序是 afterEach → 组件 setup。
  */
 import { watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { canonicalUrl } from '@/utils/seo'
 
 const SITE_NAME = '星笺 · STELLAR INK'
 const HOME_TITLE = `${SITE_NAME} — 把思绪挂成星图`
@@ -55,7 +57,7 @@ export function clip(text, max = MAX_DESCRIPTION) {
 function apply(meta = {}, { setTitle = true } = {}) {
   const title = meta.title ? `${meta.title} · ${SITE_NAME}` : HOME_TITLE
   const description = clip(meta.description || DEFAULT_DESCRIPTION)
-  const url = meta.url || `${location.origin}${location.pathname}`
+  const url = canonicalUrl(meta.url, location.origin, location.pathname)
 
   /* 标题只有页面自己知道时才算「元信息」：路由切换的缺省标题由 router.afterEach 写，
    * 这里不能覆盖 —— 否则 reset 会把 `星笺 · 深读` 抹回首页标题。 */
@@ -67,13 +69,26 @@ function apply(meta = {}, { setTitle = true } = {}) {
   ensureMeta('property', 'og:url').setAttribute('content', url)
   ensureMeta('property', 'og:site_name').setAttribute('content', SITE_NAME)
   ensureMeta('name', 'twitter:card').setAttribute('content', 'summary')
+  ensureMeta('name', 'robots').setAttribute('content', meta.noindex ? 'noindex, nofollow' : 'index, follow')
   ensureCanonical().setAttribute('href', url)
+  let schema = document.head.querySelector('script[data-stellar-schema]')
+  if (meta.structuredData && !meta.noindex) {
+    if (!schema) {
+      schema = document.createElement('script')
+      schema.setAttribute('type', 'application/ld+json')
+      schema.setAttribute('data-stellar-schema', '')
+      document.head.appendChild(schema)
+    }
+    schema.textContent = JSON.stringify({ ...meta.structuredData, url, mainEntityOfPage: { '@type': 'WebPage', '@id': url } }).replace(/</g, '\\u003c')
+  } else {
+    schema?.remove()
+  }
 }
 
 /** 路由切换时回到站点缺省值；页面随后可以覆盖（标题留给 router.afterEach） */
-export function resetPageMeta() {
+export function resetPageMeta(meta = {}) {
   if (typeof document === 'undefined') return
-  apply({}, { setTitle: false })
+  apply(meta, { setTitle: false })
 }
 
 /**
@@ -85,5 +100,6 @@ export function resetPageMeta() {
 export function usePageMeta(source) {
   if (typeof document === 'undefined') return
   const read = typeof source === 'function' ? source : () => source
-  watch(read, (meta) => apply(meta || {}), { immediate: true, deep: true })
+  const route = useRoute()
+  watch(() => [read(), route?.fullPath], ([meta]) => apply(meta || {}), { immediate: true, deep: true })
 }

@@ -45,7 +45,7 @@ watch(() => route.query.q, (value) => {
   <section class="page page-wide">
     <SectionHead
       title="寻星" kicker="DEEP SPACE SEARCH · 穿过标题与正文"
-      :more="searchStore.searched && !searchStore.loading ? `${total} 条回声` : '文章与公开笔记'"
+      :more="searchStore.searched && !searchStore.loading ? `${searchStore.error ? '部分结果 · ' : ''}${total} 条回声` : '文章与公开笔记'"
     />
 
     <form class="search-bar reveal" style="--d:.06s" @submit.prevent="submit">
@@ -54,23 +54,25 @@ watch(() => route.query.q, (value) => {
         v-model="keyword" type="search" aria-label="搜索关键词"
         placeholder="标题、正文、报错原文、标签"
       >
-      <button v-if="keyword" class="clear-btn" type="button" title="清空" @click="clear">×</button>
+      <button v-if="keyword" class="clear-btn" type="button" aria-label="清空搜索关键词" title="清空" @click="clear">×</button>
       <button class="btn btn-primary" type="submit">搜索</button>
     </form>
 
     <div v-if="searchStore.searched" class="type-tabs reveal" style="--d:.1s">
       <button :class="{ on: activeType === 'all' }" @click="activeType = 'all'">全部 {{ total }}</button>
-      <button :class="{ on: activeType === 'post' }" @click="activeType = 'post'">文章 {{ searchStore.postTotal }}</button>
-      <button :class="{ on: activeType === 'note' }" @click="activeType = 'note'">笔记 {{ searchStore.noteTotal }}</button>
+      <button :class="{ on: activeType === 'post' }" @click="activeType = 'post'">文章 {{ searchStore.postError && !searchStore.postPage ? '未读到' : searchStore.postTotal }}</button>
+      <button :class="{ on: activeType === 'note' }" @click="activeType = 'note'">笔记 {{ searchStore.noteError && !searchStore.notePage ? '未读到' : searchStore.noteTotal }}</button>
     </div>
 
     <p v-if="searchStore.loading" class="state-text">正在穿过星图…</p>
-    <p v-else-if="searchStore.error && !total" class="state-text error-text">
-      {{ searchStore.error }}
-      <button class="state-action" @click="searchStore.search(keyword)">重新搜索</button>
-    </p>
-    <p v-else-if="searchStore.searched && total === 0" class="empty-state">没有找到同频内容。</p>
+    <p v-else-if="searchStore.searched && total === 0 && !searchStore.error" class="empty-state">没有找到同频内容。</p>
     <p v-else-if="!searchStore.searched" class="empty-state">等待一个关键词。</p>
+
+    <div v-if="!searchStore.loading && searchStore.error" class="state-text error-text" role="status" aria-live="polite">
+      <p v-if="searchStore.postError">文章{{ searchStore.postPage ? '加载更多失败' : '搜索暂不可用' }}：{{ searchStore.postError }}<span v-if="searchStore.postTraceId">（追踪编号：{{ searchStore.postTraceId }}）</span></p>
+      <p v-if="searchStore.noteError">笔记{{ searchStore.notePage ? '加载更多失败' : '搜索暂不可用' }}：{{ searchStore.noteError }}<span v-if="searchStore.noteTraceId">（追踪编号：{{ searchStore.noteTraceId }}）</span></p>
+      <button class="state-action" @click="searchStore.search(searchStore.keyword)">重新搜索</button>
+    </div>
 
     <template v-if="!searchStore.loading && searchStore.searched && (!searchStore.error || total > 0)">
       <section v-if="showPosts && searchStore.postTotal" class="result-band">
