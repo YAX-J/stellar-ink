@@ -1,0 +1,41 @@
+# Linux 生产附加配置：先 configure-alerts.py，再与主 Compose 一起使用。
+services:
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    user: "0:0"
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports: ["127.0.0.1:9093:9093"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "3"}
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /:/host:ro,rslave
+      - ./data/node-exporter:/textfile:ro
+    pid: host
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "3"}
+  prometheus:
+    volumes:
+      - ./observability/prometheus-ops.yml:/etc/prometheus/prometheus.yml:ro
+
+volumes:
+  alertmanager-data:

@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+alerting:
+  alertmanagers:
+    - static_configs: [{targets: ['alertmanager:9093']}]
+rule_files: [/config/rules.yml]
+scrape_configs:
+  - job_name: public-page
+    metrics_path: /probe
+    params: {module: [http_page]}
+    static_configs: [{targets: ['https://stellar.ink/']}]
+    relabel_configs:
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [__param_target], target_label: instance}
+      - {target_label: __address__, replacement: 'blackbox:9115'}
+  - job_name: public-api
+    metrics_path: /probe
+    params: {module: [http_api]}
+    static_configs: [{targets: ['https://stellar.ink/posts?page=1&size=1']}]
+    relabel_configs:
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [__param_target], target_label: instance}
+      - {target_label: __address__, replacement: 'blackbox:9115'}

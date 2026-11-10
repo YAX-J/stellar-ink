@@ -1,0 +1,10 @@
+[Unit]
+Description=星笺每日备份计划
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

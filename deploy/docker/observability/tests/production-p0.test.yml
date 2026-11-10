@@ -1,0 +1,41 @@
+# 覆盖从未备份、任务失败恢复、26小时过期三种真实运维情形。
+rule_files:
+  - ../rules/production-p0.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="stellar-ink-host",instance="node-exporter:9100"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: StellarInkBackupNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations: {summary: "尚未发现任何备份成功记录"}
+  - interval: 30s
+    input_series:
+      - series: stellar_backup_last_run_success
+        values: '0x6 1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StellarInkBackupFailed
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations: {summary: "星笺备份或异地同步失败"}
+      - eval_time: 5m
+        alertname: StellarInkBackupFailed
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: stellar_backup_last_success_timestamp_seconds
+        values: '0x1620'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: StellarInkBackupStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: StellarInkBackupStale
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations: {summary: "超过26小时没有成功的异地备份"}

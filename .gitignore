@@ -10,6 +10,7 @@ Thumbs.db
 node_modules/
 dist/
 target/
+__pycache__/
 tools/
 
 # 运行时日志
@@ -58,3 +59,9 @@ docs/*
 
 # 本地测试产物（部署冒烟截图等）
 .artifacts/
+
+# 生产邮件授权码与生成配置
+.env.alerts
+deploy/docker/observability/alertmanager/alertmanager.yml
+deploy/docker/observability/alertmanager/*.tmp
+deploy/docker/observability/alertmanager/secrets/

@@ -1,0 +1,35 @@
+# 必须部署到独立于生产的机器，整机断网/停机时仍能发信。
+name: stellar-ink-external-monitor
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+services:
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command: ["--config.file=/config/blackbox.yml"]
+    volumes: ["./blackbox.yml:/config/blackbox.yml:ro"]
+    mem_limit: 64m
+    logging: *logging
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command: ["--config.file=/config/prometheus.yml", "--storage.tsdb.retention.time=7d", "--storage.tsdb.retention.size=256MB"]
+    volumes: ["./prometheus.yml:/config/prometheus.yml:ro", "./rules.yml:/config/rules.yml:ro", "monitor-data:/prometheus"]
+    mem_limit: 256m
+    logging: *logging
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    user: "0:0"
+    command: ["--config.file=/config/alertmanager.yml"]
+    volumes: ["../docker/observability/alertmanager/alertmanager.yml:/config/alertmanager.yml:ro", "alert-data:/alertmanager"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    logging: *logging
+volumes:
+  monitor-data:
+  alert-data:

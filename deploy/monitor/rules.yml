@@ -1,0 +1,13 @@
+groups:
+  - name: external-availability
+    rules:
+      - alert: StellarInkPublicUnavailable
+        expr: probe_success == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "星笺公网页面或API不可用"}
+      - alert: StellarInkExternalProbeDown
+        expr: up{job=~"public-page|public-api"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "公网探测器本身不可用"}

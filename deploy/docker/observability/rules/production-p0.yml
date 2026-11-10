@@ -1,0 +1,40 @@
+groups:
+  - name: stellar-ink-production-p0
+    rules:
+      - alert: StellarInkAccountVersionUnavailable
+        expr: increase(stellar_auth_version_check_total{result="error"}[5m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "账号版本校验不可用，网关已拒绝放行"
+          description: "检查用户服务、主库和 auth_version 迁移，不要关闭版本校验。"
+      - alert: StellarInkDiskSpaceLow
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.15
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "宿主机文件系统可用空间低于15%"}
+      - alert: StellarInkBackupFailed
+        expr: stellar_backup_last_run_success == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "星笺备份或异地同步失败"}
+      - alert: StellarInkBackupStale
+        expr: time() - stellar_backup_last_success_timestamp_seconds > 93600
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "超过26小时没有成功的异地备份"}
+      - alert: StellarInkBackupNeverSucceeded
+        expr: absent(stellar_backup_last_success_timestamp_seconds) and on() (up{job="stellar-ink-host"} == 1)
+        for: 15m
+        labels: {severity: critical}
+        annotations: {summary: "尚未发现任何备份成功记录"}
+      - alert: StellarInkHostMetricsDown
+        expr: up{job="stellar-ink-host"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "宿主机监控不可用，磁盘与备份监控存在盲区"}
+      - alert: StellarInkEmailDeliveryFailed
+        expr: increase(alertmanager_notifications_failed_total{integration="email"}[10m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "告警邮件投递失败，请在看板检查 SMTP 与授权码"}

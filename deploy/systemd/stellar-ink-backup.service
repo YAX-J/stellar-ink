@@ -1,0 +1,12 @@
+[Unit]
+Description=星笺加密异地备份
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/app/stellar-ink
+EnvironmentFile=/etc/stellar-ink/backup.env
+ExecStart=/bin/bash /app/stellar-ink/deploy/scripts/backup.sh
+UMask=0077
+TimeoutStartSec=2h
