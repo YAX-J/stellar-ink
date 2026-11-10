@@ -7,6 +7,7 @@ COMPOSE_DIR="${BACKUP_COMPOSE_DIR:-$REPO_DIR/deploy/docker}"
 BACKUP_ROOT="${BACKUP_ROOT:-/data/stellar-ink/backups}"
 METRICS_DIR="${BACKUP_METRICS_DIR:-$COMPOSE_DIR/data/node-exporter}"
 KEEP="${BACKUP_KEEP_DAYS:-7}"
+DELIVERY="${BACKUP_DELIVERY_MODE:-push}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE=""
 PARTIAL=""
@@ -36,7 +37,11 @@ for tool in age tar gzip sha256sum python3; do command -v "$tool" >/dev/null; do
 : "${BACKUP_RECIPIENTS_FILE:?设置 age 公钥文件}"
 [ -s "$BACKUP_RECIPIENTS_FILE" ]
 [ -f "$COMPOSE_DIR/.env" ]
-if [ -z "${BACKUP_REMOTE:-}" ] && [ "${BACKUP_ALLOW_LOCAL_ONLY:-0}" != 1 ]; then
+[[ "$DELIVERY" = push || "$DELIVERY" = pull ]] || { echo '备份交付方式仅支持 push 或 pull'; exit 1; }
+if [ "$DELIVERY" = pull ] && [ -n "${BACKUP_REMOTE:-}" ]; then
+  echo 'Windows 拉取模式不应设置 BACKUP_REMOTE'; exit 1
+fi
+if [ "$DELIVERY" = push ] && [ -z "${BACKUP_REMOTE:-}" ] && [ "${BACKUP_ALLOW_LOCAL_ONLY:-0}" != 1 ]; then
   echo '必须设置 BACKUP_REMOTE；本地演练可显式 BACKUP_ALLOW_LOCAL_ONLY=1' >&2
   exit 1
 fi
@@ -71,8 +76,11 @@ PARTIAL=""
 if [ -n "${BACKUP_REMOTE:-}" ]; then
   rsync -azs -- "$FINAL" "$FINAL.sha256" "$BACKUP_REMOTE/"
 fi
-# 同步成功后才更新成功时间和清理历史备份。
-metric stellar_backup_last_success_timestamp_seconds "$(date +%s)"
+# Windows 拉取模式只记录本机生成时间，下载、校验并回执后才记异地成功。
+metric stellar_backup_last_created_timestamp_seconds "$(date +%s)"
+if [ "$DELIVERY" = push ] && [ -n "${BACKUP_REMOTE:-}" ]; then
+  metric stellar_backup_last_success_timestamp_seconds "$(date +%s)"
+fi
 metric stellar_backup_last_run_success 1
 find "$BACKUP_ROOT" -maxdepth 1 -type f -name 'stellar-*.tar.age*' -mtime +"$KEEP" -delete
 echo "备份完成：$FINAL"

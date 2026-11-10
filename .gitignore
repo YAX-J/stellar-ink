@@ -59,6 +59,10 @@ docs/*
 
 # 本地测试产物（部署冒烟截图等）
 .artifacts/
+.backups/
+*.tar.age
+*.tar.age.sha256
+recovery-key.txt
 
 # 生产邮件授权码与生成配置
 .env.alerts

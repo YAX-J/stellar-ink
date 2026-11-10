@@ -404,6 +404,7 @@ AI 阶段的 Python 服务建议再留 `512m`。
 更改后通过运维覆盖编排重建 Alertmanager，确保加载原子替换后的配置，完整发信步骤见 [P0 运行手册](../../docs/architecture/production-p0.md)。
 
 `backup.sh` 转发到 `backup-encrypted.sh`，使用 age 公钥加密整个备份包，异地 rsync 成功后才记为成功。
+如果异地位置是 Windows 电脑，使用 `BACKUP_DELIVERY_MODE=pull` 并按照 [Windows 拉取流程](../../docs/architecture/windows-backup.md) 配置，只有电脑校验回执后才记录异地成功。
 须先配置 `backup.env.example` 中的公钥和异地目标，再安装 `deploy/systemd/stellar-ink-backup.*`。
 本机默认保留 7 天，目标机独立设置保留策略；备份包含 MySQL、`.env`、上传、评测报告、证书和邮件配置。
 

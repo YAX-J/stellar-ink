@@ -61,7 +61,10 @@ python3 deploy/scripts/production-preflight.py --runtime
 
 ## 3. 加密异地备份
 
-Linux 依赖：Python 3.11+、age 1.2.1+、rsync、util-linux（flock）、tar、gzip、SSH。
+Windows 电脑保存备份时，使用 [Windows 拉取流程](windows-backup.md)，设置 `BACKUP_DELIVERY_MODE=pull`。
+不需要电脑公网地址，不上传恢复私钥；下载校验回执前不更新异地成功时间。以下 rsync 步骤适用于 push 模式。
+
+Linux 依赖：Python 3.11+、age 1.2.1+、util-linux（flock）、tar、gzip、SSH；push 模式额外需要 rsync。
 在独立恢复机器生成 age 身份：
 
 ```bash
@@ -77,7 +80,7 @@ age-keygen -y recovery-key.txt > backup-recipients.txt
 暂存目录权限 700，文件权限受 umask 077 约束；整个 tar 用 age 加密后才传到异地。
 文件 SHA-256 清单用于恢复完整性校验；成功时间只在加密和异地同步都完成后更新。
 旧任务仍调用 `backup.sh`，会转到新实现。默认拒绝未设置异地目标的备份；仅演练可显式设置
-`BACKUP_ALLOW_LOCAL_ONLY=1`。默认保留本机 7 天，异地保留策略由目标机独立配置。
+`BACKUP_ALLOW_LOCAL_ONLY=1`，但该演练模式不再更新异地成功时间。默认保留本机 7 天，异地保留策略由目标机独立配置。
 
 MySQL 在宿主机时，设置 `BACKUP_MYSQL_MODE=host`、`MYSQL_DB` 和 `BACKUP_MYSQL_CNF`。
 该私有文件按 MySQL `[client]` 格式保存 host/user/password，权限 600；不把口令放命令参数。

@@ -25,3 +25,8 @@ deploy/sql/
 deploy/scripts/
 deploy/docker/logs/
 deploy/docker/.env
+.backups/
+**/recovery-key.txt
+**/*.tar.age
+**/.env.alerts
+deploy/docker/observability/alertmanager/alertmanager.yml

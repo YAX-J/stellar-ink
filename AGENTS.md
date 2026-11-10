@@ -71,7 +71,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
 |---|---|---|
 | 开发 dev | **127.0.0.1**（本机） | 本机 MySQL / Redis / Nacos，日常开发与自测 |
 | 测试 test | **124.221.158.32** | 测试服务器（此前文档里写作「远端服务器」的就是它） |
-| 生产 prod | **103.14.33.78** | 生产服务器，`deploy/docker` 整栈部署 |
+| 生产 prod（历史） | **103.14.33.78** | 用户当前无生产环境；此为历史地址，重新部署前必须确认 |
 
 - 环境隔离（2026-11-07）：四个 Java 服务的 dev 默认 Nacos 为 `127.0.0.1:8848` + `stellar-ink-test`；
   test 为 `127.0.0.1:8848` + `stellar-ink-test`；prod 为 `127.0.0.1:8848` +
@@ -274,6 +274,7 @@ docker compose up -d --build                           # 2. 构建 + 启动（�
   [`docs/architecture/production-p0.md`](docs/architecture/production-p0.md)。
 - **邮件 TLS**：Alertmanager v0.27.0 的 465 分支已直接 TLS；生成器仅在 465 关闭重复 STARTTLS，
   仍须保留证书验证与 TLS 1.2。其他端口强制 STARTTLS，994 不支持；不得全局关闭 TLS 或跳过证书验证。
+- **Windows 备份**：`BACKUP_DELIVERY_MODE=pull` 时，生产生成密文只记 created，电脑完成大小／SHA-256／age 认证校验并回执后才更新异地 success；时间采用备份生成时间。恢复私钥不上生产、不入库，流程见 `docs/architecture/windows-backup.md`。
 - user 与 content 不互调；ai-service 通过独立 `stellar-ink-content-client` 读取公开语料，
   使用 Feign + FallbackFactory + resilience4j；`/internal/**` 不得配置网关路由。
 - 跨服务 DTO/VO 放 `shared-model` 按服务子包（`dto/post`、`vo/user`…），服务间共享，**不放业务服务内**。
